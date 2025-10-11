@@ -1,17 +1,32 @@
-### 【中文版 / Chinese Version】
+<div align="center">
+
+# XDUCraft Bot - NoneBot Plugin
+
+<a href="https://www.python.org/">
+    <img src="https://img.shields.io/badge/Python-3.9+-blue?logo=python&logoColor=white" alt="Python Version">
+</a>
+<a href="https://v2.nonebot.dev/">
+    <img src="https://img.shields.io/badge/NoneBot-2.0.0+-red?logo=nonebot" alt="NoneBot Version">
+</a>
+<a href="https://github.com/onebotdev/onebot/blob/master/v11/README.md">
+    <img src="https://img.shields.io/badge/OneBot-v11-green?logo=telegram" alt="OneBot Version">
+</a>
+
+A Minecraft server status query plugin for NoneBot, specially designed for XDUCraft.
+
+[**English**](#english-version--英文版) | [**中文**](#中文版--chinese-version)
+
+</div>
+
+---
+
+## 【中文版 / Chinese Version】
 
 这是一个专门为XDUCraft编写的Minecraft服务器状态查询插件。
 
-# [XDUCraft_bot] NoneBot 插件
+### 🚀 快速开始
 
-## 环境要求
-
--   Python 3.9+ 
--   一个基于 OneBot v11 协议的机器人框架（如：Go-CQHTTP, NapCat等）
-
-## 快速开始
-
-请严格按照以下步骤操作，这可以避免环境冲突。
+请严格按照以下步骤操作，这可以避免绝大部分的环境冲突问题。
 
 1.  **克隆项目**
     ```bash
@@ -37,13 +52,13 @@
         激活后，命令行提示符前会出现 `(venv)` 字样。
 
 3.  **安装项目依赖**
-    在虚拟环境激活的状态下，安装运行所需的所有包。
+    确保你已处在激活的虚拟环境中，然后运行：
     ```bash
     pip install -r requirements.txt
     ```
 
 4.  **运行项目**
-    在虚拟环境激活的状态下，执行：
+    在虚拟环境中，执行以下命令启动机器人后端：
     ```bash
     nb run
     ```
@@ -56,7 +71,13 @@
     -   将 `8080` 替换为你实际看到的端口号。
     -   连接成功后，NoneBot控制台会显示日志，即可使用插件。
 
-## 常见问题
+### 📝环境要求
+
+-   Python 3.9+ 
+-   一个基于 OneBot v11 协议的机器人框架（如：Go-CQHTTP, NapCat等）
+
+
+### ❓常见问题 (FAQ)
 
 -   **`nb: command not found`**：
     -   原因：通常是因为没有在激活的虚拟环境中安装依赖。
@@ -64,18 +85,11 @@
 -   **端口被占用**：可通过 `nb run --port 新端口号`（如 `8090`）指定新端口。
 ---
 
-### 【English Version / 英文版】
-
-# [XDUCraft_bot] NoneBot Plugin
+## 【English Version / 英文版】
 
 This is a Minecraft server status query plugin specifically written for XDUCraft.
 
-## Prerequisites
-
--   Python 3.9+
--   A OneBot v11 compatible bot framework (e.g., Go-CQHTTP, NapCat, etc.)
-
-## Quick Start
+### 🚀 Quick Start
 
 Please follow these steps carefully to avoid environment conflicts.
 
@@ -122,7 +136,12 @@ Please follow these steps carefully to avoid environment conflicts.
     -   Replace `8080` with your actual port.
     -   Upon successful connection, the NoneBot console will show a log, and the plugin is ready to use.
 
-## FAQ
+### 📝 Prerequisites
+
+-   Python 3.9+
+-   A OneBot v11 compatible bot framework (e.g., Go-CQHTTP, NapCat, etc.)
+
+### 🚀 FAQ
 
 -   **`nb: command not found`**:
     -   Cause: Usually, the dependencies were not installed within the activated virtual environment.
