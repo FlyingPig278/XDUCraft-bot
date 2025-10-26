@@ -1,5 +1,8 @@
+import ipaddress
 import json
+import random
 import re
+from urllib.parse import urlparse
 
 from nonebot import on_command
 from nonebot.adapters import Message
@@ -92,13 +95,68 @@ async def handle_query_all(event: GroupMessageEvent,show_all_servers: bool):
     except MatcherException:
         raise
     except Exception as e:
-        # reply_message = f"查询所有服务器状态失败: {e}"
+        reply_message = f"查询所有服务器状态失败: {e}"
         raise
     await mc_status.finish(reply_message)
 
 
 async def handle_query_single(event: GroupMessageEvent, ip: str):
     """查询单个服务器状态"""
+    if not is_valid_server_address(ip):
+        # 假设 ip 是用户输入, is_valid_server_address(ip) 已返回 False
+
+        # --- 1. 特殊彩蛋区 (优先级最高) ---
+        if '❤' in ip:
+            await mc_status.finish("❤服务器？这怕不是运行在我的心巴上！")
+
+        if ip == '127.0.0.1' or ip.lower() == 'localhost':
+            responses = [
+                "你搁这儿开单机呢？查询127.0.0.1...找到了！在你电脑里！",
+                "查询 `localhost`... 数据库连接成功！...等等，我为什么要查我自己？Σ( ° △ °|||)",
+            ]
+            await mc_status.finish(random.choice(responses))
+
+        if ip == '192.168.1.1' or ip == '192.168.0.1':
+            await mc_status.finish("你查路由器干嘛！是不是想改WiFi密码不让我上了！(°òДó)ﾉ")
+
+        if '114514' in ip:
+            await mc_status.finish(f"查询 {ip} 中...哼哼啊啊啊啊啊啊（查询失败）")
+
+        if ip == '404':
+            await mc_status.finish("Server Not Found. (你看，404自己都说找不到了)")
+
+        # --- 2. 格式分类区 ---
+
+        # 检查是否“看起来像IP，但其实无效” (例如: 123.456.789.0)
+        if re.match(r'^\d{1,3}(\.\d{1,3}){3}$', ip):
+            responses = [
+                f"「{ip}」...这个地址...我看不懂，但我大受震撼。",
+                f"你这IP地址是体育老师教的吗？（指 {ip}）",
+                f"正在连接 {ip}... 连接失败。错误代码：256 (数字太大，路由器聊爆了)",
+            ]
+            await mc_status.finish(random.choice(responses))
+
+        # 检查是否像人名或单词 (你原有的逻辑)
+        if re.search(r'[\u4e00-\u9fa5]{2,4}|[A-Za-z]{3,}', ip):
+            name_responses = [
+                f"「{ip}」大佬的服务器需要VIP通行证🎫",
+                f"正在连接 {ip} 的心跳服务器...信号强度：❤️❤️❤️",
+                f"该服务器需要 {ip} 的指纹验证才能访问🖐️",
+                f"你输入的是...人名？抱歉，本机器人没有「{ip}」的好友，无法查询。",
+            ]
+            await mc_status.finish(random.choice(name_responses))
+
+        # --- 3. 通用兜底区 (适用于其他所有情况) ---
+        general_responses = [
+            f"「{ip}」服务器状态：正在加载存在感...0%",
+            f"警告：'{ip}' 触发路由器颜文字防御系统 (╯°□°)╯︵ ┻━┻",
+            f"正在向 {ip} 发送脑电波...对方已读不回📵",
+            f"该地址过于抽象，需要安装'理解补丁'才能访问🧩",
+            f"系统将 '{ip}' 自动翻译为：爱的告白服务器💌",
+            f"Pinging {ip}... Request timed out. (它好像...跑路了)",
+            f"「{ip}」？你这串神秘代码是不是克苏鲁的召唤咒语？SAN值狂掉...😨",
+        ]
+        await mc_status.finish(random.choice(general_responses))
     try:
         await mc_status.send(f"正在查询服务器 {ip} 的状态...")
         server_data = await get_single_server_status(ip)
@@ -341,28 +399,95 @@ async def handle_list_detail_single(event: GroupMessageEvent, ip: str):
 
     await mc_status.finish("\n".join(output_lines))
 
+# 屏蔽危险网站
+BLACKLISTED_PATTERNS = [
+    'gov.cn',
+    'mil.cn',
+]
+
 
 def is_valid_server_address(address: str) -> bool:
     """
-    验证服务器地址格式
+    强化版的服务器地址验证函数。
+    支持：域名、IPv4、IPv6 及其带端口的格式。
+    (采纳了IDN和黑名单标准化建议)
     """
-    # 检查是否包含空格（IP地址不应该有空格）
-    if ' ' in address:
+    if not isinstance(address, str):
         return False
 
-    # 简单的格式检查
-    if ':' in address:
-        # 包含端口的格式：address:port
-        parts = address.split(':')
-        if len(parts) != 2:
-            return False
-        try:
-            port = int(parts[1])
-            return 1 <= port <= 65535
-        except ValueError:
+    address = address.strip()
+
+    if not address or ' ' in address:
+        return False
+
+    try:
+        # 1. 使用 urllib 智能分离 (和之前一样)
+        parsed = urlparse('//' + address)
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return False
+
+    if host is None:
+        return False
+
+    # 2. 端口验证 (和之前一样，它本来就是对的)
+    if port is not None:
+        if not (1 <= port <= 65535):
             return False
 
-    # 不含端口的格式（使用默认端口）
+            # 3. 危险地址黑名单验证
+    host_lower = host.lower()
+    for pattern in BLACKLISTED_PATTERNS:
+        # 【采纳的建议 1】: 清理黑名单，防止配置错误
+        pattern_cleaned = pattern.lstrip('.')
+        if host_lower == pattern_cleaned or host_lower.endswith('.' + pattern_cleaned):
+            return False
+
+            # 4. 验证主机格式 (IP 或 域名)
+
+    # 4a. 尝试按 IP 地址解析 (和之前一样)
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass  # 不是 IP 地址，则继续检查是否为有效域名
+
+    # 4b. 检查是否为有效域名 (Domain Name)
+
+    # 【采纳的建议 2】: 增加IDN(国际化域名)支持
+    try:
+        # 尝试将 "中文.com" 编码为 "xn--fiq228c.com"
+        host_idna = host.encode('idna').decode('ascii')
+    except UnicodeError:
+        # 如果包含无法编码的非法字符
+        return False
+
+    # (使用 host_idna 进行后续检查)
+    if len(host_idna) > 253:
+        return False
+    # (注意：原先的 re.search(...) 检查可以删掉了，因为 'idna' 编码已经处理了字符集)
+    if host_idna.startswith('-') or host_idna.endswith('-') or \
+            host_idna.startswith('.') or host_idna.endswith('.'):
+        return False
+    if '..' in host_idna:
+        return False
+
+    labels = host_idna.split('.')
+    if not labels:
+        return False
+    for label in labels:
+        if len(label) > 63 or not label:
+            return False
+
+    # 4c. 特殊白名单 (和之前一样)
+    if host_lower == 'localhost':
+        return True
+
+    # 4d. 域名必须包含一个点 (和之前一样)
+    if '.' not in host_idna:
+        return False
+
     return True
 
 
