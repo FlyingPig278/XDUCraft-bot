@@ -356,3 +356,31 @@ def get_server_info(group_id: int, server_ip: str) -> Dict[str, Any]:
     return {}  # 未找到则返回空字典
 
 
+def export_group_data(group_id: int) -> Dict[str, Any]:
+    """
+    导出指定群组的完整服务器配置（包括服务器列表和页脚）。
+    """
+    data = _load_data()
+    group_id_str = str(group_id)
+    return data.get(group_id_str, {})
+
+
+def import_group_data(group_id: int, data_to_import: Dict[str, Any]) -> bool:
+    """
+    为指定群组导入服务器配置，会完全覆盖现有配置。
+    在导入前会进行基本的数据结构验证。
+    """
+    # 1. 验证导入的数据结构是否基本正确
+    if not isinstance(data_to_import, dict) or "servers" not in data_to_import or "footer" not in data_to_import:
+        return False  # 数据格式不正确
+    if not isinstance(data_to_import["servers"], list):
+        return False  # "servers" 必须是一个列表
+
+    # 2. 加载现有数据，并用导入的数据覆盖指定群组的配置
+    data = _load_data()
+    group_id_str = str(group_id)
+    data[group_id_str] = data_to_import
+
+    # 3. 保存回文件
+    _save_data(data)
+    return True

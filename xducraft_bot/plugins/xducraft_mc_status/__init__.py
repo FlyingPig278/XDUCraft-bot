@@ -12,7 +12,7 @@ from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 
 from .data_manager import add_footer, clear_footer, add_server, remove_server, get_footer, get_server_list, \
-    set_server_attribute, clear_server_attribute, get_server_info
+    set_server_attribute, clear_server_attribute, get_server_info, export_group_data, import_group_data
 from .image_renderer import render_status_image
 from .status_fetcher import get_single_server_status, get_all_servers_status, get_server_display_key
 
@@ -55,6 +55,8 @@ usage_admin="""命令：
 /mcs list : 查看已添加的服务器列表
 /mcs list detail : 管理员查看所有服务器的关键配置（优先级、标签、类型等）
 /mcs list detail <IP> : 管理员查看单个服务器的所有完整属性（包括隐藏属性）
+/mcs export : 导出当前群聊的服务器配置为JSON
+/mcs import <JSON> : 导入JSON配置，覆盖当前群聊配置
 /mcs help : 查看帮助信息"""
 
 # 主命令
@@ -71,7 +73,7 @@ async def handle_main_command(event: GroupMessageEvent, args: Message = CommandA
         await handle_query_all(event,False)
     elif len(arg_list) == 1 and arg_list[0] == "all":
         await handle_query_all(event,True)
-    elif len(arg_list) == 1 and not arg_list[0].startswith(('add', 'remove', 'footer', 'list', 'help')):
+    elif len(arg_list) == 1 and not arg_list[0].startswith(('add', 'remove', 'footer', 'list', 'help','export','import')):
         # 单个参数且不是子命令：查询指定服务器
         await handle_query_single(event, arg_list[0])
     else:
@@ -300,6 +302,42 @@ async def handle_subcommands(event: GroupMessageEvent, arg_list: list):
             else:
                 await mc_status.finish("命令格式错误，请使用 /mcs list detail 或 /mcs list detail <IP>")
 
+
+
+    elif subcommand == "export":
+        if not is_admin(event):
+            await mc_status.finish("你没有执行该命令的权限")
+
+        group_data = export_group_data(event.group_id)
+        if not group_data or not group_data.get("servers"):
+            await mc_status.finish("当前群聊没有可导出的服务器配置。")
+
+        try:
+            json_str = json.dumps(group_data, indent=2, ensure_ascii=False)
+        except Exception as e:
+            await mc_status.finish(f"生成JSON时发生错误：{e}")
+            return
+
+        await mc_status.finish(f"当前群聊的服务器配置如下：\n{json_str}")
+
+    elif subcommand == "import":
+        if not is_admin(event):
+            await mc_status.finish("你没有执行该命令的权限")
+
+        if len(arg_list) < 2:
+            await mc_status.finish("导入命令格式错误，请使用 /mcs import <JSON数据>")
+
+        json_content = " ".join(arg_list[1:])
+        try:
+            data_to_import = json.loads(json_content)
+        except json.JSONDecodeError:
+            await mc_status.finish("导入失败：JSON格式无效。请检查您的输入。")
+            return
+
+        if import_group_data(event.group_id, data_to_import):
+            await mc_status.finish("成功导入配置！已覆盖本群聊的原有服务器设置。")
+        else:
+            await mc_status.finish("导入失败：数据结构不符合要求。请确保JSON包含 'servers' (列表) 和 'footer' (字符串) 键。")
 
     elif subcommand == "help":
         # 显示帮助: /mcs help
