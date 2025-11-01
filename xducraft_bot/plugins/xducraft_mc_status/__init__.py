@@ -12,9 +12,10 @@ from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 
 from .data_manager import add_footer, clear_footer, add_server, remove_server, get_footer, get_server_list, \
-    set_server_attribute, clear_server_attribute, get_server_info, export_group_data, import_group_data
+    set_server_attribute, clear_server_attribute, get_server_info, import_group_data, export_group_data
 from .image_renderer import render_status_image
 from .status_fetcher import get_single_server_status, get_all_servers_status, get_server_display_key
+from .config_coder import compress_config, decompress_config
 
 __plugin_meta__ = PluginMetadata(
     name="XDUCraft_mc_status",
@@ -55,30 +56,206 @@ usage_admin="""命令：
 /mcs list : 查看已添加的服务器列表
 /mcs list detail : 管理员查看所有服务器的关键配置（优先级、标签、类型等）
 /mcs list detail <IP> : 管理员查看单个服务器的所有完整属性（包括隐藏属性）
-/mcs export : 导出当前群聊的服务器配置为JSON
-/mcs import <JSON> : 导入JSON配置，覆盖当前群聊配置
+/mcs export : 导出当前群聊配置的压缩字符串
+/mcs export_json : 导出当前群聊配置的原始JSON格式 (用于排查)
+/mcs import <压缩字符串> : 导入压缩字符串，覆盖当前群聊配置
 /mcs help : 查看帮助信息"""
 
 # 主命令
 mc_status = on_command("mcs", aliases={"mcstatus", "服务器", "状态"}, block=True)
 
 
+
+# --- Command Handlers ---
+
+async def _handle_add(event: GroupMessageEvent, arg_list: list):
+    if len(arg_list) < 2:
+        await mc_status.finish("命令格式错误，请使用 /mcs add <IP>")
+    ip = arg_list[1]
+    if not is_admin(event):
+        await mc_status.finish("你没有执行该命令的权限")
+    elif not is_valid_server_address(ip):
+        await mc_status.finish(f"无效的服务器地址格式: {ip}")
+    elif add_server(event.group_id, ip):
+        await mc_status.finish(f"成功添加服务器: {ip}")
+    else:
+        await mc_status.finish(f"服务器 {ip} 已存在或添加失败")
+
+async def _handle_remove(event: GroupMessageEvent, arg_list: list):
+    if len(arg_list) < 2:
+        await mc_status.finish("命令格式错误，请使用 /mcs remove <IP>")
+    ip = arg_list[1]
+    if not is_admin(event):
+        await mc_status.finish("你没有执行该命令的权限")
+    elif remove_server(event.group_id, ip):
+        await mc_status.finish(f"成功移除服务器: {ip}")
+    else:
+        await mc_status.finish(f"服务器 {ip} 不存在或移除失败")
+
+async def _handle_footer(event: GroupMessageEvent, arg_list: list):
+    if not is_admin(event):
+        await mc_status.finish("你没有执行该命令的权限")
+    if len(arg_list) > 1:
+        if arg_list[1].lower() == "clear":
+            clear_footer(event.group_id)
+            await mc_status.finish("已清除页脚文本")
+        else:
+            footer_text = ' '.join(arg_list[1:])
+            add_footer(event.group_id, footer_text)
+            await mc_status.finish(f"已设置页脚: {footer_text}")
+    else:
+        current_footer = get_footer(event.group_id)
+        if current_footer:
+            await mc_status.finish(f"当前页脚: {current_footer}")
+        else:
+            await mc_status.finish("尚未设置页脚文本")
+
+async def _handle_set(event: GroupMessageEvent, arg_list: list):
+    if not is_admin(event):
+        await mc_status.finish("你没有执行该命令的权限")
+    if len(arg_list) < 4:
+        await mc_status.finish("命令格式错误，请使用 /mcs set <IP> <attr> <value>")
+
+    ip = arg_list[1]
+    attribute = arg_list[2].lower()
+    value = ' '.join(arg_list[3:]) # Allow values with spaces
+
+    valid_attributes = {"tag", "tag_color", "server_type", "parent_ip", "priority"}
+    if attribute not in valid_attributes:
+        await mc_status.finish(f"不支持设置属性: {attribute}。请从 {', '.join(valid_attributes)} 中选择。")
+
+    if attribute == "priority":
+        try:
+            value = int(value)
+        except ValueError:
+            await mc_status.finish("优先级 (priority) 必须是一个整数。")
+    elif attribute == "server_type" and value.lower() not in ['standalone', 'parent', 'child']:
+        await mc_status.finish("服务器类型 (server_type) 必须是 standalone, parent, 或 child。")
+    elif attribute == "tag_color":
+        if value.startswith("#"):
+            value = value[1:]
+        if not is_valid_hex_color(value):
+            await mc_status.finish("颜色值无效。请使用标准的6位十六进制代码 (例如: FF00AA)。")
+        value = value.upper()
+
+    if set_server_attribute(event.group_id, ip, attribute, value):
+        await mc_status.finish(f"服务器 {ip} 的属性 [{attribute}] 已成功设置为: {value}")
+    else:
+        await mc_status.finish(f"设置失败: 服务器 {ip} 不存在。")
+
+async def _handle_clear(event: GroupMessageEvent, arg_list: list):
+    if not is_admin(event):
+        await mc_status.finish("你没有执行该命令的权限")
+    if len(arg_list) != 3:
+        await mc_status.finish("命令格式错误，请使用 /mcs clear <IP> <attribute>")
+
+    ip = arg_list[1]
+    attribute = arg_list[2].lower()
+    valid_attributes = {"tag", "tag_color", "parent_ip", "priority"}
+
+    if attribute in valid_attributes:
+        if clear_server_attribute(event.group_id, ip, attribute):
+            await mc_status.finish(f"服务器 {ip} 的属性 [{attribute}] 已成功清空/重置。")
+        else:
+            await mc_status.finish(f"清空失败: 服务器 {ip} 不存在。")
+    else:
+        await mc_status.finish(f"不支持清空属性: {attribute}。请从 {', '.join(valid_attributes)} 中选择。")
+
+async def _handle_list(event: GroupMessageEvent, arg_list: list):
+    if len(arg_list) == 1:
+        await handle_list_simple(event)
+    elif len(arg_list) > 1 and arg_list[1].lower() == "detail":
+        if not is_admin(event):
+            await mc_status.finish("你没有执行该命令的权限")
+        if len(arg_list) == 2:
+            await handle_list_detail_all(event)
+        elif len(arg_list) == 3:
+            await handle_list_detail_single(event, arg_list[2])
+        else:
+            await mc_status.finish("命令格式错误，请使用 /mcs list detail 或 /mcs list detail <IP>")
+
+async def _handle_export(event: GroupMessageEvent, arg_list: list):
+    if not is_admin(event):
+        await mc_status.finish("你没有执行该命令的权限")
+    group_data = export_group_data(event.group_id)
+    if not group_data or not group_data.get("servers"):
+        await mc_status.finish("当前群聊没有可导出的服务器配置。")
+    compressed_str = compress_config(group_data)
+    if compressed_str:
+        await mc_status.finish(f"配置导出成功！\n/mcs import {compressed_str}")
+    else:
+        await mc_status.finish("导出失败：压缩配置时发生错误。")
+
+async def _handle_export_json(event: GroupMessageEvent, arg_list: list):
+    if not is_admin(event):
+        await mc_status.finish("你没有执行该命令的权限")
+    group_data = export_group_data(event.group_id)
+    if not group_data or not group_data.get("servers"):
+        await mc_status.finish("当前群聊没有可导出的服务器配置。")
+    try:
+        json_str = json.dumps(group_data, indent=2, ensure_ascii=False)
+    except Exception as e:
+        await mc_status.finish(f"生成JSON时发生错误：{e}")
+        return
+    await mc_status.finish(f"当前群聊的原始JSON配置如下：\n{json_str}")
+
+async def _handle_import(event: GroupMessageEvent, arg_list: list):
+    if not is_admin(event):
+        await mc_status.finish("你没有执行该命令的权限")
+    if len(arg_list) < 2:
+        await mc_status.finish("导入命令格式错误，请使用 /mcs import <压缩字符串>")
+    compressed_str = arg_list[1]
+    decompressed_data = decompress_config(compressed_str)
+    if decompressed_data is None:
+        await mc_status.finish("导入失败：无法解压或解析该字符串，请检查输入是否正确。")
+        return
+    if import_group_data(event.group_id, decompressed_data):
+        await mc_status.finish("成功导入配置！已覆盖本群聊的原有服务器设置。")
+    else:
+        await mc_status.finish("导入失败：数据结构不符合要求。")
+
+async def _handle_help(event: GroupMessageEvent, arg_list: list):
+    help_text = usage_admin if is_admin(event) else usage_user
+    await mc_status.finish(help_text)
+
+
+SUBCOMMAND_HANDLERS = {
+    "add": _handle_add,
+    "remove": _handle_remove,
+    "footer": _handle_footer,
+    "set": _handle_set,
+    "clear": _handle_clear,
+    "list": _handle_list,
+    "export": _handle_export,
+    "export_json": _handle_export_json,
+    "import": _handle_import,
+    "help": _handle_help,
+}
+
 @mc_status.handle()
 async def handle_main_command(event: GroupMessageEvent, args: Message = CommandArg()):
-    # 解析参数
-    arg_list = args.extract_plain_text().strip().split()
+    arg_text = args.extract_plain_text().strip()
+    arg_list = arg_text.split()
 
     if not arg_list:
-        # 没有参数：查询所有服务器状态
-        await handle_query_all(event,False)
-    elif len(arg_list) == 1 and arg_list[0] == "all":
-        await handle_query_all(event,True)
-    elif len(arg_list) == 1 and not arg_list[0].startswith(('add', 'remove', 'footer', 'list', 'help','export','import')):
-        # 单个参数且不是子命令：查询指定服务器
+        await handle_query_all(event, False)
+        return
+
+    subcommand = arg_list[0].lower()
+
+    if subcommand in SUBCOMMAND_HANDLERS:
+        # For import, the argument is the whole string after the command
+        if subcommand == 'import' and len(arg_text.split(maxsplit=1)) > 1:
+            handler_args = ['import', arg_text.split(maxsplit=1)[1]]
+        else:
+            handler_args = arg_list
+        await SUBCOMMAND_HANDLERS[subcommand](event, handler_args)
+    elif subcommand == "all" and len(arg_list) == 1:
+        await handle_query_all(event, True)
+    elif len(arg_list) == 1:
         await handle_query_single(event, arg_list[0])
     else:
-        # 处理子命令
-        await handle_subcommands(event, arg_list)
+        await mc_status.finish("未知命令，使用 /mcs help 查看帮助")
 
 
 async def handle_query_all(event: GroupMessageEvent,show_all_servers: bool):
@@ -168,185 +345,6 @@ async def handle_query_single(event: GroupMessageEvent, ip: str):
         reply_message = f"查询 {ip} 失败: {e}"
     await mc_status.finish(reply_message)
 
-
-async def handle_subcommands(event: GroupMessageEvent, arg_list: list):
-    """处理子命令"""
-    subcommand = arg_list[0].lower()
-
-    if subcommand == "add" and len(arg_list) > 1:
-        # 添加服务器: /mcs add <IP>
-        ip = arg_list[1]
-        if not is_admin(event):
-            await mc_status.finish(f"你没有执行该命令的权限")
-        elif not is_valid_server_address(ip):
-            await mc_status.finish(f"无效的服务器地址格式: {ip}")
-        elif add_server(event.group_id, ip):
-            await mc_status.finish(f"成功添加服务器: {ip}")
-        else:
-            await mc_status.finish(f"服务器 {ip} 已存在或添加失败")
-
-    elif subcommand == "remove" and len(arg_list) > 1:
-        # 移除服务器: /mcs remove <IP>
-        ip = arg_list[1]
-        if not is_admin(event):
-            await mc_status.finish(f"你没有执行该命令的权限")
-        elif remove_server(event.group_id, ip):
-            await mc_status.finish(f"成功移除服务器: {ip}")
-        else:
-            await mc_status.finish(f"服务器 {ip} 不存在或移除失败")
-
-    elif subcommand == "footer":
-        if not is_admin(event):
-            await mc_status.finish(f"你没有执行该命令的权限")
-        elif len(arg_list) > 1:
-            if arg_list[1].lower() == "clear":
-                # 清除页脚: /mcs footer clear
-                clear_footer(event.group_id)
-                await mc_status.finish("已清除页脚文本")
-            else:
-                # 设置页脚: /mcs footer <文本>
-                footer_text = ' '.join(arg_list[1:])
-                add_footer(event.group_id, footer_text)
-                await mc_status.finish(f"已设置页脚: {footer_text}")
-        else:
-            # 查看当前页脚: /mcs footer
-            current_footer = get_footer(event.group_id)
-            if current_footer:
-                await mc_status.finish(f"当前页脚: {current_footer}")
-            else:
-                await mc_status.finish("尚未设置页脚文本")
-
-    elif subcommand == "set" and len(arg_list) >= 4:
-        if not is_admin(event):
-            await mc_status.finish("你没有执行该命令的权限")
-
-        # 格式: /mcs set <IP> <attribute> <value>
-        ip = arg_list[1]
-        attribute = arg_list[2].lower()
-        value = arg_list[3]
-
-        # 允许设置的属性白名单 (防止用户设置不存在或不应被设置的属性)
-        valid_attributes = {
-            "tag": str, "tag_color": str, "server_type": str,
-            "parent_ip": str, "priority": int
-        }
-
-        if attribute not in valid_attributes:
-            await mc_status.finish(
-                f"不支持设置属性: {attribute}。请使用 tag, tag_color, server_type, parent_ip, 或 priority。")
-
-        # 针对 'priority' 进行特殊类型转换
-        if attribute == "priority":
-            try:
-                value = int(value)
-            except ValueError:
-                await mc_status.finish("优先级 (priority) 必须是一个整数。")
-
-        # 针对 'server_type' 进行值校验 (可选，但推荐)
-        if attribute == "server_type" and value.lower() not in ['standalone', 'parent', 'child']:
-            await mc_status.finish("服务器类型 (server_type) 必须是 standalone, parent, 或 child。")
-
-        # 针对 'tag_color' 进行规范化和值验证
-        if attribute == "tag_color":
-            # 1. 规范化：去除 # 并转换为大写，确保一致性
-            if value.startswith("#"):
-                value = value[1:]
-
-            # 2. 验证：必须是6位十六进制数
-            if not is_valid_hex_color(value):
-                await mc_status.finish("颜色值无效。请使用标准的6位十六进制代码 (例如: FF00AA 或 #FF00AA)。")
-
-            # 3. 规范化：转换为大写，方便后续PIL处理
-            value = value.upper()
-
-        if set_server_attribute(event.group_id, ip, attribute, value):
-            await mc_status.finish(f"服务器 {ip} 的属性 [{attribute}] 已成功设置为: {value}")
-        else:
-            await mc_status.finish(f"设置失败: 服务器 {ip} 不存在。")
-
-        # --- 新增：清空服务器属性命令 /mcs clear ---
-    elif subcommand == "clear" and len(arg_list) == 3:
-        if not is_admin(event):
-            await mc_status.finish("你没有执行该命令的权限")
-
-        # 格式: /mcs clear <IP> <attribute>
-        ip = arg_list[1]
-        attribute = arg_list[2].lower()
-
-        if attribute in ["tag", "tag_color", "parent_ip", "priority"]:
-            if clear_server_attribute(event.group_id, ip, attribute):
-                await mc_status.finish(f"服务器 {ip} 的属性 [{attribute}] 已成功清空/重置。")
-            else:
-                await mc_status.finish(f"清空失败: 服务器 {ip} 不存在。")
-        else:
-            await mc_status.finish(f"不支持清空属性: {attribute}。请使用 tag, tag_color, parent_ip, 或 priority。")
-
-
-    elif subcommand == "list":
-        # 现有 /mcs list 逻辑：只显示简要信息，过滤隐藏服务器
-        if len(arg_list) == 1:
-            await handle_list_simple(event)  # 重构现有逻辑为独立函数，保持清晰
-
-        # 新增 /mcs list detail 逻辑
-        elif arg_list[1].lower() == "detail":
-            if not is_admin(event):
-                await mc_status.finish("你没有执行该命令的权限")
-
-            if len(arg_list) == 2:
-                # /mcs list detail：显示所有服务器的关键属性
-                await handle_list_detail_all(event)
-            elif len(arg_list) == 3:
-                # /mcs list detail <IP>：显示单个服务器的所有属性
-                ip_to_show = arg_list[2]
-                await handle_list_detail_single(event, ip_to_show)
-            else:
-                await mc_status.finish("命令格式错误，请使用 /mcs list detail 或 /mcs list detail <IP>")
-
-
-
-    elif subcommand == "export":
-        if not is_admin(event):
-            await mc_status.finish("你没有执行该命令的权限")
-
-        group_data = export_group_data(event.group_id)
-        if not group_data or not group_data.get("servers"):
-            await mc_status.finish("当前群聊没有可导出的服务器配置。")
-
-        try:
-            json_str = json.dumps(group_data, indent=2, ensure_ascii=False)
-        except Exception as e:
-            await mc_status.finish(f"生成JSON时发生错误：{e}")
-            return
-
-        await mc_status.finish(f"当前群聊的服务器配置如下：\n{json_str}")
-
-    elif subcommand == "import":
-        if not is_admin(event):
-            await mc_status.finish("你没有执行该命令的权限")
-
-        if len(arg_list) < 2:
-            await mc_status.finish("导入命令格式错误，请使用 /mcs import <JSON数据>")
-
-        json_content = " ".join(arg_list[1:])
-        try:
-            data_to_import = json.loads(json_content)
-        except json.JSONDecodeError:
-            await mc_status.finish("导入失败：JSON格式无效。请检查您的输入。")
-            return
-
-        if import_group_data(event.group_id, data_to_import):
-            await mc_status.finish("成功导入配置！已覆盖本群聊的原有服务器设置。")
-        else:
-            await mc_status.finish("导入失败：数据结构不符合要求。请确保JSON包含 'servers' (列表) 和 'footer' (字符串) 键。")
-
-    elif subcommand == "help":
-        # 显示帮助: /mcs help
-        help_text = usage_admin if is_admin(event) else usage_user
-        await mc_status.finish(help_text)
-
-    else:
-        # 未知子命令
-        await mc_status.finish("未知命令，使用 /mcs help 查看帮助")
 
 
 async def handle_list_simple(event: GroupMessageEvent):
