@@ -7,12 +7,12 @@ from urllib.parse import urlparse
 from nonebot import on_command
 from nonebot.adapters import Message
 from nonebot.adapters.onebot.v11 import Bot, MessageSegment, GroupMessageEvent
-from nonebot.exception import MatcherException
+from nonebot.exception import MatcherException, FinishedException
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 
 from .data_manager import add_footer, clear_footer, add_server, remove_server, get_footer, get_server_list, \
-    set_server_attribute, clear_server_attribute, get_server_info, import_group_data, export_group_data
+    set_server_attribute, clear_server_attribute, get_server_info, import_group_data, export_group_data, get_show_offline_by_default
 from .image_renderer import render_status_image
 from .status_fetcher import get_single_server_status, get_all_servers_status, get_server_display_key
 from .config_coder import compress_config, decompress_config
@@ -43,12 +43,9 @@ usage_user="""命令：
 /mcs help : 查看帮助信息"""
 
 usage_admin="""【Web编辑器 (推荐)】
+强烈推荐使用Web编辑器进行编辑
 /mcs edit (export, editor): 生成配置链接并在Web UI中编辑
 /mcs import <压缩字符串>: 从Web UI或备份中导入配置
----
-【快捷命令】
-/mcs add <IP>: 添加服务器
-/mcs remove <IP>: 移除服务器
 ---
 【查询命令】
 /mcs: 查询群聊所有在线服务器状态
@@ -56,12 +53,15 @@ usage_admin="""【Web编辑器 (推荐)】
 /mcs all: 查询所有已添加服务器状态
 /mcs list: 查看已添加的服务器列表
 ---
+【快捷命令】
+/mcs add <IP>: 添加服务器
+/mcs remove <IP>: 移除服务器
+---
 【高级/调试命令】
 /mcs set <IP> <attr> <value>: 设置服务器属性
 /mcs clear <IP> <attr>: 清空/重置服务器属性
 /mcs footer <文本>: 设置页脚文本
 /mcs footer clear: 清除页脚文本
-/mcs list detail: 查看所有服务器的详细配置
 /mcs export_json: 导出原始JSON配置 (用于排查)
 ---
 【帮助】
@@ -72,7 +72,7 @@ mc_status = on_command("mcs", aliases={"mcstatus", "服务器", "状态"}, block
 
 
 
-# --- Command Handlers ---
+# --- 命令处理器 ---
 
 async def _handle_add(bot: Bot, event: GroupMessageEvent, arg_list: list):
     if len(arg_list) < 2:
@@ -124,10 +124,13 @@ async def _handle_set(bot: Bot, event: GroupMessageEvent, arg_list: list):
 
     ip = arg_list[1]
     attribute = arg_list[2].lower()
-    value = ' '.join(arg_list[3:]) # Allow values with spaces
+    value = ' '.join(arg_list[3:]) # 允许值带有空格
 
-    valid_attributes = {"tag", "tag_color", "server_type", "parent_ip", "priority"}
+    valid_attributes = {"tag", "tag_color", "comment", "priority", "ignore_in_list"}
     if attribute not in valid_attributes:
+        # 特别处理修改parent_ip的尝试
+        if attribute == "parent_ip":
+            await mc_status.finish(f"不支持直接修改 parent_ip。\n请使用 /mcs edit 命令打开Web UI，通过拖拽来修改服务器层级关系。")
         await mc_status.finish(f"不支持设置属性: {attribute}。请从 {', '.join(valid_attributes)} 中选择。")
 
     if attribute == "priority":
@@ -135,8 +138,13 @@ async def _handle_set(bot: Bot, event: GroupMessageEvent, arg_list: list):
             value = int(value)
         except ValueError:
             await mc_status.finish("优先级 (priority) 必须是一个整数。")
-    elif attribute == "server_type" and value.lower() not in ['standalone', 'parent', 'child']:
-        await mc_status.finish("服务器类型 (server_type) 必须是 standalone, parent, 或 child。")
+    elif attribute == "ignore_in_list":
+        if value.lower() in ['true', '1', 'yes', 'y', '是']:
+            value = True
+        elif value.lower() in ['false', '0', 'no', 'n', '否']:
+            value = False
+        else:
+            await mc_status.finish("隐藏属性 (ignore_in_list) 的值必须是 True/False。")
     elif attribute == "tag_color":
         if value.startswith("#"):
             value = value[1:]
@@ -169,16 +177,10 @@ async def _handle_clear(bot: Bot, event: GroupMessageEvent, arg_list: list):
 
 async def _handle_list(bot: Bot, event: GroupMessageEvent, arg_list: list):
     if len(arg_list) == 1:
-        await handle_list_simple(event)
-    elif len(arg_list) > 1 and arg_list[1].lower() == "detail":
-        if not is_admin(event):
-            await mc_status.finish("你没有执行该命令的权限")
-        if len(arg_list) == 2:
-            await handle_list_detail_all(event)
-        elif len(arg_list) == 3:
-            await handle_list_detail_single(event, arg_list[2])
-        else:
-            await mc_status.finish("命令格式错误，请使用 /mcs list detail 或 /mcs list detail <IP>")
+        await handle_list_simple(bot, event)
+    else:
+        await mc_status.finish("未知参数，请使用 /mcs list 查看服务器列表。")
+
 
 async def _handle_export(bot: Bot, event: GroupMessageEvent, arg_list: list):
     if not is_admin(event):
@@ -186,36 +188,25 @@ async def _handle_export(bot: Bot, event: GroupMessageEvent, arg_list: list):
     group_data = export_group_data(event.group_id)
     if not group_data or not group_data.get("servers"):
         await mc_status.finish("当前群聊没有可导出的服务器配置。")
-    compressed_str = compress_config(group_data)
-    if compressed_str:
-        export_url = f"{WEB_UI_BASE_URL}?data={compressed_str}"
         
-        nodes = [
-            {
-                "type": "node",
-                "data": {
-                    "name": "配置导出",
-                    "uin": event.self_id,
-                    "content": "配置导出成功！请点击链接导入到Web UI："
-                }
-            },
-            {
-                "type": "node",
-                "data": {
-                    "name": "Web UI链接",
-                    "uin": event.self_id,
-                    "content": export_url
-                }
-            }
-        ]
-        try:
-            await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
-        except Exception as e:
-            # Fallback to direct message if forward message fails
-            await mc_status.finish(f"配置导出成功！\n请点击链接导入到Web UI：\n{export_url}")
-        await mc_status.finish()
-    else:
+    compressed_str = compress_config(group_data)
+    if not compressed_str:
         await mc_status.finish("导出失败：压缩配置时发生错误。")
+
+    export_url = f"{WEB_UI_BASE_URL}?data={compressed_str}"
+    
+    nodes = [
+        {"type": "node", "data": {"name": "配置导出", "uin": event.self_id, "content": "配置导出成功！请点击链接导入到Web UI："}},
+        {"type": "node", "data": {"name": "Web UI链接", "uin": event.self_id, "content": export_url}}
+    ]
+    try:
+        await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
+    except Exception:
+        # 如果合并转发失败，回退到直接发送消息
+        await mc_status.finish(f"配置导出成功！\n请点击链接导入到Web UI：\n{export_url}")
+    else:
+        await mc_status.finish()
+
 
 async def _handle_export_json(bot: Bot, event: GroupMessageEvent, arg_list: list):
     if not is_admin(event):
@@ -227,32 +218,18 @@ async def _handle_export_json(bot: Bot, event: GroupMessageEvent, arg_list: list
         json_str = json.dumps(group_data, indent=2, ensure_ascii=False)
     except Exception as e:
         await mc_status.finish(f"生成JSON时发生错误：{e}")
-        return
     
-    # Also use merged forward for JSON export
+    # 同样使用合并转发来发送JSON
     nodes = [
-        {
-            "type": "node",
-            "data": {
-                "name": "JSON导出",
-                "uin": event.self_id,
-                "content": f"当前群聊的原始JSON配置如下：\n您可以复制此JSON内容，手动导入到Web编辑器：{WEB_UI_BASE_URL}"
-            }
-        },
-        {
-            "type": "node",
-            "data": {
-                "name": "JSON内容",
-                "uin": event.self_id,
-                "content": json_str
-            }
-        }
+        {"type": "node", "data": {"name": "JSON导出", "uin": event.self_id, "content": f"当前群聊的原始JSON配置如下：\n您可以复制此JSON内容，手动导入到Web编辑器：{WEB_UI_BASE_URL}"}},
+        {"type": "node", "data": {"name": "JSON内容", "uin": event.self_id, "content": json_str}}
     ]
     try:
         await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
-    except Exception as e:
+    except Exception:
         await mc_status.finish(f"当前群聊的原始JSON配置如下：\n您可以复制此JSON内容，手动导入到Web编辑器：{WEB_UI_BASE_URL}\n{json_str}")
-    await mc_status.finish()
+    else:
+        await mc_status.finish()
 
 async def _handle_import(bot: Bot, event: GroupMessageEvent, arg_list: list):
     if not is_admin(event):
@@ -270,26 +247,18 @@ async def _handle_import(bot: Bot, event: GroupMessageEvent, arg_list: list):
         await mc_status.finish("导入失败：数据结构不符合要求。")
 
 async def _handle_help(bot: Bot, event: GroupMessageEvent, arg_list: list):
-    # For regular users, also use forward message
+    # 对于普通用户，也使用合并转发消息
     if not is_admin(event):
-        nodes = [
-            {
-                "type": "node",
-                "data": {
-                    "name": "帮助",
-                    "uin": event.self_id,
-                    "content": usage_user
-                }
-            }
-        ]
+        nodes = [{"type": "node", "data": {"name": "帮助", "uin": event.self_id, "content": usage_user}}]
         try:
             await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
-        except Exception as e:
-            await mc_status.finish(usage_user) # Fallback
-        await mc_status.finish()
+        except Exception:
+            await mc_status.finish(usage_user) # 回退
+        else:
+            await mc_status.finish()
         return
 
-    # For admins, send the help message as a forward message to avoid flooding the chat.
+    # 对于管理员，将帮助消息作为合并转发发送，避免刷屏
     try:
         raw_sections = usage_admin.split('---\n')
         nodes = []
@@ -298,31 +267,15 @@ async def _handle_help(bot: Bot, event: GroupMessageEvent, arg_list: list):
             if not section_content:
                 continue
 
-            # Extract the first line as the node name
-            lines = section_content.split('\n', 1) # Split only on the first newline
-            node_name = lines[0].strip() # First line is the name
-            node_content = section_content # Default content is the whole section
-
-            if len(lines) > 1:
-                # If there's more than one line, the rest is the content
-                node_content = lines[1].strip()
-
-            node = {
-                "type": "node",
-                "data": {
-                    "name": node_name,
-                    "uin": event.self_id,
-                    "content": node_content
-                }
-            }
+            node = {"type": "node", "data": {"name": "帮助", "uin": event.self_id, "content": section_content}}
             nodes.append(node)
         
         await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
-    except Exception as e:
-        # Fallback to direct message if forward message fails
+    except Exception:
+        # 如果合并转发失败，则回退到直接发送消息
         await mc_status.finish(usage_admin)
-    
-    await mc_status.finish()
+    else:
+        await mc_status.finish()
 
 
 SUBCOMMAND_HANDLERS = {
@@ -346,13 +299,14 @@ async def handle_main_command(bot: Bot, event: GroupMessageEvent, args: Message 
     arg_list = arg_text.split()
 
     if not arg_list:
-        await handle_query_all(event, False)
+        show_all = get_show_offline_by_default(event.group_id)
+        await handle_query_all(event, show_all)
         return
 
     subcommand = arg_list[0].lower()
 
     if subcommand in SUBCOMMAND_HANDLERS:
-        # For import, the argument is the whole string after the command
+        # 对于import命令，参数是命令后的整个字符串
         if subcommand == 'import' and len(arg_text.split(maxsplit=1)) > 1:
             handler_args = ['import', arg_text.split(maxsplit=1)[1]]
         else:
@@ -378,8 +332,7 @@ async def handle_query_all(event: GroupMessageEvent,show_all_servers: bool):
         server_data_list = await get_all_servers_status(event.group_id)
         image_path = await render_status_image(server_data_list, event.group_id, show_all_servers)
         reply_message = MessageSegment.image(file=f"file:///{image_path}")
-        # print(server_data_list)
-    except MatcherException:
+    except FinishedException:
         raise
     except Exception as e:
         reply_message = f"查询所有服务器状态失败: {e}"
@@ -423,7 +376,7 @@ async def handle_query_single(event: GroupMessageEvent, ip: str):
             ]
             await mc_status.finish(random.choice(responses))
 
-        # 检查是否像人名或单词 (你原有的逻辑)
+        # 检查是否像人名或单词
         if re.search(r'[\u4e00-\u9fa5]{2,4}|[A-Za-z]{3,}', ip):
             name_responses = [
                 f"「{ip}」大佬的服务器需要VIP通行证🎫",
@@ -449,99 +402,53 @@ async def handle_query_single(event: GroupMessageEvent, ip: str):
         server_data = await get_single_server_status(ip)
         image_path = await render_status_image([server_data], event.group_id,True)
         reply_message = MessageSegment.image(file=f"file:///{image_path}")
+    except FinishedException:
+        raise
     except Exception as e:
         reply_message = f"查询 {ip} 失败: {e}"
     await mc_status.finish(reply_message)
 
 
 
-async def handle_list_simple(event: GroupMessageEvent):
-    """处理 /mcs list 命令，显示简要服务器列表"""
-    servers = get_server_list(event.group_id)
+async def handle_list_simple(bot: Bot, event: GroupMessageEvent):
+    """处理 /mcs list 命令，递归显示树形服务器列表"""
+    server_tree = get_server_list(event.group_id)
 
-    if servers:
-        # --- 关键修改 1: 过滤掉标记为忽略的服务器 ---
-        display_servers = [
-            s for s in servers
-            if not s.get('ignore_in_list')
-        ]
-
-        if not display_servers:
-            await mc_status.finish("已添加服务器，但所有服务器均已设置为在列表中隐藏。")
-            return
-
-        # 2. 对用于显示的列表进行排序
-        # 使用 display_servers 而非原始 servers
-        sorted_servers = sorted(display_servers, key=get_server_display_key)
-
-        # 3. 格式化输出
-        server_lines = []
-
-        # 这里的 i 是在显示列表中的索引，从 0 开始
-        for i, s in enumerate(sorted_servers):
-            ip = s.get('ip', '未知服务器')
-            tag = s.get('tag', '')
-            prefix = f"[{tag}] " if tag else ""
-
-            # 显示主从关系
-            server_type = s.get('server_type', 'standalone')
-            indent = "  ↳ " if server_type == 'child' else ""
-
-            # i + 1 是服务器的序号
-            server_lines.append(f"{i + 1}. {indent}{prefix}{ip}")
-
-        server_list = "\n".join(server_lines)
-        await mc_status.finish(f"已添加的服务器:\n{server_list}")
-    else:
+    if not server_tree:
         await mc_status.finish("尚未添加任何服务器")
-
-
-async def handle_list_detail_all(event: GroupMessageEvent):
-    """处理 /mcs list detail 命令，显示所有服务器的关键属性"""
-    servers = get_server_list(event.group_id)
-    if not servers:
-        await mc_status.finish("本群尚未添加Minecraft服务器")
-
-    sorted_servers = sorted(servers, key=get_server_display_key)
-
-    output_lines = ["--- 服务器完整配置概览 ---"]
-    for i, s in enumerate(sorted_servers):
-        # 格式化关键属性
-        tag_color = s.get('tag_color', 'N/A')
-        parent_ip = s.get('parent_ip', 'N/A')
-        ignore = "是" if s.get('ignore_in_list') else "否"
-
-        line = (
-            f"[{s.get('priority', 100)}] {s['ip']}\n"
-            f"  Tag: {s.get('tag', '无')} (Color: {tag_color})\n"
-            f"  Type: {s.get('server_type', 'standalone')} (Parent: {parent_ip})\n"
-            f"  隐藏: {ignore}"
-        )
-        output_lines.append(line)
-        output_lines.append("-" * 20)
-
-    await mc_status.finish("\n".join(output_lines))
-
-
-async def handle_list_detail_single(event: GroupMessageEvent, ip: str):
-    """处理 /mcs list detail <IP> 命令，显示单个服务器的所有属性"""
-    # 假设 data_manager 中有 get_server_info 函数，能返回单个服务器的完整字典
-    server_info = get_server_info(event.group_id, ip)
-
-    if not server_info:
-        await mc_status.finish(f"未找到服务器: {ip}")
         return
 
-    output_lines = [f"--- 服务器 {ip} 完整属性 ---"]
+    def _format_tree(nodes: list, level=0) -> list[str]:
+        lines = []
+        for i, s in enumerate(nodes):
+            ip = s.get('ip', '未知服务器')
+            tag = s.get('tag', '')
+            comment = s.get('comment', '')
+            
+            prefix = f"[{tag}] " if tag else ""
+            display_name = f"{comment} ({ip})" if comment else ip
+            
+            indent = "  " * level
+            connector = "↳ " if level > 0 else ""
+            
+            lines.append(f"{indent}{connector}{prefix}{display_name}")
+            
+            if s.get('children'):
+                lines.extend(_format_tree(s['children'], level + 1))
+        return lines
 
-    # 使用 JSON 格式化输出，清晰显示所有键值对，包括隐藏属性
-    formatted_json = json.dumps(server_info, indent=2, ensure_ascii=False)
-    output_lines.append(formatted_json)
+    server_list_str = "\n".join(_format_tree(server_tree))
+    
+    # 以合并转发形式发送，避免刷屏
+    try:
+        await bot.send_group_forward_msg(group_id=event.group_id, messages=[
+            {"type": "node", "data": {"name": "服务器列表", "uin": event.self_id, "content": f"已添加的服务器:\n{server_list_str}"}}
+        ])
+    except Exception:
+        await mc_status.finish(f"已添加的服务器:\n{server_list_str}")
+    else:
+        await mc_status.finish()
 
-    # 提示如何修改
-    output_lines.append("\n使用 /mcs set <IP> <attr> <value> 进行修改。")
-
-    await mc_status.finish("\n".join(output_lines))
 
 # 屏蔽危险网站
 BLACKLISTED_PATTERNS = [
@@ -565,7 +472,7 @@ def is_valid_server_address(address: str) -> bool:
         return False
 
     try:
-        # 1. 使用 urllib 智能分离 (和之前一样)
+        # 1. 使用 urllib 智能分离
         parsed = urlparse('//' + address)
         host = parsed.hostname
         port = parsed.port
@@ -575,7 +482,7 @@ def is_valid_server_address(address: str) -> bool:
     if host is None:
         return False
 
-    # 2. 端口验证 (和之前一样，它本来就是对的)
+    # 2. 端口验证
     if port is not None:
         if not (1 <= port <= 65535):
             return False
@@ -583,14 +490,14 @@ def is_valid_server_address(address: str) -> bool:
             # 3. 危险地址黑名单验证
     host_lower = host.lower()
     for pattern in BLACKLISTED_PATTERNS:
-        # 【采纳的建议 1】: 清理黑名单，防止配置错误
+        # 清理黑名单，防止配置错误
         pattern_cleaned = pattern.lstrip('.')
         if host_lower == pattern_cleaned or host_lower.endswith('.' + pattern_cleaned):
             return False
 
             # 4. 验证主机格式 (IP 或 域名)
 
-    # 4a. 尝试按 IP 地址解析 (和之前一样)
+    # 4a. 尝试按 IP 地址解析
     try:
         ipaddress.ip_address(host)
         return True
@@ -599,7 +506,7 @@ def is_valid_server_address(address: str) -> bool:
 
     # 4b. 检查是否为有效域名 (Domain Name)
 
-    # 【采纳的建议 2】: 增加IDN(国际化域名)支持
+    # 增加IDN(国际化域名)支持
     try:
         # 尝试将 "中文.com" 编码为 "xn--fiq228c.com"
         host_idna = host.encode('idna').decode('ascii')
@@ -624,11 +531,11 @@ def is_valid_server_address(address: str) -> bool:
         if len(label) > 63 or not label:
             return False
 
-    # 4c. 特殊白名单 (和之前一样)
+    # 4c. 特殊白名单
     if host_lower == 'localhost':
         return True
 
-    # 4d. 域名必须包含一个点 (和之前一样)
+    # 4d. 域名必须包含一个点
     if '.' not in host_idna:
         return False
 
@@ -640,7 +547,7 @@ def is_valid_hex_color(color_str: str) -> bool:
     检查字符串是否是有效的6位十六进制颜色代码（不区分大小写）。
     """
     # 允许 3 位（RGB）或 6 位（RRGGBB）格式，但 6 位更常见和推荐
-    # 这里只检查 6 位格式，因为它是 PIL 的标准输入格式
+    # 这里只检查 6 位格式
     return bool(re.fullmatch(r'^[0-9a-fA-F]{6}$', color_str.strip()))
 
 

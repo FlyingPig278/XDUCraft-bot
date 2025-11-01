@@ -13,7 +13,7 @@ S_CHILDREN = 5
 
 
 def _build_tree(servers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Converts a flat list of servers into a nested tree structure."""
+    """将扁平的服务器列表转换为嵌套的树形结构。"""
     server_map = {s['ip']: {**s, 'children': []} for s in servers}
     tree = []
     for server in server_map.values():
@@ -22,19 +22,19 @@ def _build_tree(servers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             if parent:
                 parent['children'].append(server)
             else:
-                tree.append(server)  # Orphan node, treat as a root
+                tree.append(server)  # 孤儿节点，视为根节点
         else:
             tree.append(server)
     return tree
 
 
 def _flatten_tree(servers_tree: List[Dict[str, Any]], parent_ip: str = "") -> List[Dict[str, Any]]:
-    """Converts a nested tree of servers back into a flat list."""
+    """将嵌套的服务器树转换回扁平列表。"""
     flat_list = []
     for server in servers_tree:
         server['parent_ip'] = parent_ip
         children = server.pop('children', [])
-        # Bot data model doesn't need these UI-specific fields
+        # 机器人数据模型不需要这些UI特定的字段
         server.pop('tag_color_with_hash', None)
         server.pop('selectedPreset', None)
         flat_list.append(server)
@@ -44,7 +44,7 @@ def _flatten_tree(servers_tree: List[Dict[str, Any]], parent_ip: str = "") -> Li
 
 
 def _json_to_compact_array(servers: List[Dict[str, Any]]) -> List[Any]:
-    """Recursively converts a server tree to a compact array."""
+    """递归地将服务器树转换为紧凑数组格式。"""
     if not servers:
         return []
     return [
@@ -61,7 +61,7 @@ def _json_to_compact_array(servers: List[Dict[str, Any]]) -> List[Any]:
 
 
 def _compact_array_to_json(compact_data: List[Any]) -> List[Dict[str, Any]]:
-    """Recursively converts a compact array back to a server tree."""
+    """递归地将紧凑数组格式转换回服务器树。"""
     if not compact_data:
         return []
     servers = []
@@ -82,12 +82,12 @@ def _compact_array_to_json(compact_data: List[Any]) -> List[Dict[str, Any]]:
 
 
 def _to_url_safe_base64(b64_bytes: bytes) -> str:
-    """Converts standard Base64 to URL-safe Base64."""
+    """将标准的Base64转换为URL安全的Base64。"""
     return b64_bytes.replace(b'+', b'-').replace(b'/', b'_').rstrip(b'=').decode('ascii')
 
 
 def _from_url_safe_base64(url_safe_b64_str: str) -> bytes:
-    """Converts URL-safe Base64 back to standard Base64."""
+    """将URL安全的Base64转换回标准的Base64。"""
     b64_str = url_safe_b64_str.replace('-', '+').replace('_', '/')
     padding = -len(b64_str) % 4
     if padding:
@@ -97,11 +97,12 @@ def _from_url_safe_base64(url_safe_b64_str: str) -> bytes:
 
 def compress_config(group_data: Dict[str, Any]) -> str:
     """
-    Compresses a group's configuration dictionary into a URL-safe string.
+    将一个群组的配置字典压缩成URL安全的字符串。
     """
     try:
-        show_offline_by_default = 0  # This setting is not used in the bot, hardcode to 0 for compatibility
-        server_tree = _build_tree(group_data.get('servers', []))
+        # 此设置在机器人端未使用，硬编码为0以兼容旧版
+        show_offline_by_default = 0
+        server_tree = group_data.get('servers', []) # 数据已经是树形结构，直接使用
         compact_servers = _json_to_compact_array(server_tree)
         compact_structure = [
             group_data.get('footer') or 0,
@@ -119,7 +120,7 @@ def compress_config(group_data: Dict[str, Any]) -> str:
 
 def decompress_config(encoded_string: str) -> Dict[str, Any] | None:
     """
-    Decompresses a URL-safe string back into a group's configuration dictionary.
+    将一个URL安全的字符串解压回群组的配置字典。
     """
     try:
         base64_bytes = _from_url_safe_base64(encoded_string)
@@ -127,10 +128,10 @@ def decompress_config(encoded_string: str) -> Dict[str, Any] | None:
         inflated = zlib.decompress(binary_string).decode('utf-8')
         compact_structure = json.loads(inflated)
         server_tree = _compact_array_to_json(compact_structure[2])
-        flat_servers = _flatten_tree(server_tree)
         return {
             'footer': compact_structure[0] or "",
-            'servers': flat_servers
+            'show_offline_by_default': compact_structure[1] == 1,
+            'servers': server_tree
         }
     except Exception as e:
         print(f"Decompression failed: {e}")
