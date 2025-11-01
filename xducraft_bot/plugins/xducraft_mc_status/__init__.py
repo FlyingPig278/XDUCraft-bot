@@ -236,7 +236,7 @@ async def _handle_export_json(bot: Bot, event: GroupMessageEvent, arg_list: list
             "data": {
                 "name": "JSON导出",
                 "uin": event.self_id,
-                "content": "当前群聊的原始JSON配置如下："
+                "content": f"当前群聊的原始JSON配置如下：\n您可以复制此JSON内容，手动导入到Web编辑器：{WEB_UI_BASE_URL}"
             }
         },
         {
@@ -251,7 +251,7 @@ async def _handle_export_json(bot: Bot, event: GroupMessageEvent, arg_list: list
     try:
         await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
     except Exception as e:
-        await mc_status.finish(f"当前群聊的原始JSON配置如下：\n{json_str}")
+        await mc_status.finish(f"当前群聊的原始JSON配置如下：\n您可以复制此JSON内容，手动导入到Web编辑器：{WEB_UI_BASE_URL}\n{json_str}")
     await mc_status.finish()
 
 async def _handle_import(bot: Bot, event: GroupMessageEvent, arg_list: list):
