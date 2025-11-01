@@ -104,3 +104,6 @@ CONNECTOR_LINE_THICKNESS    = 2    # 主服与子服之间连接线的粗细
 
 # 服务器默认排序优先级，数值越小越靠前
 DEFAULT_SERVER_PRIORITY = 100
+
+# 前端Web UI的基础URL，用于生成快捷导入链接
+WEB_UI_BASE_URL = "http://localhost:5173/"

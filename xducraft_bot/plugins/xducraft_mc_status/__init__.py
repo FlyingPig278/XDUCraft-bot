@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from nonebot import on_command
 from nonebot.adapters import Message
-from nonebot.adapters.onebot.v11 import MessageSegment, GroupMessageEvent
+from nonebot.adapters.onebot.v11 import Bot, MessageSegment, GroupMessageEvent
 from nonebot.exception import MatcherException
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
@@ -16,24 +16,23 @@ from .data_manager import add_footer, clear_footer, add_server, remove_server, g
 from .image_renderer import render_status_image
 from .status_fetcher import get_single_server_status, get_all_servers_status, get_server_display_key
 from .config_coder import compress_config, decompress_config
+from .constants import WEB_UI_BASE_URL
 
 __plugin_meta__ = PluginMetadata(
     name="XDUCraft_mc_status",
     description="为XDUCraft提供服务器状态查询功能",
-    usage="""命令：
-/mcs : 查询群聊所有在线服务器状态
-/mcs <IP> : 查询单个服务器状态
-/mcs all : 查询所有已添加服务器状态
-/mcs add <IP> : 添加服务器
-/mcs remove <IP> : 移除服务器
-/mcs set <IP> <attr> <value> : 设置服务器属性（tag, tag_color, server_type, parent_ip, priority）
-/mcs clear <IP> <attr> : 清空/重置服务器属性（tag, tag_color, parent_ip, priority）
-/mcs footer <文本> : 设置页脚文本
-/mcs footer clear : 清除页脚文本
-/mcs list : 查看已添加的服务器列表
-/mcs list detail : 管理员查看所有服务器的关键配置（优先级、标签、类型等）
-/mcs list detail <IP> : 管理员查看单个服务器的所有完整属性（包括隐藏属性）
-/mcs help : 查看帮助信息""",
+    usage="""【用户命令】
+/mcs: 查询服务器状态
+/mcs <IP>: 查询单个服务器
+/mcs all: 查询所有服务器
+/mcs list: 查看服务器列表
+
+【管理员命令】
+/mcs edit: 获取配置链接以在Web UI中编辑
+/mcs import <压缩字符串>: 从Web UI或备份中导入配置
+/mcs add <IP>: 快速添加服务器
+/mcs remove <IP>: 快速移除服务器
+...更多命令请使用 /mcs help 查看""",
 )
 
 usage_user="""命令：
@@ -43,23 +42,30 @@ usage_user="""命令：
 /mcs list : 查看已添加的服务器列表
 /mcs help : 查看帮助信息"""
 
-usage_admin="""命令：
-/mcs : 查询群聊所有在线服务器状态
-/mcs <IP> : 查询单个服务器状态
-/mcs all : 查询所有已添加服务器状态
-/mcs add <IP> : 添加服务器
-/mcs remove <IP> : 移除服务器
-/mcs set <IP> <attr> <value> : 设置服务器属性（tag, tag_color, server_type, parent_ip, priority）
-/mcs clear <IP> <attr> : 清空/重置服务器属性（tag, tag_color, parent_ip, priority）
-/mcs footer <文本> : 设置页脚文本
-/mcs footer clear : 清除页脚文本
-/mcs list : 查看已添加的服务器列表
-/mcs list detail : 管理员查看所有服务器的关键配置（优先级、标签、类型等）
-/mcs list detail <IP> : 管理员查看单个服务器的所有完整属性（包括隐藏属性）
-/mcs export : 导出当前群聊配置的压缩字符串
-/mcs export_json : 导出当前群聊配置的原始JSON格式 (用于排查)
-/mcs import <压缩字符串> : 导入压缩字符串，覆盖当前群聊配置
-/mcs help : 查看帮助信息"""
+usage_admin="""【Web编辑器 (推荐)】
+/mcs edit (export, editor): 生成配置链接并在Web UI中编辑
+/mcs import <压缩字符串>: 从Web UI或备份中导入配置
+---
+【快捷命令】
+/mcs add <IP>: 添加服务器
+/mcs remove <IP>: 移除服务器
+---
+【查询命令】
+/mcs: 查询群聊所有在线服务器状态
+/mcs <IP>: 查询单个服务器状态
+/mcs all: 查询所有已添加服务器状态
+/mcs list: 查看已添加的服务器列表
+---
+【高级/调试命令】
+/mcs set <IP> <attr> <value>: 设置服务器属性
+/mcs clear <IP> <attr>: 清空/重置服务器属性
+/mcs footer <文本>: 设置页脚文本
+/mcs footer clear: 清除页脚文本
+/mcs list detail: 查看所有服务器的详细配置
+/mcs export_json: 导出原始JSON配置 (用于排查)
+---
+【帮助】
+/mcs help: 查看本帮助信息"""
 
 # 主命令
 mc_status = on_command("mcs", aliases={"mcstatus", "服务器", "状态"}, block=True)
@@ -68,7 +74,7 @@ mc_status = on_command("mcs", aliases={"mcstatus", "服务器", "状态"}, block
 
 # --- Command Handlers ---
 
-async def _handle_add(event: GroupMessageEvent, arg_list: list):
+async def _handle_add(bot: Bot, event: GroupMessageEvent, arg_list: list):
     if len(arg_list) < 2:
         await mc_status.finish("命令格式错误，请使用 /mcs add <IP>")
     ip = arg_list[1]
@@ -81,7 +87,7 @@ async def _handle_add(event: GroupMessageEvent, arg_list: list):
     else:
         await mc_status.finish(f"服务器 {ip} 已存在或添加失败")
 
-async def _handle_remove(event: GroupMessageEvent, arg_list: list):
+async def _handle_remove(bot: Bot, event: GroupMessageEvent, arg_list: list):
     if len(arg_list) < 2:
         await mc_status.finish("命令格式错误，请使用 /mcs remove <IP>")
     ip = arg_list[1]
@@ -92,7 +98,7 @@ async def _handle_remove(event: GroupMessageEvent, arg_list: list):
     else:
         await mc_status.finish(f"服务器 {ip} 不存在或移除失败")
 
-async def _handle_footer(event: GroupMessageEvent, arg_list: list):
+async def _handle_footer(bot: Bot, event: GroupMessageEvent, arg_list: list):
     if not is_admin(event):
         await mc_status.finish("你没有执行该命令的权限")
     if len(arg_list) > 1:
@@ -110,7 +116,7 @@ async def _handle_footer(event: GroupMessageEvent, arg_list: list):
         else:
             await mc_status.finish("尚未设置页脚文本")
 
-async def _handle_set(event: GroupMessageEvent, arg_list: list):
+async def _handle_set(bot: Bot, event: GroupMessageEvent, arg_list: list):
     if not is_admin(event):
         await mc_status.finish("你没有执行该命令的权限")
     if len(arg_list) < 4:
@@ -143,7 +149,7 @@ async def _handle_set(event: GroupMessageEvent, arg_list: list):
     else:
         await mc_status.finish(f"设置失败: 服务器 {ip} 不存在。")
 
-async def _handle_clear(event: GroupMessageEvent, arg_list: list):
+async def _handle_clear(bot: Bot, event: GroupMessageEvent, arg_list: list):
     if not is_admin(event):
         await mc_status.finish("你没有执行该命令的权限")
     if len(arg_list) != 3:
@@ -161,7 +167,7 @@ async def _handle_clear(event: GroupMessageEvent, arg_list: list):
     else:
         await mc_status.finish(f"不支持清空属性: {attribute}。请从 {', '.join(valid_attributes)} 中选择。")
 
-async def _handle_list(event: GroupMessageEvent, arg_list: list):
+async def _handle_list(bot: Bot, event: GroupMessageEvent, arg_list: list):
     if len(arg_list) == 1:
         await handle_list_simple(event)
     elif len(arg_list) > 1 and arg_list[1].lower() == "detail":
@@ -174,7 +180,7 @@ async def _handle_list(event: GroupMessageEvent, arg_list: list):
         else:
             await mc_status.finish("命令格式错误，请使用 /mcs list detail 或 /mcs list detail <IP>")
 
-async def _handle_export(event: GroupMessageEvent, arg_list: list):
+async def _handle_export(bot: Bot, event: GroupMessageEvent, arg_list: list):
     if not is_admin(event):
         await mc_status.finish("你没有执行该命令的权限")
     group_data = export_group_data(event.group_id)
@@ -182,11 +188,36 @@ async def _handle_export(event: GroupMessageEvent, arg_list: list):
         await mc_status.finish("当前群聊没有可导出的服务器配置。")
     compressed_str = compress_config(group_data)
     if compressed_str:
-        await mc_status.finish(f"配置导出成功！\n/mcs import {compressed_str}")
+        export_url = f"{WEB_UI_BASE_URL}?data={compressed_str}"
+        
+        nodes = [
+            {
+                "type": "node",
+                "data": {
+                    "name": "配置导出",
+                    "uin": event.self_id,
+                    "content": "配置导出成功！请点击链接导入到Web UI："
+                }
+            },
+            {
+                "type": "node",
+                "data": {
+                    "name": "Web UI链接",
+                    "uin": event.self_id,
+                    "content": export_url
+                }
+            }
+        ]
+        try:
+            await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
+        except Exception as e:
+            # Fallback to direct message if forward message fails
+            await mc_status.finish(f"配置导出成功！\n请点击链接导入到Web UI：\n{export_url}")
+        await mc_status.finish()
     else:
         await mc_status.finish("导出失败：压缩配置时发生错误。")
 
-async def _handle_export_json(event: GroupMessageEvent, arg_list: list):
+async def _handle_export_json(bot: Bot, event: GroupMessageEvent, arg_list: list):
     if not is_admin(event):
         await mc_status.finish("你没有执行该命令的权限")
     group_data = export_group_data(event.group_id)
@@ -197,9 +228,33 @@ async def _handle_export_json(event: GroupMessageEvent, arg_list: list):
     except Exception as e:
         await mc_status.finish(f"生成JSON时发生错误：{e}")
         return
-    await mc_status.finish(f"当前群聊的原始JSON配置如下：\n{json_str}")
+    
+    # Also use merged forward for JSON export
+    nodes = [
+        {
+            "type": "node",
+            "data": {
+                "name": "JSON导出",
+                "uin": event.self_id,
+                "content": "当前群聊的原始JSON配置如下："
+            }
+        },
+        {
+            "type": "node",
+            "data": {
+                "name": "JSON内容",
+                "uin": event.self_id,
+                "content": json_str
+            }
+        }
+    ]
+    try:
+        await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
+    except Exception as e:
+        await mc_status.finish(f"当前群聊的原始JSON配置如下：\n{json_str}")
+    await mc_status.finish()
 
-async def _handle_import(event: GroupMessageEvent, arg_list: list):
+async def _handle_import(bot: Bot, event: GroupMessageEvent, arg_list: list):
     if not is_admin(event):
         await mc_status.finish("你没有执行该命令的权限")
     if len(arg_list) < 2:
@@ -214,9 +269,60 @@ async def _handle_import(event: GroupMessageEvent, arg_list: list):
     else:
         await mc_status.finish("导入失败：数据结构不符合要求。")
 
-async def _handle_help(event: GroupMessageEvent, arg_list: list):
-    help_text = usage_admin if is_admin(event) else usage_user
-    await mc_status.finish(help_text)
+async def _handle_help(bot: Bot, event: GroupMessageEvent, arg_list: list):
+    # For regular users, also use forward message
+    if not is_admin(event):
+        nodes = [
+            {
+                "type": "node",
+                "data": {
+                    "name": "帮助",
+                    "uin": event.self_id,
+                    "content": usage_user
+                }
+            }
+        ]
+        try:
+            await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
+        except Exception as e:
+            await mc_status.finish(usage_user) # Fallback
+        await mc_status.finish()
+        return
+
+    # For admins, send the help message as a forward message to avoid flooding the chat.
+    try:
+        raw_sections = usage_admin.split('---\n')
+        nodes = []
+        for section_content in raw_sections:
+            section_content = section_content.strip()
+            if not section_content:
+                continue
+
+            # Extract the first line as the node name
+            lines = section_content.split('\n', 1) # Split only on the first newline
+            node_name = lines[0].strip() # First line is the name
+            node_content = section_content # Default content is the whole section
+
+            if len(lines) > 1:
+                # If there's more than one line, the rest is the content
+                node_content = lines[1].strip()
+
+            node = {
+                "type": "node",
+                "data": {
+                    "name": node_name,
+                    "uin": event.self_id,
+                    "content": node_content
+                }
+            }
+            nodes.append(node)
+        
+        await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
+    except Exception as e:
+        # Fallback to direct message if forward message fails
+        await mc_status.finish(usage_admin)
+    
+    await mc_status.finish()
 
 
 SUBCOMMAND_HANDLERS = {
@@ -227,13 +333,15 @@ SUBCOMMAND_HANDLERS = {
     "clear": _handle_clear,
     "list": _handle_list,
     "export": _handle_export,
+    "edit": _handle_export,  # Alias for export
+    "editor": _handle_export,  # Alias for export
     "export_json": _handle_export_json,
     "import": _handle_import,
     "help": _handle_help,
 }
 
 @mc_status.handle()
-async def handle_main_command(event: GroupMessageEvent, args: Message = CommandArg()):
+async def handle_main_command(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
     arg_text = args.extract_plain_text().strip()
     arg_list = arg_text.split()
 
@@ -249,7 +357,7 @@ async def handle_main_command(event: GroupMessageEvent, args: Message = CommandA
             handler_args = ['import', arg_text.split(maxsplit=1)[1]]
         else:
             handler_args = arg_list
-        await SUBCOMMAND_HANDLERS[subcommand](event, handler_args)
+        await SUBCOMMAND_HANDLERS[subcommand](bot, event, handler_args)
     elif subcommand == "all" and len(arg_list) == 1:
         await handle_query_all(event, True)
     elif len(arg_list) == 1:
