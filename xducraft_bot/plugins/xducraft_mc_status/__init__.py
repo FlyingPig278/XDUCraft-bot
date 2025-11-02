@@ -292,6 +292,7 @@ async def _handle_help(bot: Bot, event: GroupMessageEvent, arg_list: list):
 SUBCOMMAND_HANDLERS = {
     "add": _handle_add,
     "remove": _handle_remove,
+    "rm":_handle_remove,
     "footer": _handle_footer,
     "set": _handle_set,
     "clear": _handle_clear,
@@ -352,11 +353,60 @@ async def handle_query_all(bot: Bot, event: GroupMessageEvent,show_all_servers: 
 async def handle_query_single(bot: Bot, event: GroupMessageEvent, ip: str):
     """查询单个服务器状态"""
     if not is_valid_server_address(ip):
-        # --- 特殊彩蛋区 ---
-        if '❤' in ip: await mc_status.finish("❤服务器？这怕不是运行在我的心巴上！")
-        if ip == '127.0.0.1' or ip.lower() == 'localhost': await mc_status.finish(random.choice(["...", "..."]))
-        # ... etc
-        await mc_status.finish(random.choice(["...", "..."]))
+        # 假设 ip 是用户输入, is_valid_server_address(ip) 已返回 False
+
+        # --- 1. 特殊彩蛋区 (优先级最高) ---
+        if '❤' in ip:
+            await mc_status.finish("❤服务器？这怕不是运行在我的心巴上！")
+
+        if ip == '127.0.0.1' or ip.lower() == 'localhost':
+            responses = [
+                "你搁这儿开单机呢？查询127.0.0.1...找到了！在你电脑里！",
+                "查询 `localhost`... 数据库连接成功！...等等，我为什么要查我自己？Σ( ° △ °|||)",
+            ]
+            await mc_status.finish(random.choice(responses))
+
+        if ip == '192.168.1.1' or ip == '192.168.0.1':
+            await mc_status.finish("你查路由器干嘛！是不是想改WiFi密码不让我上了！(°òДó)ﾉ")
+
+        if '114514' in ip:
+            await mc_status.finish(f"查询 {ip} 中...哼哼啊啊啊啊啊啊（查询失败）")
+
+        if ip == '404':
+            await mc_status.finish("Server Not Found. (你看，404自己都说找不到了)")
+
+        # --- 2. 格式分类区 ---
+
+        # 检查是否“看起来像IP，但其实无效” (例如: 123.456.789.0)
+        if re.match(r'^\d{1,3}(\.\d{1,3}){3}$', ip):
+            responses = [
+                f"「{ip}」...这个地址...我看不懂，但我大受震撼。",
+                f"你这IP地址是体育老师教的吗？（指 {ip}）",
+                f"正在连接 {ip}... 连接失败。错误代码：256 (数字太大，路由器聊爆了)",
+            ]
+            await mc_status.finish(random.choice(responses))
+
+        # 检查是否像人名或单词
+        if re.search(r'[\u4e00-\u9fa5]{2,4}|[A-Za-z]{3,}', ip):
+            name_responses = [
+                f"「{ip}」大佬的服务器需要VIP通行证🎫",
+                f"正在连接 {ip} 的心跳服务器...信号强度：❤️❤️❤️",
+                f"该服务器需要 {ip} 的指纹验证才能访问🖐️",
+                f"你输入的是...人名？抱歉，本机器人没有「{ip}」的好友，无法查询。",
+            ]
+            await mc_status.finish(random.choice(name_responses))
+
+        # --- 3. 通用兜底区 (适用于其他所有情况) ---
+        general_responses = [
+            f"「{ip}」服务器状态：正在加载存在感...0%",
+            f"警告：'{ip}' 触发路由器颜文字防御系统 (╯°□°)╯︵ ┻━┻",
+            f"正在向 {ip} 发送脑电波...对方已读不回📵",
+            f"该地址过于抽象，需要安装'理解补丁'才能访问🧩",
+            f"系统将 '{ip}' 自动翻译为：爱的告白服务器💌",
+            f"Pinging {ip}... Request timed out. (它好像...跑路了)",
+            f"「{ip}」？你这串神秘代码是不是克苏鲁的召唤咒语？SAN值狂掉...😨",
+        ]
+        await mc_status.finish(random.choice(general_responses))
 
     try:
         await mc_status.send(f"正在查询服务器 {ip} 的状态...")
