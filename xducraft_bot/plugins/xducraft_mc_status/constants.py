@@ -22,25 +22,24 @@ FONTS_PATH = os.path.join(_current_dir, 'resources', 'fonts')
 # 生成的服务器状态图片最终保存的文件夹路径
 SAVE_IMG_DIR = os.path.join(_current_dir, 'data', 'images')
 
-
 # ==============================================================================
 # 2. 颜色定义 (Color Definitions)
 # ==============================================================================
 
 # --- 基础UI颜色 ---
 # 使用 RGBA 格式 (Red, Green, Blue, Alpha)，取值范围 0-255
-CANVAS_BACKGROUND_COLOR       = (46, 33, 23, 255)    # 整个图片画布最底层的背景色
-MAIN_CONTENT_BACKGROUND_COLOR = (15, 11, 7, 255)     # 中间服务器列表区域的深色背景
-PRIMARY_TEXT_COLOR            = (255, 255, 255, 255) # 主要文本颜色，如顶部大标题
-SECONDARY_TEXT_COLOR          = (128, 128, 128, 255) # 次要文本颜色，如 IP、玩家数、版本号等
-CREDIT_TEXT_COLOR             = (200, 200, 200, 255) # 图片底部 "Powered by" 文字的颜色
-PING_COLOR_GREEN              = (0, 255, 33, 255)    # Ping 值较低（<100ms）时显示的绿色
-PING_COLOR_RED                = (255, 85, 85, 255)   # Ping 值较高或服务器离线时显示的红色
+CANVAS_BACKGROUND_COLOR = (46, 33, 23, 255)  # 整个图片画布最底层的背景色
+MAIN_CONTENT_BACKGROUND_COLOR = (15, 11, 7, 255)  # 中间服务器列表区域的深色背景
+PRIMARY_TEXT_COLOR = (255, 255, 255, 255)  # 主要文本颜色，如顶部大标题
+SECONDARY_TEXT_COLOR = (128, 128, 128, 255)  # 次要文本颜色，如 IP、玩家数、版本号等
+CREDIT_TEXT_COLOR = (200, 200, 200, 255)  # 图片底部 "Powered by" 文字的颜色
+PING_COLOR_GREEN = (0, 255, 33, 255)  # Ping 值较低（<100ms）时显示的绿色
+PING_COLOR_RED = (255, 85, 85, 255)  # Ping 值较高或服务器离线时显示的红色
 
 # --- 组件特定颜色 ---
-TAG_DEFAULT_BACKGROUND        = '#282828'             # 服务器 Tag 的默认背景色（十六进制字符串）
-TAG_TEXT_COLOR                = (255, 255, 255, 255) # Tag 内部文字的颜色，设计为白色以适应任何背景
-CONNECTOR_LINE_COLOR          = (150, 150, 150, 255) # 连接主服和子服的线条颜色
+TAG_DEFAULT_BACKGROUND = '#282828'  # 服务器 Tag 的默认背景色（十六进制字符串）
+TAG_TEXT_COLOR = (255, 255, 255, 255)  # Tag 内部文字的颜色，设计为白色以适应任何背景
+CONNECTOR_LINE_COLOR = (150, 150, 150, 255)  # 连接主服和子服的线条颜色
 
 # --- MOTD 颜色代码映射 ---
 # 用于解析 Minecraft MOTD 中的颜色代码
@@ -49,7 +48,7 @@ MINECRAFT_COLOR_CODES = {
     '4': (170, 0, 0, 255), '5': (170, 0, 170, 255), '6': (255, 170, 0, 255), '7': (170, 170, 170, 255),
     '8': (85, 85, 85, 255), '9': (85, 85, 255, 255), 'a': (85, 255, 85, 255), 'b': (85, 255, 255, 255),
     'c': (255, 85, 85, 255), 'd': (255, 85, 255, 255), 'e': (255, 255, 85, 255), 'f': (255, 255, 255, 255),
-    'r': (255, 255, 255, 255), # 'r' (reset) 通常重置为白色
+    'r': (255, 255, 255, 255),  # 'r' (reset) 通常重置为白色
 }
 
 HTML_COLOR_CODES = {
@@ -63,40 +62,38 @@ HTML_COLOR_CODES = {
     'white': (255, 255, 255, 255),
 }
 
-
 # ==============================================================================
 # 3. 布局与尺寸 (Layout & Dimensions)
 # ==============================================================================
 
 # --- 画布与主结构 ---
-IMAGE_WIDTH                 = 1140 # 图片的总宽度（单位：像素）
-LAYOUT_BASE_PADDING         = 60   # 内容区域距离图片左右边缘的基础内边距
-LAYOUT_TITLE_AREA_HEIGHT    = 120  # 顶部标题区域的高度
-LAYOUT_FOOTER_AREA_HEIGHT   = 60   # 底部页脚文本区域的高度
-LAYOUT_CREDIT_AREA_HEIGHT   = 60   # 最底部 "Powered by" 区域的高度
+IMAGE_WIDTH = 1140  # 图片的总宽度（单位：像素）
+LAYOUT_BASE_PADDING = 60  # 内容区域距离图片左右边缘的基础内边距
+LAYOUT_TITLE_AREA_HEIGHT = 120  # 顶部标题区域的高度
+LAYOUT_FOOTER_AREA_HEIGHT = 60  # 底部页脚文本区域的高度
+LAYOUT_CREDIT_AREA_HEIGHT = 60  # 最底部 "Powered by" 区域的高度
 
 # --- 服务器列表布局 ---
-SERVER_ROW_HEIGHT           = 140  # 每个服务器信息行的基础高度（不包含展开的玩家列表）
-PLAYER_LIST_OFFSET          = 35   # 当服务器有在线玩家列表时，为其额外增加的垂直高度
-OFFSET_SERVER_LIST_START_Y  = 30   # 服务器列表距离顶部标题区域下方的额外间距
-CHILD_INDENT_PX             = 100  # 子服务器相对于主服务器的水平缩进距离
+SERVER_ROW_HEIGHT = 140  # 每个服务器信息行的基础高度（不包含展开的玩家列表）
+PLAYER_LIST_OFFSET = 35  # 当服务器有在线玩家列表时，为其额外增加的垂直高度
+OFFSET_SERVER_LIST_START_Y = 30  # 服务器列表距离顶部标题区域下方的额外间距
+CHILD_INDENT_PX = 100  # 子服务器相对于主服务器的水平缩进距离
 
 # --- 服务器行内部元素布局 ---
-LAYOUT_SERVER_ICON_SIZE     = 80   # 服务器图标的尺寸（宽度和高度）
-ICON_TEXT_SPACING           = 20   # 服务器图标与其右侧文本（Tag/MOTD）之间的水平间距
+LAYOUT_SERVER_ICON_SIZE = 80  # 服务器图标的尺寸（宽度和高度）
+ICON_TEXT_SPACING = 20  # 服务器图标与其右侧文本（Tag/MOTD）之间的水平间距
 
 # --- 文本垂直偏移量 (相对于每行的顶部 `current_y`) ---
-OFFSET_IP_Y                 = 45   # IP/域名文本的垂直偏移
-OFFSET_PLAYER_COUNT_Y       = 32   # 在线玩家数文本的垂直偏移（右对齐）
-OFFSET_VERSION_Y            = 64   # 版本信息文本的垂直偏移（右对齐）
-OFFSET_PLAYER_LIST_Y        = 96   # 在线玩家列表文本的垂直偏移
+OFFSET_IP_Y = 45  # IP/域名文本的垂直偏移
+OFFSET_PLAYER_COUNT_Y = 32  # 在线玩家数文本的垂直偏移（右对齐）
+OFFSET_VERSION_Y = 64  # 版本信息文本的垂直偏移（右对齐）
+OFFSET_PLAYER_LIST_Y = 96  # 在线玩家列表文本的垂直偏移
 
 # --- 组件特定布局 ---
-PLAYER_LIST_DOT_SPACING     = 8    # 在线玩家列表前的绿色圆点与文字之间的间距
-TAG_PADDING_X               = 12   # Tag 背景框内部的水平内边距（左右各加 12px）
-TAG_PADDING_Y               = 6    # Tag 背景框内部的垂直内边距（上下各加 6px）
-CONNECTOR_LINE_THICKNESS    = 2    # 主服与子服之间连接线的粗细
-
+PLAYER_LIST_DOT_SPACING = 8  # 在线玩家列表前的绿色圆点与文字之间的间距
+TAG_PADDING_X = 12  # Tag 背景框内部的水平内边距（左右各加 12px）
+TAG_PADDING_Y = 6  # Tag 背景框内部的垂直内边距（上下各加 6px）
+CONNECTOR_LINE_THICKNESS = 2  # 主服与子服之间连接线的粗细
 
 # ==============================================================================
 # 4. 逻辑与数据默认值 (Logic & Data Defaults)
@@ -106,4 +103,4 @@ CONNECTOR_LINE_THICKNESS    = 2    # 主服与子服之间连接线的粗细
 DEFAULT_SERVER_PRIORITY = 100
 
 # 前端Web UI的基础URL，用于生成快捷导入链接
-WEB_UI_BASE_URL = "http://flyingpig278.com:8888/"
+WEB_UI_BASE_URL = "https://edit.flyingpig278.com/"
