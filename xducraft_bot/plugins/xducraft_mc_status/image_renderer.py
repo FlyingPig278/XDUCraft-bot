@@ -230,7 +230,7 @@ def _draw_motd(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], current_y
 
 def _draw_hostname(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], current_y: int, horizontal_offset: int):
     """绘制服务器的主机名/IP。"""
-    hostname = server_data.get('ip', '未知服务器').replace(':', " : ").replace('.', " . ")
+    hostname = server_data.get('hostname', '未知服务器').replace(':', " : ").replace('.', " . ")
     display_text = hostname
 
     draw.text((horizontal_offset + LAYOUT_BASE_PADDING + LAYOUT_SERVER_ICON_SIZE + ICON_TEXT_SPACING, current_y + OFFSET_IP_Y),
