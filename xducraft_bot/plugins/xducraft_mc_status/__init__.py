@@ -2,7 +2,6 @@ import ipaddress
 import json
 import random
 import re
-import time
 from urllib.parse import urlparse
 
 from nonebot import on_command
@@ -68,9 +67,6 @@ usage_admin="""【Web编辑器 (推荐)】
 ---
 【帮助】
 /mcs help: 查看本帮助信息"""
-
-last_command_time: float = 0.0
-COMMAND_COOLDOWN: int = 60
 
 # 主命令
 mc_status = on_command("mcs", aliases={"mcstatus", "服务器", "状态"}, block=True)
@@ -311,35 +307,9 @@ SUBCOMMAND_HANDLERS = {
 
 @mc_status.handle()
 async def handle_main_command(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    global last_command_time  # 声明我们将修改全局变量
 
     arg_text = args.extract_plain_text().strip()
     arg_list = arg_text.split()
-
-    # --- 冷却时间检查 ---
-    # 我们需要判断这个命令是否是“查询命令”
-    is_query_command = False
-    if not arg_list:
-        # 1. /mcs (无参数)
-        is_query_command = True
-    elif len(arg_list) == 1:
-        subcommand_lower = arg_list[0].lower()
-        if subcommand_lower == "all":
-            # 2. /mcs all
-            is_query_command = True
-        elif subcommand_lower not in SUBCOMMAND_HANDLERS:
-            # 3. /mcs <IP> (不是一个已知的子命令，假定为IP)
-            is_query_command = True
-
-    if is_query_command:
-        current_time = time.time()
-        if current_time - last_command_time < COMMAND_COOLDOWN:
-            remaining = COMMAND_COOLDOWN - (current_time - last_command_time)
-            await mc_status.finish(f"全群查询冷却中，请稍后 {remaining:.1f} 秒再试")
-
-        # 通过冷却检查，更新时间
-        last_command_time = current_time
-    # --- 冷却检查结束 ---
 
     # --- 原有的命令分发逻辑 ---
     if not arg_list:
