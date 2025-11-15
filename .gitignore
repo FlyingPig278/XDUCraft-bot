@@ -4,7 +4,7 @@
 # 实际运行时的环境配置文件，通常包含 QQ 号或密钥等
 .env
 .env.*
-!.env.prod
+!.env.prod.example
 
 # 插件运行时产生的数据，如缓存、图片输出、数据库文件
 **/data/*
@@ -37,5 +37,8 @@ Thumbs.db
 # 测试和构建缓存
 # ------------------------------------
 .pytest_cache/
+__pycache__/
 
 **/App.vue
+
+bot.py
