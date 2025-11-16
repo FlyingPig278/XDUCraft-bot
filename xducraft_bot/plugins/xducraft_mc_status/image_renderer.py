@@ -209,7 +209,9 @@ def _draw_motd(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], current_y
 
         # 简单的截断逻辑 (如果需要可以改进)
         max_len_px = IMAGE_WIDTH - motd_start_x - 100  # 为ping/players保留空间
-        if calculate_clean_length(check_title, FONT_MC_MOTD, is_html=is_html_mode) > max_len_px:
+        if title == 'A Minecraft Server' and server_data.get('comment'):
+            final_title = server_data.get('comment')
+        elif calculate_clean_length(check_title, FONT_MC_MOTD, is_html=is_html_mode) > max_len_px:
             final_title = title.split('<br>', 1)[0]
         else:
             final_title = check_title
@@ -230,11 +232,13 @@ def _draw_motd(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], current_y
 
 def _draw_hostname(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], current_y: int, horizontal_offset: int):
     """绘制服务器的主机名/IP。"""
-    hostname = (server_data.get('hostname', '未知服务器')+' : '+str(server_data.get('port',25565))).replace('.', " . ")
-    display_text = hostname
+    hostname = server_data.get('hostname', '未知服务器')
+    port=str(server_data.get('port', 25565))
+    if port != '25565':
+        hostname+=' : '+port
 
     draw.text((horizontal_offset + LAYOUT_BASE_PADDING + LAYOUT_SERVER_ICON_SIZE + ICON_TEXT_SPACING, current_y + OFFSET_IP_Y),
-              display_text, fill=SECONDARY_TEXT_COLOR, font=FONT_MC_MEDIUM)
+              hostname, fill=SECONDARY_TEXT_COLOR, font=FONT_MC_MEDIUM)
 
 
 def _draw_status_info(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], current_y: int):
