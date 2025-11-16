@@ -18,10 +18,10 @@ async def get_single_server_status(ip: str) -> Dict[str, Any]:
             data['original_query'] = ip
             if not data.get('online'):
                 data.setdefault('hostname', ip)
-                data.setdefault('port', 0)
+                data.setdefault('port', 25565)
             return data
         except httpx.RequestError as e:
-            return {"online": False, "hostname": ip, "port": 0, "original_query": ip, "error": str(e)}
+            return {"online": False, "hostname": ip, "port": 25565, "original_query": ip, "error": str(e)}
 
 
 def _merge_results_into_tree(

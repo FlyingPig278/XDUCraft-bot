@@ -198,7 +198,6 @@ def clear_server_attribute(group_id: int, server_ip: str, attribute: str) -> boo
         'tag': '',
         'tag_color': '',
         'comment': '',
-        'parent_ip': '',  # 这是隐式定义的，但如果存储了也可以清除
         'priority': DEFAULT_SERVER_PRIORITY,
         'ignore_in_list': False
     }
@@ -236,7 +235,7 @@ def export_group_data(group_id: int) -> Dict[str, Any]:
     _ensure_group_data_exists(data, group_id_str)
     return data[group_id_str]
 
-# --- 页脚管理 (保持不变) ---
+# --- 页脚管理 ---
 
 def get_footer(group_id: int) -> str:
     """获取一个群组的页脚。"""
