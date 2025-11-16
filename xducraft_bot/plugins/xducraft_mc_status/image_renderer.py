@@ -1,6 +1,6 @@
 # 1. 标准库导入
-import os
 import re
+from math import ceil
 from typing import List, Dict, Any
 
 # 2. 第三方库导入
@@ -168,8 +168,8 @@ def _draw_tag_with_background(draw: ImageDraw.ImageDraw, tag: str, tag_color_hex
     tag_text = tag
 
     bbox = draw.textbbox((0, 0), tag_text, font=FONT_ZH_TAG)
-    tag_text_height = bbox[3] - bbox[1]
-    tag_text_width = bbox[2] - bbox[0]
+    tag_text_height = int(ceil(bbox[3] - bbox[1]))
+    tag_text_width = int(ceil(bbox[2] - bbox[0]))
 
     rect_width = tag_text_width + 2 * TAG_PADDING_X
     rect_height = tag_text_height + 2 * TAG_PADDING_Y

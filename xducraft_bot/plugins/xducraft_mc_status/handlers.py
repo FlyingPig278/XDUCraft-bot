@@ -4,14 +4,12 @@ import re
 
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment
 from nonebot.exception import MatcherException
-from nonebot.internal.adapter import Message
-from nonebot.params import CommandArg
 
 
 from .config_coder import compress_config, decompress_config
 from .constants import WEB_UI_BASE_URL, USAGE_USER, USAGE_ADMIN
 from .data_manager import add_server, remove_server, clear_footer, add_footer, get_footer, set_server_attribute, \
-    clear_server_attribute, export_group_data, import_group_data, get_server_list, get_show_offline_by_default
+    clear_server_attribute, export_group_data, import_group_data, get_server_list
 from .image_renderer import render_status_image
 from .status_fetcher import get_all_servers_status, get_single_server_status
 from .utils import is_admin, is_valid_server_address, is_valid_hex_color
