@@ -1,4 +1,3 @@
-
 import json
 import os
 from typing import Dict, List, Any, Tuple, Optional
@@ -42,7 +41,7 @@ def _ensure_group_data_exists(data: Dict[str, Any], group_id_str: str):
 # --- 树形结构遍历与操作辅助函数 ---
 
 def _find_server_in_tree(
-    server_tree: List[Dict[str, Any]], server_ip: str
+        server_tree: List[Dict[str, Any]], server_ip: str
 ) -> Optional[Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
     """
     在树中递归地通过IP查找服务器。
@@ -78,206 +77,73 @@ def _flatten_tree(server_tree: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 # --- 公共API：数据管理 ---
 
 
-
-
-
 def get_server_list(group_id: int) -> List[Dict[str, Any]]:
-
-
     """
-
-
     获取一个群组的服务器列表，这是一个树形结构。
-
-
     """
-
-
     data = _load_data()
-
-
     group_id_str = str(group_id)
-
-
     return data.get(group_id_str, {}).get("servers", [])
 
 
-
-
-
-
-
-
 def get_all_servers_flat(group_id: int) -> List[Dict[str, Any]]:
-
-
     """
-
-
     获取一个群组所有服务器的扁平列表。
-
-
     用于需要遍历每个服务器的任务，例如获取状态。
-
-
     """
-
-
     server_tree = get_server_list(group_id)
-
-
     return _flatten_tree(server_tree)
 
 
-
-
-
-
-
-
 def get_server_info(group_id: int, server_ip: str) -> Optional[Dict[str, Any]]:
-
-
     """获取单个服务器的完整信息字典。"""
-
-
     server_tree = get_server_list(group_id)
-
-
     found = _find_server_in_tree(server_tree, server_ip)
-
-
     return found[0] if found else None
 
 
-
-
-
 def get_show_offline_by_default(group_id: int) -> bool:
-
-
     """获取一个群组的 'show_offline_by_default' 标志。"""
-
-
     data = _load_data()
-
-
     group_id_str = str(group_id)
-
-
     return data.get(group_id_str, {}).get("show_offline_by_default", False)
 
 
-
-
-
 def add_server(group_id: int, server_ip: str, tag: str = "", tag_color: str = "",
-
-
                comment: str = "", ignore_in_list: bool = False,
-
-
                parent_ip: str = "", priority: int = DEFAULT_SERVER_PRIORITY) -> bool:
-
-
     """向树中添加一个服务器。"""
-
-
     data = _load_data()
-
-
     group_id_str = str(group_id)
-
-
     _ensure_group_data_exists(data, group_id_str)
-
-
     server_tree = data[group_id_str]["servers"]
-
-
-
-
-
     # 检查IP是否已在树中的任何位置存在
-
-
     if get_server_info(group_id, server_ip):
-
-
         return False
 
-
-
-
-
     new_server = {
-
-
         "ip": server_ip,
-
-
         "comment": comment,
-
-
         "tag": tag,
-
-
         "tag_color": tag_color,
-
-
         "ignore_in_list": ignore_in_list,
-
-
         "priority": priority,
-
-
         "children": []
-
-
         # parent_ip 和 server_type 由结构隐式定义
-
-
     }
 
-
-
-
-
     if parent_ip:
-
-
         # 作为子节点添加
-
-
         found = _find_server_in_tree(server_tree, parent_ip)
-
-
         if found:
-
-
             parent_server, _ = found
-
-
             parent_server.setdefault('children', []).append(new_server)
-
-
         else:
-
-
             # 未找到父节点，作为根节点添加（兜底）
-
-
             server_tree.append(new_server)
-
-
     else:
-
-
         # 添加到根节点
-
-
         server_tree.append(new_server)
-
     _save_data(data)
     return True
 
@@ -332,7 +198,7 @@ def clear_server_attribute(group_id: int, server_ip: str, attribute: str) -> boo
         'tag': '',
         'tag_color': '',
         'comment': '',
-        'parent_ip': '', # 这是隐式定义的，但如果存储了也可以清除
+        'parent_ip': '',  # 这是隐式定义的，但如果存储了也可以清除
         'priority': DEFAULT_SERVER_PRIORITY,
         'ignore_in_list': False
     }
@@ -358,95 +224,36 @@ def import_group_data(group_id: int, data_to_import: Dict[str, Any]) -> bool:
     data[group_id_str]['servers'] = data_to_import.get("servers", [])
     data[group_id_str]['footer'] = data_to_import.get("footer", "")
     data[group_id_str]['show_offline_by_default'] = data_to_import.get("show_offline_by_default", False)
-
     _save_data(data)
     return True
 
 
 def export_group_data(group_id: int) -> Dict[str, Any]:
-
-
     """导出一个群组的完整配置数据。"""
-
-
     data = _load_data()
-
-
     group_id_str = str(group_id)
-
-
     # 如果群组不存在，确保返回默认结构
-
-
     _ensure_group_data_exists(data, group_id_str)
-
-
     return data[group_id_str]
-
-
-
-
-
-
-
 
 # --- 页脚管理 (保持不变) ---
 
-
-
-
-
 def get_footer(group_id: int) -> str:
-
-
     """获取一个群组的页脚。"""
-
-
     data = _load_data()
-
-
     group_id_str = str(group_id)
-
-
     return data.get(group_id_str, {}).get("footer", "")
 
 
-
-
-
-
-
-
 def add_footer(group_id: int, footer_text: str):
-
-
     """为一个群组添加或更新页脚。"""
-
-
     data = _load_data()
-
-
     group_id_str = str(group_id)
-
-
     _ensure_group_data_exists(data, group_id_str)
-
-
     data[group_id_str]["footer"] = footer_text
-
-
     _save_data(data)
 
 
-
-
-
-
-
-
 def clear_footer(group_id: int):
-
-
     """清除一个群组的页脚。"""
     add_footer(group_id, "")
-
