@@ -104,3 +104,38 @@ DEFAULT_SERVER_PRIORITY = 100
 
 # 前端Web UI的基础URL，用于生成快捷导入链接
 WEB_UI_BASE_URL = "https://edit.flyingpig278.com/"
+
+# ==============================================================================
+# 5. 帮助文本 (Usage)
+# ==============================================================================
+
+USAGE_USER= """命令：
+/mcs : 查询群聊所有在线服务器状态
+/mcs <IP> : 查询单个服务器状态
+/mcs all : 查询所有已添加服务器状态
+/mcs list : 查看已添加的服务器列表
+/mcs help : 查看帮助信息"""
+USAGE_ADMIN= """【Web编辑器 (推荐)】
+强烈推荐使用Web编辑器进行编辑
+/mcs edit (export, editor): 生成配置链接并在Web UI中编辑
+/mcs import <压缩字符串>: 从Web UI或备份中导入配置
+---
+【查询命令】
+/mcs: 查询群聊所有在线服务器状态
+/mcs <IP>: 查询单个服务器状态
+/mcs all: 查询所有已添加服务器状态
+/mcs list: 查看已添加的服务器列表
+---
+【快捷命令】
+/mcs add <IP>: 添加服务器
+/mcs remove <IP>: 移除服务器
+---
+【高级/调试命令】
+/mcs set <IP> <attr> <value>: 设置服务器属性
+/mcs clear <IP> <attr>: 清空/重置服务器属性
+/mcs footer <文本>: 设置页脚文本
+/mcs footer clear: 清除页脚文本
+/mcs export_json: 导出原始JSON配置 (用于排查)
+---
+【帮助】
+/mcs help: 查看本帮助信息"""
