@@ -9,7 +9,7 @@ from nonebot.exception import MatcherException
 from .config_coder import compress_config, decompress_config
 from .constants import WEB_UI_BASE_URL, USAGE_USER, USAGE_ADMIN
 from .data_manager import add_server, remove_server, clear_footer, add_footer, get_footer, set_server_attribute, \
-    clear_server_attribute, export_group_data, import_group_data, get_server_list
+    clear_server_attribute, export_group_data, import_group_data, get_server_list, get_server_info
 from .image_renderer import render_status_image
 from .status_fetcher import get_all_servers_status, get_single_server_status
 from .utils import is_admin, is_valid_server_address, is_valid_hex_color
@@ -249,7 +249,7 @@ async def handle_query_all(bot: Bot, event: GroupMessageEvent,show_all_servers: 
         raise
     except Exception as e:
         reply_message = f"查询所有服务器状态失败: {e}"
-        raise
+        # raise
     await mc_status.finish(reply_message)
 
 
@@ -314,8 +314,27 @@ async def handle_query_single(bot: Bot, event: GroupMessageEvent, ip: str):
 
     try:
         await mc_status.send(f"正在查询服务器 {ip} 的状态...")
-        server_data = await get_single_server_status(ip)
-        image_path = await render_status_image([server_data], event.group_id,True)
+
+        # 1. 获取实时服务器状态
+        live_status_data = await get_single_server_status(ip)
+
+        # 2. 获取本地存储的服务器配置信息
+        saved_config = get_server_info(event.group_id, ip)
+
+        # 3. 合并信息
+        if saved_config:
+            # 如果找到了本地配置，直接用它与实时状态合并
+            # 本地配置(saved_config)的值会覆盖实时状态(live_status_data)中的同名字段
+            final_server_data = {**live_status_data, **saved_config}
+        else:
+            # 如果在本地配置中没找到该服务器，直接使用实时状态
+            final_server_data = live_status_data
+
+        # 4. 移除子服信息，确保只渲染查询的单个服务器
+        final_server_data.pop('children', None)
+
+        # 5. 使用处理后的数据生成图片
+        image_path = await render_status_image([final_server_data], event.group_id, True)
         reply_message = MessageSegment.image(file=f"file:///{image_path}")
     except MatcherException:
         raise
