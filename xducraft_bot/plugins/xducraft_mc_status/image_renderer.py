@@ -232,13 +232,22 @@ def _draw_motd(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], current_y
 
 def _draw_hostname(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], current_y: int, horizontal_offset: int):
     """绘制服务器的主机名/IP。"""
-    hostname = server_data.get('hostname', '未知服务器')
-    port=str(server_data.get('port', 25565))
-    if port != '25565':
-        hostname+=' : '+port
+    hide_ip = server_data.get('hide_ip', False)
+    display_name = server_data.get('display_name', '')
+    
+    hostname_text = ""
+    if hide_ip:
+        hostname_text = display_name if display_name else "[IP已隐藏]"
+    else:
+        # 保持原有的IP和端口格式化逻辑
+        hostname = server_data.get('ip', '未知服务器')
+        port=str(server_data.get('port', 25565))
+        if port != '25565':
+            hostname+=' : '+port
+        hostname_text = hostname
 
     draw.text((horizontal_offset + LAYOUT_BASE_PADDING + LAYOUT_SERVER_ICON_SIZE + ICON_TEXT_SPACING, current_y + OFFSET_IP_Y),
-              hostname, fill=SECONDARY_TEXT_COLOR, font=FONT_MC_MEDIUM)
+              hostname_text, fill=SECONDARY_TEXT_COLOR, font=FONT_MC_MEDIUM)
 
 
 def _draw_status_info(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], current_y: int):
