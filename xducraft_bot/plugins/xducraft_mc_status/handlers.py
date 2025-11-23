@@ -137,9 +137,7 @@ async def _handle_export(bot: Bot, event: GroupMessageEvent, arg_list: list):
     from . import mc_status
     if not await is_admin(bot, event):
         await mc_status.finish("你没有执行该命令的权限")
-    group_data = export_group_data(event.group_id)
-    if not group_data or not group_data.get("servers"):
-        await mc_status.finish("当前群聊没有可导出的服务器配置。")
+    group_data = export_group_data(event.group_id) or {}
 
     compressed_str = compress_config(group_data)
     if not compressed_str:
@@ -163,9 +161,7 @@ async def _handle_export_json(bot: Bot, event: GroupMessageEvent, arg_list: list
     from . import mc_status
     if not await is_admin(bot, event):
         await mc_status.finish("你没有执行该命令的权限")
-    group_data = export_group_data(event.group_id)
-    if not group_data or not group_data.get("servers"):
-        await mc_status.finish("当前群聊没有可导出的服务器配置。")
+    group_data = export_group_data(event.group_id) or {}
     try:
         json_str = json.dumps(group_data, indent=2, ensure_ascii=False)
     except Exception as e:
