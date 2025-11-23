@@ -3,13 +3,15 @@ import zlib
 import base64
 from typing import List, Dict, Any
 
-# --- Constants for compact array indices from App.vue ---
+# --- 紧凑数组索引常量 (与 App.vue 保持一致) ---
 S_IP = 0
 S_COMMENT = 1
 S_TAG = 2
 S_TAG_COLOR = 3
 S_IGNORE = 4
-S_CHILDREN = 5
+S_HIDE_IP = 5      # 新增
+S_DISPLAY_NAME = 6 # 新增
+S_CHILDREN = 7     # 原来的 S_CHILDREN 索引后移
 
 
 def _build_tree(servers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -54,6 +56,8 @@ def _json_to_compact_array(servers: List[Dict[str, Any]]) -> List[Any]:
             s.get('tag') or 0,
             s.get('tag_color') or 0,
             1 if s.get('ignore_in_list') else 0,
+            1 if s.get('hide_ip') else 0,         # 新增
+            s.get('display_name') or 0,           # 新增
             _json_to_compact_array(s.get('children', [])) or 0
         ]
         for s in servers
@@ -66,7 +70,7 @@ def _compact_array_to_json(compact_data: List[Any]) -> List[Dict[str, Any]]:
         return []
     servers = []
     for item in compact_data:
-        children_data = item[S_CHILDREN]
+        children_data = item[S_CHILDREN] if len(item) > S_CHILDREN else [] # 兼容旧格式，没有hide_ip/display_name时
         children = _compact_array_to_json(children_data) if isinstance(children_data, list) else []
 
         server = {
@@ -75,6 +79,8 @@ def _compact_array_to_json(compact_data: List[Any]) -> List[Dict[str, Any]]:
             'tag': item[S_TAG] or "",
             'tag_color': item[S_TAG_COLOR] or "",
             'ignore_in_list': item[S_IGNORE] == 1,
+            'hide_ip': item[S_HIDE_IP] == 1 if len(item) > S_HIDE_IP else False,          # 新增
+            'display_name': item[S_DISPLAY_NAME] or "" if len(item) > S_DISPLAY_NAME else "", # 新增
             'children': children
         }
         servers.append(server)
@@ -114,7 +120,7 @@ def compress_config(group_data: Dict[str, Any]) -> str:
         base64_encoded = base64.b64encode(compressed)
         return _to_url_safe_base64(base64_encoded)
     except Exception as e:
-        print(f"Compression failed: {e}")
+        print(f"压缩失败: {e}")
         return ""
 
 
@@ -134,5 +140,5 @@ def decompress_config(encoded_string: str) -> Dict[str, Any] | None:
             'servers': server_tree
         }
     except Exception as e:
-        print(f"Decompression failed: {e}")
+        print(f"解压失败: {e}")
         return None
