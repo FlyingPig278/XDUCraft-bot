@@ -74,7 +74,7 @@ async def _handle_set(bot: Bot, event: GroupMessageEvent, arg_list: list):
     attribute = arg_list[2].lower()
     value = ' '.join(arg_list[3:]) # 允许值带有空格
 
-    valid_attributes = {"tag", "tag_color", "comment", "priority", "ignore_in_list"}
+    valid_attributes = {"tag", "tag_color", "comment", "priority", "ignore_in_list", "hide_ip", "display_name"}
     if attribute not in valid_attributes:
         if attribute == "parent_ip":
             await mc_status.finish(f"不支持直接修改 parent_ip。\n请使用 /mcs edit 命令打开Web UI，通过拖拽来修改服务器层级关系。")
@@ -85,13 +85,13 @@ async def _handle_set(bot: Bot, event: GroupMessageEvent, arg_list: list):
             value = int(value)
         except ValueError:
             await mc_status.finish("优先级 (priority) 必须是一个整数。")
-    elif attribute == "ignore_in_list":
+    elif attribute in ["ignore_in_list", "hide_ip"]:
         if value.lower() in ['true', '1', 'yes', 'y', '是']:
             value = True
         elif value.lower() in ['false', '0', 'no', 'n', '否']:
             value = False
         else:
-            await mc_status.finish("隐藏属性 (ignore_in_list) 的值必须是 True/False。")
+            await mc_status.finish(f"属性 [{attribute}] 的值必须是 True/False。")
     elif attribute == "tag_color":
         if value.startswith("#"):
             value = value[1:]
@@ -114,7 +114,7 @@ async def _handle_clear(bot: Bot, event: GroupMessageEvent, arg_list: list):
 
     ip = arg_list[1]
     attribute = arg_list[2].lower()
-    valid_attributes = {"tag", "tag_color", "parent_ip", "priority"}
+    valid_attributes = {"tag", "tag_color", "parent_ip", "priority", "comment", "ignore_in_list", "hide_ip", "display_name"}
 
     if attribute in valid_attributes:
         if clear_server_attribute(event.group_id, ip, attribute):

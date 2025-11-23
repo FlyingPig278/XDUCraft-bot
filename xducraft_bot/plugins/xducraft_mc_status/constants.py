@@ -131,8 +131,8 @@ USAGE_ADMIN= """【Web编辑器 (推荐)】
 /mcs remove <IP>: 移除服务器
 ---
 【高级/调试命令】
-/mcs set <IP> <attr> <value>: 设置服务器属性
-/mcs clear <IP> <attr>: 清空/重置服务器属性
+/mcs set <IP> <attr> <value>: 设置服务器属性 (支持: tag, tag_color, comment, priority, ignore_in_list, hide_ip, display_name)
+/mcs clear <IP> <attr>: 清空/重置服务器属性 (支持: tag, tag_color, comment, priority, ignore_in_list, hide_ip, display_name)
 /mcs footer <文本>: 设置页脚文本
 /mcs footer clear: 清除页脚文本
 /mcs export_json: 导出原始JSON配置 (用于排查)
