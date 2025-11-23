@@ -354,15 +354,25 @@ async def handle_list_simple(bot: Bot, event: GroupMessageEvent):
             ip = s.get('ip', '未知服务器')
             tag = s.get('tag', '')
             comment = s.get('comment', '')
+            hide_ip = s.get('hide_ip', False)
+            display_name = s.get('display_name', '')
+            
+            # 根据 hide_ip 和 display_name 决定地址部分的显示内容
+            address_part = ""
+            if hide_ip:
+                address_part = display_name if display_name else "[IP已隐藏]"
+            else:
+                address_part = ip
+            
+            # 将注释作为独立的补充信息
+            comment_part = f" ({comment})" if comment else ""
 
             prefix = f"[{tag}] " if tag else ""
-            display_name = f"{comment} ({ip})" if comment else ip
-
             indent = "  " * level
             connector = "↳ " if level > 0 else ""
-
-            lines.append(f"{indent}{connector}{prefix}{display_name}")
-
+            
+            lines.append(f"{indent}{connector}{prefix}{address_part}{comment_part}")
+            
             if s.get('children'):
                 lines.extend(_format_tree(s['children'], level + 1))
         return lines
