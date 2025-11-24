@@ -221,20 +221,20 @@ async def _handle_export_json(bot: Bot, event: GroupMessageEvent, arg_list: list
 
 
 async def handle_private_import(bot: Bot, event: PrivateMessageEvent, arg_list: list):
-    from . import mc_status_private
+    from . import mc_status
     user_id = event.user_id
     if user_id not in EDITING_USERS:
-        await mc_status_private.finish("无效的导入操作。请先在需要编辑的群聊中使用 /mcs edit 命令。")
+        await mc_status.finish("无效的导入操作。请先在需要编辑的群聊中使用 /mcs edit 命令。")
 
     if not arg_list or arg_list[0].lower() != 'import' or len(arg_list) != 2:
-        await mc_status_private.finish("私聊导入命令格式错误，请使用 /mcs import <压缩字符串>")
+        await mc_status.finish("私聊导入命令格式错误，请使用 /mcs import <压缩字符串>")
 
     compressed_str = arg_list[1]
     group_id = EDITING_USERS[user_id]
 
     decompressed_data = decompress_config(compressed_str)
     if decompressed_data is None:
-        await mc_status_private.finish("导入失败：无法解压或解析该字符串，请检查输入是否正确。")
+        await mc_status.finish("导入失败：无法解压或解析该字符串，请检查输入是否正确。")
 
     if import_group_data(group_id, decompressed_data):
         group_name = str(group_id)
@@ -245,7 +245,7 @@ async def handle_private_import(bot: Bot, event: PrivateMessageEvent, arg_list: 
             pass  # Bot might not be in group anymore, proceed with default group_id
 
         del EDITING_USERS[user_id]  # Clear state after successful import
-        await mc_status_private.finish(f"群聊 [{group_name}] 的配置导入成功！")
+        await mc_status.finish(f"群聊 [{group_name}] 的配置导入成功！")
 
         try:
             await bot.send_group_msg(
@@ -256,7 +256,7 @@ async def handle_private_import(bot: Bot, event: PrivateMessageEvent, arg_list: 
             # Ignore if sending to group fails (e.g., bot kicked)
             pass
     else:
-        await mc_status_private.finish("导入失败：数据结构不符合要求。")
+        await mc_status.finish("导入失败：数据结构不符合要求。")
 
 
 async def _handle_help(bot: Bot, event: GroupMessageEvent, arg_list: list):
