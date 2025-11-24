@@ -185,7 +185,7 @@ async def _handle_edit(bot: Bot, event: GroupMessageEvent, arg_list: list):
         # Clean up state if private message fails
         if user_id in EDITING_USERS:
             del EDITING_USERS[user_id]
-        await mc_status.finish(f"向您发送私信失败，请检查是否已添加机器人为好友或是否开启了临时会话权限。错误: {e}")
+        await mc_status.finish(f"向您发送私信失败，请检查是否已添加机器人为好友或是否开启了临时会话权限。")
 
     await mc_status.finish("已经通过私信发送编辑链接，请注意查收。")
 
