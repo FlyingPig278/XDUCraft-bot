@@ -160,30 +160,26 @@ async def _handle_edit(bot: Bot, event: GroupMessageEvent, arg_list: list):
     EDITING_USERS[user_id] = group_id
     
     try:
-        # Use send_forward_msg for private chat
-        messages = [
+        # Send instructions as a regular private message
+        await bot.send_private_msg(
+            user_id=user_id,
+            message=(
+                "请点击下方链接前往Web UI编辑配置，完成后在页面上复制导入命令，并在此私聊中发送导入。\n注意：仅接受本次 `/mcs edit` 后的一次导入。"
+            )
+        )
+
+        # Send the URL as a separate forwarded message for better presentation
+        url_message_nodes = [
             {
                 "type": "node",
                 "data": {
-                    "name": "配置小助手",
+                    "name": "Web UI链接",
                     "uin": event.self_id,
-                    "content": (
-                        "请点击以下链接，在Web UI中编辑服务器配置：\n"
-                        f"{export_url}\n\n"
-                        "编辑完成后，请复制页面底部的【导出配置】中的压缩字符串。"
-                    )
-                }
-            },
-            {
-                "type": "node",
-                "data": {
-                    "name": "配置小助手",
-                    "uin": event.self_id,
-                    "content": "然后在此私聊窗口中通过以下命令导入：\n/mcs import <压缩字符串>"
+                    "content": f"Web UI 配置链接：\n{export_url}"
                 }
             }
         ]
-        await bot.call_api('send_private_forward_msg', user_id=user_id, messages=messages)
+        await bot.call_api('send_private_forward_msg', user_id=user_id, messages=url_message_nodes)
 
     except Exception as e:
         # Clean up state if private message fails
@@ -191,7 +187,7 @@ async def _handle_edit(bot: Bot, event: GroupMessageEvent, arg_list: list):
             del EDITING_USERS[user_id]
         await mc_status.finish(f"向您发送私信失败，请检查是否已添加机器人为好友或是否开启了临时会话权限。错误: {e}")
 
-    await mc_status.finish("我已经通过私信将配置链接发送给你，请注意查收。")
+    await mc_status.finish("已经通过私信发送编辑链接，请注意查收。")
 
 
 async def _handle_export_json(bot: Bot, event: GroupMessageEvent, arg_list: list):
