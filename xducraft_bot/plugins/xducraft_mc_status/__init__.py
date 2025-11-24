@@ -54,6 +54,10 @@ async def handle_entry(bot: Bot, event: MessageEvent, args: Message = CommandArg
 
         subcommand = arg_list[0].lower()
 
+        if subcommand == 'import':
+            await mc_status.finish("配置导入功能已移至私聊，请先使用 /mcs edit 获取链接，然后在私聊中根据提示操作。")
+            return
+
         if subcommand in SUBCOMMAND_HANDLERS:
             # 调用在 handlers.py 中定义的子命令处理器
             await SUBCOMMAND_HANDLERS[subcommand](bot, event, arg_list)
