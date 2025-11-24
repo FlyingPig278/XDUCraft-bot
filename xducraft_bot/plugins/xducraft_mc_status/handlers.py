@@ -141,67 +141,122 @@ async def _handle_list(bot: Bot, event: GroupMessageEvent, arg_list: list):
         await mc_status.finish("未知参数，请使用 /mcs list 查看服务器列表。")
 
 
-async def _handle_export(bot: Bot, event: GroupMessageEvent, arg_list: list):
+async def _handle_edit(bot: Bot, event: GroupMessageEvent, arg_list: list):
     from . import mc_status
     if not await is_admin(bot, event):
         await mc_status.finish("你没有执行该命令的权限")
-    group_data = export_group_data(event.group_id) or {}
 
+    user_id = event.user_id
+    group_id = event.group_id
+
+    group_data = export_group_data(group_id) or {}
     compressed_str = compress_config(group_data)
     if not compressed_str:
         await mc_status.finish("导出失败：压缩配置时发生错误。")
 
     export_url = f"{WEB_UI_BASE_URL}?data={compressed_str}"
 
-    nodes = [
-        {"type": "node", "data": {"name": "配置导出", "uin": event.self_id, "content": "配置导出成功！请点击链接导入到Web UI："}},
-        {"type": "node", "data": {"name": "Web UI链接", "uin": event.self_id, "content": export_url}}
-    ]
+    # Store the user's state
+    EDITING_USERS[user_id] = group_id
+    
     try:
-        await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
-    except Exception:
-        await mc_status.finish(f"配置导出成功！\n请点击链接导入到Web UI：\n{export_url}")
-    else:
-        await mc_status.finish()
+        # Use send_forward_msg for private chat
+        messages = [
+            {
+                "type": "node",
+                "data": {
+                    "name": "配置小助手",
+                    "uin": event.self_id,
+                    "content": (
+                        "请点击以下链接，在Web UI中编辑服务器配置：\n"
+                        f"{export_url}\n\n"
+                        "编辑完成后，请复制页面底部的【导出配置】中的压缩字符串。"
+                    )
+                }
+            },
+            {
+                "type": "node",
+                "data": {
+                    "name": "配置小助手",
+                    "uin": event.self_id,
+                    "content": "然后在此私聊窗口中通过以下命令导入：\n/mcs import <压缩字符串>"
+                }
+            }
+        ]
+        await bot.call_api('send_private_forward_msg', user_id=user_id, messages=messages)
+
+    except Exception as e:
+        # Clean up state if private message fails
+        if user_id in EDITING_USERS:
+            del EDITING_USERS[user_id]
+        await mc_status.finish(f"向您发送私信失败，请检查是否已添加机器人为好友或是否开启了临时会话权限。错误: {e}")
+
+    await mc_status.finish("我已经通过私信将配置链接发送给你，请注意查收。")
 
 
 async def _handle_export_json(bot: Bot, event: GroupMessageEvent, arg_list: list):
     from . import mc_status
     if not await is_admin(bot, event):
         await mc_status.finish("你没有执行该命令的权限")
+
     group_data = export_group_data(event.group_id) or {}
     try:
         json_str = json.dumps(group_data, indent=2, ensure_ascii=False)
+        messages = [
+            {
+                "type": "node",
+                "data": {
+                    "name": "JSON导出",
+                    "uin": event.self_id,
+                    "content": f"当前群聊的原始JSON配置如下：\n{json_str}"
+                }
+            }
+        ]
+        await bot.call_api('send_private_forward_msg', user_id=event.user_id, messages=messages)
+
     except Exception as e:
-        await mc_status.finish(f"生成JSON时发生错误：{e}")
+        await mc_status.finish(f"发送JSON配置失败：{e}")
 
-    nodes = [
-        {"type": "node", "data": {"name": "JSON导出", "uin": event.self_id, "content": f"当前群聊的原始JSON配置如下：\n您可以复制此JSON内容，手动导入到Web编辑器：{WEB_UI_BASE_URL}"}},
-        {"type": "node", "data": {"name": "JSON内容", "uin": event.self_id, "content": json_str}}
-    ]
-    try:
-        await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
-    except Exception:
-        await mc_status.finish(f"当前群聊的原始JSON配置如下：\n您可以复制此JSON内容，手动导入到Web编辑器：{WEB_UI_BASE_URL}\n{json_str}")
-    else:
-        await mc_status.finish()
+    await mc_status.finish("我已通过私信将JSON配置发送给你。")
 
 
-async def _handle_import(bot: Bot, event: GroupMessageEvent, arg_list: list):
-    from . import mc_status
-    if not await is_admin(bot, event):
-        await mc_status.finish("你没有执行该命令的权限")
-    if not len(arg_list) == 2:
-        await mc_status.finish("导入命令格式错误，请使用 /mcs import <压缩字符串>")
+async def handle_private_import(bot: Bot, event: PrivateMessageEvent, arg_list: list):
+    from . import mc_status_private
+    user_id = event.user_id
+    if user_id not in EDITING_USERS:
+        await mc_status_private.finish("无效的导入操作。请先在需要编辑的群聊中使用 /mcs edit 命令。")
+
+    if not arg_list or arg_list[0].lower() != 'import' or len(arg_list) != 2:
+        await mc_status_private.finish("私聊导入命令格式错误，请使用 /mcs import <压缩字符串>")
+
     compressed_str = arg_list[1]
+    group_id = EDITING_USERS[user_id]
+
     decompressed_data = decompress_config(compressed_str)
     if decompressed_data is None:
-        await mc_status.finish("导入失败：无法解压或解析该字符串，请检查输入是否正确。")
-        return
-    if import_group_data(event.group_id, decompressed_data):
-        await mc_status.finish("成功导入配置！已覆盖本群聊的原有服务器设置。")
+        await mc_status_private.finish("导入失败：无法解压或解析该字符串，请检查输入是否正确。")
+
+    if import_group_data(group_id, decompressed_data):
+        group_name = str(group_id)
+        try:
+            group_info = await bot.get_group_info(group_id=group_id)
+            group_name = group_info.get('group_name', group_name)
+        except Exception:
+            pass  # Bot might not be in group anymore, proceed with default group_id
+
+        del EDITING_USERS[user_id]  # Clear state after successful import
+        await mc_status_private.finish(f"群聊 [{group_name}] 的配置导入成功！")
+
+        try:
+            await bot.send_group_msg(
+                group_id=group_id,
+                message=f"本群的服务器配置已由用户 {event.sender.nickname} 更新。"
+            )
+        except Exception:
+            # Ignore if sending to group fails (e.g., bot kicked)
+            pass
     else:
-        await mc_status.finish("导入失败：数据结构不符合要求。")
+        await mc_status_private.finish("导入失败：数据结构不符合要求。")
 
 
 async def _handle_help(bot: Bot, event: GroupMessageEvent, arg_list: list):
@@ -399,16 +454,14 @@ async def handle_list_simple(bot: Bot, event: GroupMessageEvent):
 SUBCOMMAND_HANDLERS = {
     "add": _handle_add,
     "remove": _handle_remove,
-    "rm":_handle_remove,
+    "rm": _handle_remove,
     "footer": _handle_footer,
     "set": _handle_set,
     "clear": _handle_clear,
     "list": _handle_list,
-    "export": _handle_export,
-    "edit": _handle_export,
-    "editor": _handle_export,
+    "edit": _handle_edit,
     "export_json": _handle_export_json,
-    "import": _handle_import,
+    # "import" is now handled privately
     "help": _handle_help,
 }
 
