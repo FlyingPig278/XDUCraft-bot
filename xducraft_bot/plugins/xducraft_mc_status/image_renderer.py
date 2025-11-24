@@ -240,7 +240,7 @@ def _draw_hostname(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], curre
         hostname_text = display_name if display_name else "[IP已隐藏]"
     else:
         # 保持原有的IP和端口格式化逻辑
-        hostname_text = server_data.get('ip', '未知服务器')
+        hostname_text = server_data.get('ip', '未知服务器').replace("."," . ").replace(":"," : ")
 
     draw.text((horizontal_offset + LAYOUT_BASE_PADDING + LAYOUT_SERVER_ICON_SIZE + ICON_TEXT_SPACING, current_y + OFFSET_IP_Y),
               hostname_text, fill=SECONDARY_TEXT_COLOR, font=FONT_MC_MEDIUM)
