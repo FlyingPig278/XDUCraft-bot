@@ -50,8 +50,8 @@ async def _draw_server_row(img: Image.Image, draw: ImageDraw.ImageDraw, server_d
     tag_color_hex = info.get('tag_color')
 
     await _draw_icon(img, server_data, current_y, horizontal_offset)
-    tag_total_width = _draw_tag_with_background(draw, tag, tag_color_hex, current_y, horizontal_offset)
-    _draw_motd(draw, server_data, current_y, horizontal_offset, tag_total_width)
+    tag_total_width, tag_center_y = _draw_tag_with_background(draw, tag, tag_color_hex, current_y, horizontal_offset)
+    _draw_motd(draw, server_data, current_y, horizontal_offset, tag_total_width, tag_center_y)
     _draw_hostname(draw, server_data, current_y, horizontal_offset)
     _draw_status_info(draw, server_data, current_y)
 
@@ -159,10 +159,10 @@ async def _draw_icon(img: Image.Image, server_data: Dict[str, Any], current_y: i
 
 
 def _draw_tag_with_background(draw: ImageDraw.ImageDraw, tag: str, tag_color_hex: str, current_y: int,
-                              horizontal_offset: int) -> int:
+                              horizontal_offset: int) -> tuple[int, float]:
     """绘制带彩色背景的服务器标签，并返回其宽度。"""
     if not tag:
-        return 0
+        return 0,0
 
     fill_color = f"#{tag_color_hex}" if tag_color_hex else TAG_DEFAULT_BACKGROUND
     tag_text = tag
@@ -177,24 +177,27 @@ def _draw_tag_with_background(draw: ImageDraw.ImageDraw, tag: str, tag_color_hex
 
     x0, y0 = tag_start_x, current_y
     x1, y1 = x0 + rect_width, y0 + rect_height
+    center_x = x0 + rect_width / 2
+    center_y = y0 + rect_height / 2
 
     draw.rounded_rectangle(xy=(x0, y0, x1, y1), fill=fill_color, radius=3)
-    draw.text(xy=(x0 + rect_width / 2, y0 + rect_height / 2), text=tag_text,
+    draw.text(xy=(center_x, center_y), text=tag_text,
               fill=TAG_TEXT_COLOR, font=FONT_ZH_TAG, anchor='mm')
 
-    return rect_width + ICON_TEXT_SPACING
+    return rect_width + ICON_TEXT_SPACING, center_y
 
 
 def _draw_motd(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], current_y: int, horizontal_offset: int,
-               tag_total_width: int = 0):
+               tag_total_width: int = 0, tag_center_y: float = 0):
     """解析并绘制服务器MOTD。"""
     motd_start_x = horizontal_offset + LAYOUT_BASE_PADDING + LAYOUT_SERVER_ICON_SIZE + ICON_TEXT_SPACING + tag_total_width
+    motd_center_y = tag_center_y
 
     # 首先处理离线服务器
     if not server_data.get('online'):
         comment = server_data.get('comment')
         offline_text = comment if comment else "服务器离线"
-        draw.text((motd_start_x, current_y), offline_text, fill=SECONDARY_TEXT_COLOR, font=FONT_MC_MOTD)
+        draw.text((motd_start_x, motd_center_y), offline_text, fill=SECONDARY_TEXT_COLOR, font=FONT_MC_MOTD, anchor="lm")
         return
 
     # --- 在线服务器逻辑 ---
@@ -217,14 +220,14 @@ def _draw_motd(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], current_y
             final_title = check_title
 
         if is_html_mode:
-            draw_colored_title_html(draw, final_title, (motd_start_x, current_y), font=FONT_MC_MOTD)
+            draw_colored_title_html(draw, final_title, (motd_start_x, motd_center_y), font=FONT_MC_MOTD)
         else:
             final_title = re.sub(r'§[klmno]', '', final_title)
             try:
                 from .drawing_utils import draw_colored_title
-                draw_colored_title(draw, final_title, (motd_start_x, current_y), font=FONT_MC_MOTD)
+                draw_colored_title(draw, final_title, (motd_start_x, motd_center_y), font=FONT_MC_MOTD)
             except ImportError:
-                draw.text((motd_start_x, current_y), final_title, fill=PRIMARY_TEXT_COLOR, font=FONT_MC_MOTD)
+                draw.text((motd_start_x, motd_center_y), final_title, fill=PRIMARY_TEXT_COLOR, font=FONT_MC_MOTD, anchor="lm")
 
     else:
         draw.text((motd_start_x, current_y), motd_text, fill=SECONDARY_TEXT_COLOR, font=FONT_MC_MOTD)
@@ -234,8 +237,7 @@ def _draw_hostname(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], curre
     """绘制服务器的主机名/IP。"""
     hide_ip = server_data.get('hide_ip', False)
     display_name = server_data.get('display_name', '')
-    
-    hostname_text = ""
+
     if hide_ip:
         hostname_text = display_name if display_name else "[IP已隐藏]"
     else:
@@ -301,12 +303,12 @@ def _draw_connector_line(draw: ImageDraw.ImageDraw, current_y: int, is_first_chi
         start_y = current_y - SERVER_ROW_HEIGHT
         if parent_had_players:
             start_y -= PLAYER_LIST_OFFSET
-        start_y += LAYOUT_SERVER_ICON_SIZE # 从父图标的底部开始
+        start_y += LAYOUT_SERVER_ICON_SIZE # 从父图标的顶部开始
     else:
         start_y = current_y # 从当前行的顶部开始
 
     # 计算垂直线的结束Y坐标
-    end_y = line_y if is_last_child else (current_y + SERVER_ROW_HEIGHT)
+    end_y = line_y if is_last_child else (current_y + SERVER_ROW_HEIGHT + PLAYER_LIST_OFFSET)
 
     # 绘制垂直主干
     if end_y > start_y:

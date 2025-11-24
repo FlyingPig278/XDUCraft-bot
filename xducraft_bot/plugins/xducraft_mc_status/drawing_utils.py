@@ -8,7 +8,7 @@ from xducraft_bot.plugins.xducraft_mc_status.constants import MINECRAFT_COLOR_CO
 
 def draw_colored_title(draw: ImageDraw.ImageDraw,
                        text: str,
-                       position: Tuple[int, int],
+                       position: Tuple[int, float],
                        font: ImageFont.FreeTypeFont,
                        default_color: Tuple[int, int, int, int] = (255, 255, 255, 255)):
     x, y = position
@@ -18,7 +18,7 @@ def draw_colored_title(draw: ImageDraw.ImageDraw,
     while i < len(text):
         if text[i] == '§':
             if buffer_text:
-                draw.text((x, y), buffer_text, fill=current_color, font=font)
+                draw.text((x, y), buffer_text, fill=current_color, font=font,anchor="lm")
                 size = draw.textlength(buffer_text, font=font)
                 x += size
                 buffer_text = ''
@@ -29,12 +29,12 @@ def draw_colored_title(draw: ImageDraw.ImageDraw,
             buffer_text += text[i]
             i += 1
     if buffer_text:
-        draw.text((x, y), buffer_text, fill=current_color, font=font)
+        draw.text((x, y), buffer_text, fill=current_color, font=font,anchor="lm")
 
 
 def draw_colored_title_html(draw: ImageDraw.ImageDraw,
                             text: str,
-                            position: Tuple[int, int],
+                            position: Tuple[int, float],
                             font: ImageFont.FreeTypeFont,
                             default_color: Tuple[int, int, int, int] = (255, 255, 255, 255)):
     x, y = position
