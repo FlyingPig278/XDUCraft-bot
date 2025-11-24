@@ -211,9 +211,9 @@ async def _handle_export_json(bot: Bot, event: GroupMessageEvent, arg_list: list
         await bot.call_api('send_private_forward_msg', user_id=event.user_id, messages=messages)
 
     except Exception as e:
-        await mc_status.finish(f"发送JSON配置失败：{e}")
+        await mc_status.finish(f"发送JSON配置失败，请检查是否已添加机器人为好友或是否开启了临时会话权限。")
 
-    await mc_status.finish("我已通过私信将JSON配置发送给你。")
+    await mc_status.finish("已通过私信发送JSON配置。")
 
 
 async def handle_private_import(bot: Bot, event: PrivateMessageEvent, arg_list: list):
@@ -311,22 +311,23 @@ async def handle_query_all(bot: Bot, event: GroupMessageEvent,show_all_servers: 
 async def handle_query_single(bot: Bot, event: GroupMessageEvent, ip: str):
     from . import mc_status
     """查询单个服务器状态"""
+
+    if ip == '127.0.0.1' or ip.lower() == 'localhost':
+        responses = [
+            "你搁这儿开单机呢？查询127.0.0.1...找到了！在你电脑里！",
+            "查询 `localhost`... 数据库连接成功！...等等，我为什么要查我自己？Σ( ° △ °|||)",
+        ]
+        await mc_status.finish(random.choice(responses))
+
+    if ip == '192.168.1.1' or ip == '192.168.0.1':
+        await mc_status.finish("你查路由器干嘛！是不是想改WiFi密码不让我上了！(°òДó)ﾉ")
+
     if not is_valid_server_address(ip):
         # 假设 ip 是用户输入, is_valid_server_address(ip) 已返回 False
 
         # --- 1. 特殊彩蛋区 (优先级最高) ---
         if '❤' in ip:
             await mc_status.finish("❤服务器？这怕不是运行在我的心巴上！")
-
-        if ip == '127.0.0.1' or ip.lower() == 'localhost':
-            responses = [
-                "你搁这儿开单机呢？查询127.0.0.1...找到了！在你电脑里！",
-                "查询 `localhost`... 数据库连接成功！...等等，我为什么要查我自己？Σ( ° △ °|||)",
-            ]
-            await mc_status.finish(random.choice(responses))
-
-        if ip == '192.168.1.1' or ip == '192.168.0.1':
-            await mc_status.finish("你查路由器干嘛！是不是想改WiFi密码不让我上了！(°òДó)ﾉ")
 
         if '114514' in ip:
             await mc_status.finish(f"查询 {ip} 中...哼哼啊啊啊啊啊啊（查询失败）")
