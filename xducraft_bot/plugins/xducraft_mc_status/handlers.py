@@ -2,8 +2,16 @@ import json
 import random
 import re
 
-from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment
+from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment, PrivateMessageEvent
 from nonebot.exception import MatcherException
+
+
+# Dictionary to track users who are in the process of editing a group's config
+#
+# Stores a mapping from a user_id to the group_id they are editing.
+# This allows the bot to know which group's data to update when it receives an
+# import command in a private message from that user.
+EDITING_USERS = {}
 
 
 from .config_coder import compress_config, decompress_config
