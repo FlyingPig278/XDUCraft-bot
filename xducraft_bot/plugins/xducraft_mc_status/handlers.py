@@ -456,8 +456,9 @@ SUBCOMMAND_HANDLERS = {
     "clear": _handle_clear,
     "list": _handle_list,
     "edit": _handle_edit,
+    "editor": _handle_edit,
+    "export": _handle_edit,
     "export_json": _handle_export_json,
-    # "import" is now handled privately
     "help": _handle_help,
 }
 

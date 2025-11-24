@@ -116,7 +116,7 @@ USAGE_USER= """命令：
 /mcs list : 查看已添加的服务器列表
 /mcs help : 查看帮助信息"""
 USAGE_ADMIN= """【Web编辑器 (推荐)】
-强烈推荐使用Web编辑器进行编辑
+推荐使用Web编辑器进行编辑
 /mcs edit (export, editor): 生成配置链接并在Web UI中编辑
 /mcs import <压缩字符串>: 从Web UI或备份中导入配置
 ---
