@@ -162,7 +162,7 @@ def _draw_tag_with_background(draw: ImageDraw.ImageDraw, tag: str, tag_color_hex
                               horizontal_offset: int) -> tuple[int, float]:
     """绘制带彩色背景的服务器标签，并返回其宽度。"""
     if not tag:
-        return 0,0
+        tag=''
 
     fill_color = f"#{tag_color_hex}" if tag_color_hex else TAG_DEFAULT_BACKGROUND
     tag_text = tag
@@ -179,6 +179,9 @@ def _draw_tag_with_background(draw: ImageDraw.ImageDraw, tag: str, tag_color_hex
     x1, y1 = x0 + rect_width, y0 + rect_height
     center_x = x0 + rect_width / 2
     center_y = y0 + rect_height / 2
+
+    if tag=='':
+        return 0,center_y
 
     draw.rounded_rectangle(xy=(x0, y0, x1, y1), fill=fill_color, radius=3)
     draw.text(xy=(center_x, center_y), text=tag_text,
