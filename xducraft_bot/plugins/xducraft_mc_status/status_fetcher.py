@@ -16,6 +16,7 @@ async def get_single_server_status(ip: str) -> Dict[str, Any]:
             response.raise_for_status()
             data = response.json()
             data['original_query'] = ip
+            data['ip']=ip
             if not data.get('online'):
                 data.setdefault('hostname', ip)
                 data.setdefault('port', 25565)
