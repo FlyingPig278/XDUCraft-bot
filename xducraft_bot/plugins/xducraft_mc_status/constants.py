@@ -31,7 +31,7 @@ SAVE_IMG_DIR = os.path.join(_current_dir, 'data', 'images')
 CANVAS_BACKGROUND_COLOR = (46, 33, 23, 255)  # 整个图片画布最底层的背景色
 MAIN_CONTENT_BACKGROUND_COLOR = (15, 11, 7, 255)  # 中间服务器列表区域的深色背景
 PRIMARY_TEXT_COLOR = (255, 255, 255, 255)  # 主要文本颜色，如顶部大标题
-SECONDARY_TEXT_COLOR = (128, 128, 128, 255)  # 次要文本颜色，如 IP、玩家数、版本号等
+SECONDARY_TEXT_COLOR = (192, 192, 192, 255)  # 次要文本颜色，如 IP、玩家数、版本号等
 CREDIT_TEXT_COLOR = (200, 200, 200, 255)  # 图片底部 "Powered by" 文字的颜色
 PING_COLOR_GREEN = (0, 255, 33, 255)  # Ping 值较低（<100ms）时显示的绿色
 PING_COLOR_RED = (255, 85, 85, 255)  # Ping 值较高或服务器离线时显示的红色
@@ -84,7 +84,7 @@ LAYOUT_SERVER_ICON_SIZE = 80  # 服务器图标的尺寸（宽度和高度）
 ICON_TEXT_SPACING = 20  # 服务器图标与其右侧文本（Tag/MOTD）之间的水平间距
 
 # --- 文本垂直偏移量 (相对于每行的顶部 `current_y`) ---
-OFFSET_IP_Y = 45  # IP/域名文本的垂直偏移
+OFFSET_IP_Y = 52  # IP/域名文本的垂直偏移
 OFFSET_PLAYER_COUNT_Y = 32  # 在线玩家数文本的垂直偏移（右对齐）
 OFFSET_VERSION_Y = 64  # 版本信息文本的垂直偏移（右对齐）
 OFFSET_PLAYER_LIST_Y = 96  # 在线玩家列表文本的垂直偏移
