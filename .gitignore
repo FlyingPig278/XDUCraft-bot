@@ -42,3 +42,5 @@ __pycache__/
 **/App.vue
 
 bot.py
+
+tests/
