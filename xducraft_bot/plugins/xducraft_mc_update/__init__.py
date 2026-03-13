@@ -1,11 +1,14 @@
+import asyncio
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
+
 import httpx
 from nonebot import require, on_command, get_bots
-from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, PrivateMessageEvent, Message, MessageEvent
+from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 from nonebot.log import logger
-from typing import List, Dict
 
 from .data_manager import data_manager
 
@@ -15,95 +18,215 @@ from nonebot_plugin_apscheduler import scheduler
 __plugin_meta__ = PluginMetadata(
     name="MC更新推送",
     description="监控 Minecraft 官方版本更新并推送到群",
-    usage="指令: mcup on / mcup off"
+    usage="推荐指令：/MC更新 订阅 或 /MC更新 取消订阅（兼容 /mcup on|off）"
 )
 
 MOJANG_API = "https://launchermeta.mojang.com/mc/game/version_manifest.json"
 CHECK_INTERVAL = 60
+UTC_PLUS_8 = timezone(timedelta(hours=8))
+VERSION_LABELS = {
+    "release": "🎉 Minecraft 正式版更新！",
+    "snapshot": "🧪 Minecraft 快照版更新！",
+}
+VERSION_TYPE_NAMES = {
+    "release": "正式版",
+    "snapshot": "快照版",
+}
+COMMAND_USAGE = "推荐用法：/MC更新 订阅 或 /MC更新 取消订阅\n兼容写法：/mcup on 或 /mcup off"
+ENABLE_ACTIONS = {"on", "open", "enable", "start", "订阅", "开启", "打开", "开", "启用"}
+DISABLE_ACTIONS = {"off", "close", "disable", "stop", "取消订阅", "关闭", "关", "停用"}
 
-mc_command = on_command("mcup", aliases={"mcupdate"}, priority=10, block=True)
+_check_lock = asyncio.Lock()
+
+mc_command = on_command(
+    "mcup",
+    aliases={"mcupdate", "MC更新", "mc更新", "更新订阅", "版本订阅", "MC更新订阅"},
+    priority=10,
+    block=True,
+)
+
+
+def normalize_command_action(raw_arg: str) -> str:
+    action = raw_arg.strip().lower()
+    if action in ENABLE_ACTIONS:
+        return "enable"
+    if action in DISABLE_ACTIONS:
+        return "disable"
+    return ""
 
 
 @mc_command.handle()
 async def handle_mc_command(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    args = args.extract_plain_text().strip().lower()
+    args = args.extract_plain_text().strip()
     gid = event.group_id
 
     if not await SUPERUSER(bot, event):
         return
 
-    if args == "on":
+    action = normalize_command_action(args)
+
+    if not action:
+        await mc_command.finish(COMMAND_USAGE)
+
+    if action == "enable":
         if data_manager.add_group(gid):
-            await mc_command.finish(f"✅ [MC-Push] Subscribed (Group: {gid})")
+            await mc_command.finish(f"✅ 已开启 Minecraft 更新推送（群号：{gid}）")
         else:
-            await mc_command.finish("⚠️ Already subscribed.")
+            await mc_command.finish("⚠️ 这个群已经开启了 Minecraft 更新推送。")
 
-    elif args == "off":
+    elif action == "disable":
         if data_manager.remove_group(gid):
-            await mc_command.finish(f"🚫 [MC-Push] Unsubscribed (Group: {gid})")
+            await mc_command.finish(f"🚫 已关闭 Minecraft 更新推送（群号：{gid}）")
         else:
-            await mc_command.finish("⚠️ Not subscribed yet.")
+            await mc_command.finish("⚠️ 这个群还没有开启 Minecraft 更新推送。")
 
 
-# --- 辅助函数：根据版本号查找发布时间 ---
-def get_version_time(version_id: str, versions_list: List[Dict]) -> str:
-    for v in versions_list:
-        if v.get("id") == version_id:
-            # 这里的 releaseTime 是 UTC 时间，格式如 2026-02-17T12:42:24+00:00
-            # 如果你想转成北京时间，可以用 datetime 库处理，这里暂时原样返回
-            return v.get("releaseTime", "Unknown Time")
-    return "Unknown Time"
-
-
-@scheduler.scheduled_job("interval", seconds=CHECK_INTERVAL, id="mc_update_checker")
-async def check_update():
-    groups = data_manager.get_subscribed_groups()
-    if not groups:
-        return
+def parse_mojang_datetime(value: str) -> Optional[datetime]:
+    if not value:
+        return None
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(MOJANG_API)
-            if resp.status_code != 200:
-                logger.warning(f"[MC-Push] API Error: {resp.status_code}")
-                return
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
-            data = resp.json()
-            latest = data.get("latest", {})
-            versions_list = data.get("versions", [])
 
-            current_release = latest.get("release")
-            current_snapshot = latest.get("snapshot")
+def format_release_time(value: str) -> str:
+    parsed = parse_mojang_datetime(value)
+    if parsed is None:
+        return "未知时间"
+    return parsed.astimezone(UTC_PLUS_8).strftime("%Y-%m-%d %H:%M:%S UTC+8")
 
-            messages = []
 
-            # --- 检查正式版 ---
-            cached_release = data_manager.get_last_version("release")
-            if not cached_release:
-                data_manager.update_version("release", current_release)
-                logger.info(f"[MC-Push] Init Release: {current_release}")
-            elif current_release != cached_release:
-                data_manager.update_version("release", current_release)
-                # 查找具体时间
-                r_time = get_version_time(current_release, versions_list)
-                messages.append(f"🎉 Minecraft New Release!\nVersion: {current_release}\nTime: {r_time}")
+def _normalize_manifest_entry(entry: Dict[str, Any]) -> Dict[str, str]:
+    return {
+        "id": str(entry.get("id", "") or ""),
+        "release_time": str(entry.get("releaseTime", "") or ""),
+    }
 
-            # --- 检查快照版 ---
-            cached_snapshot = data_manager.get_last_version("snapshot")
-            if not cached_snapshot:
-                data_manager.update_version("snapshot", current_snapshot)
-                logger.info(f"[MC-Push] Init Snapshot: {current_snapshot}")
-            elif current_snapshot != cached_snapshot:
-                data_manager.update_version("snapshot", current_snapshot)
-                # 查找具体时间
-                s_time = get_version_time(current_snapshot, versions_list)
-                messages.append(f"🧪 Minecraft New Snapshot!\nVersion: {current_snapshot}\nTime: {s_time}")
 
-            # --- 发送 ---
-            if messages:
-                push_msg = "\n\n".join(messages)  # 如果两个同时更，用空行隔开
+def _is_candidate_newer(candidate: Dict[str, str], current: Dict[str, str]) -> bool:
+    candidate_id = str(candidate.get("id", "") or "")
+    current_id = str(current.get("id", "") or "")
+    if not candidate_id or candidate_id == current_id:
+        return False
 
-                logger.info(f"[MC-Push] Pushing updates...")
+    candidate_time = parse_mojang_datetime(str(candidate.get("release_time", "") or ""))
+    current_time = parse_mojang_datetime(str(current.get("release_time", "") or ""))
+
+    if current_time and candidate_time:
+        return candidate_time > current_time
+    if not current_time and candidate_time:
+        return True
+
+    return False
+
+
+def get_latest_record(manifest: Dict[str, Any], type_key: str) -> Dict[str, str]:
+    target_type = type_key
+    latest_entry: Optional[Dict[str, str]] = None
+    latest_time: Optional[datetime] = None
+
+    for version in manifest.get("versions", []):
+        if version.get("type") != target_type:
+            continue
+
+        entry = _normalize_manifest_entry(version)
+        if not entry["id"]:
+            continue
+
+        entry_time = parse_mojang_datetime(entry["release_time"])
+        if latest_entry is None:
+            latest_entry = entry
+            latest_time = entry_time
+            continue
+
+        if entry_time and latest_time:
+            if entry_time > latest_time:
+                latest_entry = entry
+                latest_time = entry_time
+        elif entry_time and not latest_time:
+            latest_entry = entry
+            latest_time = entry_time
+
+    if latest_entry is not None:
+        manifest_latest_id = str(manifest.get("latest", {}).get(type_key, "") or "")
+        if manifest_latest_id and manifest_latest_id != latest_entry["id"]:
+            logger.warning(
+                "[MC-Push] Manifest latest.%s=%s is older or inconsistent; use versions entry %s instead.",
+                type_key,
+                manifest_latest_id,
+                latest_entry["id"],
+            )
+        return latest_entry
+
+    fallback_id = str(manifest.get("latest", {}).get(type_key, "") or "")
+    return {"id": fallback_id, "release_time": ""}
+
+
+def build_update_messages(manifest: Dict[str, Any]) -> List[str]:
+    messages: List[str] = []
+
+    for type_key in ("release", "snapshot"):
+        latest_record = get_latest_record(manifest, type_key)
+        if not latest_record["id"]:
+            continue
+
+        cached_record = data_manager.get_last_record(type_key)
+        if not cached_record["id"]:
+            data_manager.update_version(type_key, latest_record["id"], latest_record["release_time"])
+            logger.info("[MC-Push] Init %s: %s", VERSION_TYPE_NAMES[type_key], latest_record["id"])
+            continue
+
+        if not _is_candidate_newer(latest_record, cached_record):
+            if latest_record["id"] != cached_record["id"]:
+                logger.warning(
+                    "[MC-Push] Ignore stale %s candidate %s (time=%s), cached=%s (time=%s)",
+                    VERSION_TYPE_NAMES[type_key],
+                    latest_record["id"],
+                    latest_record["release_time"] or "未知",
+                    cached_record["id"],
+                    cached_record["release_time"] or "未知",
+                )
+            continue
+
+        if data_manager.update_version(type_key, latest_record["id"], latest_record["release_time"]):
+            messages.append(
+                f"{VERSION_LABELS[type_key]}\n"
+                f"版本号：{latest_record['id']}\n"
+                f"发布时间：{format_release_time(latest_record['release_time'])}"
+            )
+
+    return messages
+
+
+@scheduler.scheduled_job("interval", seconds=CHECK_INTERVAL, id="mc_update_checker", max_instances=1, coalesce=True)
+async def check_update():
+    if _check_lock.locked():
+        logger.warning("[MC-Push] Previous update check is still running, skip this round.")
+        return
+
+    async with _check_lock:
+        groups = data_manager.get_subscribed_groups()
+        if not groups:
+            return
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(MOJANG_API)
+                if resp.status_code != 200:
+                    logger.warning(f"[MC-Push] API Error: {resp.status_code}")
+                    return
+
+                manifest = resp.json()
+                messages = build_update_messages(manifest)
+
+                if not messages:
+                    return
+
+                push_msg = "\n\n".join(messages)
+
+                logger.info("[MC-Push] Pushing updates...")
                 bots = get_bots()
                 for bot in bots.values():
                     for gid in groups:
@@ -112,5 +235,5 @@ async def check_update():
                         except Exception as e:
                             logger.error(f"[MC-Push] Failed to send group {gid}: {e}")
 
-    except Exception as e:
-        logger.error(f"[MC-Push] Exception: {e}")
+        except Exception as e:
+            logger.error(f"[MC-Push] Exception: {e}")
