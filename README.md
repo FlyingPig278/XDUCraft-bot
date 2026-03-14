@@ -93,6 +93,21 @@ A Minecraft server status query plugin for NoneBot, specially designed for XDUCr
 
 配置文件位于 `xducraft_bot/plugins/xducraft_pig_bot/data/pig_config.json`。
 
+### ☁️ 词云插件（xducraft_wordcloud）
+
+- 对配置中启用的群持续记录群聊文本（仅纯文本内容）。
+- 每天 `00:00` 自动统计前一天聊天并发送词云图。
+- 自动过滤停用词（使用 `stopwordsiso` 词库），并按 `retention_days` 轮换删除旧数据。
+- 管理命令（仅群管理/群主/SUPERUSER）：
+  - `/wc on`：开启本群词云记录与自动推送
+  - `/wc off`：关闭本群词云记录与自动推送
+  - `/wc status`：查看本群状态
+  - `/wc gen [today|yesterday|YYYY-MM-DD|YYYY-MM]`：手动生成并发送词云（默认 today）
+
+词云插件支持 `retention_days` 配置项（默认 1095 天），可按需长期保留聊天记录。
+
+配置示例：`xducraft_bot/plugins/xducraft_wordcloud/data/wordcloud_config.json.example`。
+
 ### ❓ 常见问题 (FAQ)
 
 - **`nb: command not found`**：

@@ -1,0 +1,13 @@
+{
+    "enabled_groups": [
+        123456789
+    ],
+    "min_word_length": 2,
+    "max_words": 200,
+    "retention_days": 1095,
+    "additional_stopwords": [
+        "哈哈",
+        "就是"
+    ]
+}
+
