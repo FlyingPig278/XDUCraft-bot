@@ -1,5 +1,7 @@
 import asyncio
+import os
 import random
+from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -118,7 +120,41 @@ def find_images_by_keyword(images: List[Dict[str, str]], keyword: str) -> List[D
         ).lower()
         if kw in haystack:
             matched.append(image)
-    return matched
+
+    if matched:
+        return matched
+
+    # Fuzzy fallback: only used when exact-contains has no result.
+    if len(kw) < 2:
+        return []
+
+    threshold = 0.6 if len(kw) <= 4 else 0.55
+    fuzzy_matched: List[Dict[str, str]] = []
+    for image in images:
+        title = str(image.get("title", "") or "").lower()
+        filename = str(image.get("filename", "") or "").lower()
+        filename_stem = os.path.splitext(filename)[0]
+
+        candidates = [title, filename, filename_stem]
+        best_score = 0.0
+        for candidate in candidates:
+            if not candidate:
+                continue
+
+            score = SequenceMatcher(None, kw, candidate).ratio()
+            best_score = max(best_score, score)
+
+            # Improve long-text matching by comparing with same-length windows.
+            if len(candidate) > len(kw):
+                window_len = max(len(kw), 2)
+                for i in range(len(candidate) - window_len + 1):
+                    piece = candidate[i : i + window_len]
+                    best_score = max(best_score, SequenceMatcher(None, kw, piece).ratio())
+
+        if best_score >= threshold:
+            fuzzy_matched.append(image)
+
+    return fuzzy_matched
 
 
 def pick_random_image(images: List[Dict[str, str]]) -> Optional[Dict[str, str]]:
