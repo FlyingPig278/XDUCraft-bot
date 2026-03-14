@@ -1,0 +1,9 @@
+{
+    "groups": {
+        "123456": {
+            "auto_push_enabled": false,
+            "query_enabled": true
+        }
+    }
+}
+

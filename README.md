@@ -82,6 +82,17 @@ A Minecraft server status query plugin for NoneBot, specially designed for XDUCr
 - Python 3.9+
 - 一个基于 OneBot v11 协议的机器人框架（推荐 Napcat）
 
+### 🐷 猪猪图插件（xducraft_pig_bot）
+
+- 自动推送：可按群开关，每 6 小时随机推送 1 张猪猪图。
+- 手动查询：`/pig [关键词]`，匹配到多张时随机返回 1 张。
+- 管理命令（群管理/群主/SUPERUSER）：
+  - `/pig auto on|off`：开关自动推送
+  - `/pig query on|off`：开关手动查询
+  - `/pig status`：查看本群开关状态
+
+配置文件位于 `xducraft_bot/plugins/xducraft_pig_bot/data/pig_config.json`。
+
 ### ❓ 常见问题 (FAQ)
 
 - **`nb: command not found`**：
