@@ -1,28 +1,239 @@
 import asyncio
-from typing import List, Dict, Any, Tuple, Optional
+import json
+import struct
+import time
+from html import escape
+from typing import List, Dict, Any, Tuple
+from urllib.parse import urlparse
 
-import httpx
+from mcstatus import JavaServer
 
 from . import data_manager
 from .constants import DEFAULT_SERVER_PRIORITY
 
 
+DEFAULT_SERVER_PORT = 25565
+STATUS_QUERY_TIMEOUT = 3.0
+
+
+def _encode_varint(value: int) -> bytes:
+    """编码 Minecraft 协议使用的 VarInt。"""
+    encoded = bytearray()
+    if value < 0:
+        value = (1 << 32) + value
+
+    while True:
+        current = value & 0x7F
+        value >>= 7
+        if value:
+            current |= 0x80
+        encoded.append(current)
+        if not value:
+            break
+
+    return bytes(encoded)
+
+
+async def _read_varint(reader: asyncio.StreamReader) -> int:
+    """读取 Minecraft 协议中的 VarInt。"""
+    num_read = 0
+    result = 0
+
+    while True:
+        current = (await reader.readexactly(1))[0]
+        result |= (current & 0x7F) << (7 * num_read)
+        num_read += 1
+
+        if num_read > 5:
+            raise ValueError("VarInt 过长")
+        if (current & 0x80) == 0:
+            break
+
+    if result & (1 << 31):
+        result -= 1 << 32
+    return result
+
+
+async def _fetch_raw_status_payload(
+    connect_host: str,
+    connect_port: int,
+    handshake_host: str,
+    handshake_port: int,
+) -> tuple[dict[str, Any], int]:
+    """直接请求 Java 版状态协议，返回原始 JSON 以及延迟。"""
+    started_at = time.perf_counter()
+    connection = asyncio.open_connection(connect_host, connect_port)
+    reader, writer = await asyncio.wait_for(connection, timeout=STATUS_QUERY_TIMEOUT)
+
+    try:
+        host_bytes = handshake_host.encode("utf-8")
+        handshake_packet = (
+            _encode_varint(0) +
+            _encode_varint(-1) +
+            _encode_varint(len(host_bytes)) + host_bytes +
+            struct.pack(">H", handshake_port) +
+            _encode_varint(1)
+        )
+        writer.write(_encode_varint(len(handshake_packet)) + handshake_packet)
+
+        request_packet = _encode_varint(0)
+        writer.write(_encode_varint(len(request_packet)) + request_packet)
+        await asyncio.wait_for(writer.drain(), timeout=STATUS_QUERY_TIMEOUT)
+
+        await asyncio.wait_for(_read_varint(reader), timeout=STATUS_QUERY_TIMEOUT)
+        packet_id = await asyncio.wait_for(_read_varint(reader), timeout=STATUS_QUERY_TIMEOUT)
+        if packet_id != 0:
+            raise ValueError(f"意外的状态包 ID: {packet_id}")
+
+        payload_length = await asyncio.wait_for(_read_varint(reader), timeout=STATUS_QUERY_TIMEOUT)
+        payload = await asyncio.wait_for(reader.readexactly(payload_length), timeout=STATUS_QUERY_TIMEOUT)
+        latency = int(round((time.perf_counter() - started_at) * 1000))
+        return json.loads(payload.decode("utf-8")), latency
+    finally:
+        writer.close()
+        await writer.wait_closed()
+
+
+def _parse_server_address(address: str) -> tuple[str, int]:
+    """解析服务器地址，并在缺失端口时回退到 Java 版默认端口。"""
+    parsed = urlparse(f"//{address}")
+    hostname = parsed.hostname or address
+    port = parsed.port or DEFAULT_SERVER_PORT
+    return hostname, port
+
+
+def _component_to_plain_text(component: Any) -> str:
+    """将 Minecraft 文本组件递归转换为纯文本。"""
+    if component is None:
+        return ""
+
+    if isinstance(component, str):
+        return component
+
+    if isinstance(component, list):
+        return "".join(_component_to_plain_text(item) for item in component)
+
+    if isinstance(component, dict):
+        text = str(component.get("text", ""))
+        extra = _component_to_plain_text(component.get("extra", []))
+        return text + extra
+
+    return str(component)
+
+
+def _component_to_html(component: Any, inherited_color: str | None = None) -> str:
+    """将 Minecraft 文本组件递归转换为现有渲染器可识别的 HTML/font 片段。"""
+    if component is None:
+        return ""
+
+    if isinstance(component, str):
+        return escape(component, quote=True).replace("\n", "<br>")
+
+    if isinstance(component, list):
+        return "".join(_component_to_html(item, inherited_color) for item in component)
+
+    if isinstance(component, dict):
+        current_color = component.get("color") or inherited_color
+        text = escape(str(component.get("text", "")), quote=True).replace("\n", "<br>")
+        if current_color and text:
+            text = f'<font color="{escape(str(current_color), quote=True)}">{text}</font>'
+        extra = _component_to_html(component.get("extra", []), current_color)
+        return text + extra
+
+    return escape(str(component), quote=True).replace("\n", "<br>")
+
+
+def _normalize_description(raw_description: Any) -> Dict[str, str]:
+    """将 mcstatus 返回的 description 适配为旧渲染器依赖的结构。"""
+    text = _component_to_plain_text(raw_description)
+    html = _component_to_html(raw_description)
+
+    normalized: Dict[str, str] = {}
+    if html:
+        normalized["html"] = html
+    if text:
+        normalized["text"] = text
+    return normalized
+
+
+def _normalize_player_sample(sample: Any) -> List[Dict[str, str]]:
+    """统一玩家示例列表的结构，兼容 dict 与对象两种返回形态。"""
+    if not sample:
+        return []
+
+    normalized_sample: List[Dict[str, str]] = []
+    for player in sample:
+        if isinstance(player, dict):
+            player_name = player.get("name")
+            player_id = player.get("id")
+        else:
+            player_name = getattr(player, "name", None)
+            player_id = getattr(player, "id", None)
+
+        if not player_name:
+            continue
+
+        normalized_player = {"name": str(player_name)}
+        if player_id is not None:
+            normalized_player["id"] = str(player_id)
+        normalized_sample.append(normalized_player)
+
+    return normalized_sample
+
+
 async def get_single_server_status(ip: str) -> Dict[str, Any]:
-    """获取单个Minecraft服务器的状态。"""
-    url = f"https://mc.sjtu.cn/custom/serverlist/?query={ip}"
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(url)
-            response.raise_for_status()
-            data = response.json()
-            data['original_query'] = ip
-            data['ip']=ip
-            if not data.get('online'):
-                data.setdefault('hostname', ip)
-                data.setdefault('port', 25565)
-            return data
-        except httpx.RequestError as e:
-            return {"online": False, "hostname": ip, "port": 25565, "original_query": ip, "error": str(e)}
+    """通过 Java 版状态协议直接获取单个 Minecraft 服务器的状态。"""
+    hostname, port = _parse_server_address(ip)
+    fallback_response = {
+        "online": False,
+        "hostname": hostname,
+        "port": port,
+        "original_query": ip,
+        "ip": ip,
+    }
+
+    try:
+        server = await JavaServer.async_lookup(ip, timeout=STATUS_QUERY_TIMEOUT)
+        raw_status, latency = await _fetch_raw_status_payload(
+            connect_host=server.address.host,
+            connect_port=server.address.port,
+            handshake_host=hostname,
+            handshake_port=port,
+        )
+
+        players = raw_status.get("players", {}) if isinstance(raw_status.get("players"), dict) else {}
+        version = raw_status.get("version", {})
+        raw_description = raw_status.get("description")
+
+        response_data: Dict[str, Any] = {
+            **fallback_response,
+            "online": True,
+            "hostname": server.address.host,
+            "port": server.address.port,
+            "ping": latency,
+            "version": version.get("name", "N/A") if isinstance(version, dict) else str(version),
+            "protocol": version.get("protocol") if isinstance(version, dict) else None,
+            "players": {
+                "online": players.get("online", 0),
+                "max": players.get("max", 0),
+                "sample": _normalize_player_sample(players.get("sample")),
+            },
+        }
+
+        if raw_description is not None:
+            response_data["description_raw"] = raw_description
+            normalized_description = _normalize_description(raw_description)
+            if normalized_description:
+                response_data["description"] = normalized_description
+
+        favicon = raw_status.get("favicon")
+        if favicon:
+            response_data["favicon"] = favicon
+
+        return response_data
+    except Exception as e:
+        fallback_response["error"] = str(e)
+        return fallback_response
 
 
 def _merge_results_into_tree(

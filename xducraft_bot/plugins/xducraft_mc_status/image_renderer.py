@@ -145,17 +145,24 @@ def _draw_footer_and_credit(draw: ImageDraw.ImageDraw, image_height: int, footer
 
 
 async def _draw_icon(img: Image.Image, server_data: Dict[str, Any], current_y: int, horizontal_offset: int):
-    """绘制服务器的favicon。"""
+    """绘制服务器的 favicon，没有时回退到本地图标。"""
+    icon_bytes = None
     icon_url = server_data.get("favicon")
     if icon_url:
         icon_bytes = await decode_image(icon_url)
+
+    try:
         if icon_bytes:
-            try:
-                with Image.open(icon_bytes) as img_avatar:
-                    img_avatar = img_avatar.resize((LAYOUT_SERVER_ICON_SIZE, LAYOUT_SERVER_ICON_SIZE)).convert("RGBA")
-                    img.paste(img_avatar, (horizontal_offset + LAYOUT_BASE_PADDING, current_y), img_avatar)
-            except Exception as e:
-                print(f"粘贴服务器图标失败 {server_data.get('ip')}: {e}")
+            with Image.open(icon_bytes) as img_avatar:
+                img_avatar = img_avatar.resize((LAYOUT_SERVER_ICON_SIZE, LAYOUT_SERVER_ICON_SIZE)).convert("RGBA")
+                img.paste(img_avatar, (horizontal_offset + LAYOUT_BASE_PADDING, current_y), img_avatar)
+                return
+
+        with Image.open(DEFAULT_SERVER_ICON_PATH) as default_icon:
+            default_icon = default_icon.resize((LAYOUT_SERVER_ICON_SIZE, LAYOUT_SERVER_ICON_SIZE)).convert("RGBA")
+            img.paste(default_icon, (horizontal_offset + LAYOUT_BASE_PADDING, current_y), default_icon)
+    except Exception as e:
+        print(f"粘贴服务器图标失败 {server_data.get('ip')}: {e}")
 
 
 def _draw_tag_with_background(draw: ImageDraw.ImageDraw, tag: str, tag_color_hex: str, current_y: int,
