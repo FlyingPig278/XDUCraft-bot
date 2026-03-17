@@ -19,8 +19,11 @@ _current_dir = os.path.dirname(__file__)
 # 字体资源文件所在的文件夹路径
 FONTS_PATH = os.path.join(_current_dir, 'resources', 'fonts')
 
-# 默认服务器图标所在路径，用于没有 favicon 时回退显示
+# 在线服务器的默认图标所在路径，用于没有 favicon 时回退显示
 DEFAULT_SERVER_ICON_PATH = os.path.join(_current_dir, 'resources', 'images', 'default_server_icon.png')
+
+# 离线服务器的默认图标所在路径，用于没有 favicon 时回退显示
+OFFLINE_SERVER_ICON_PATH = os.path.join(_current_dir, 'resources', 'images', 'offline_server_icon.png')
 
 # 生成的服务器状态图片最终保存的文件夹路径
 SAVE_IMG_DIR = os.path.join(_current_dir, 'data', 'images')

@@ -145,7 +145,7 @@ def _draw_footer_and_credit(draw: ImageDraw.ImageDraw, image_height: int, footer
 
 
 async def _draw_icon(img: Image.Image, server_data: Dict[str, Any], current_y: int, horizontal_offset: int):
-    """绘制服务器的 favicon，没有时回退到本地图标。"""
+    """绘制服务器的 favicon，没有时根据服务器状态回退到对应的本地图标。"""
     icon_bytes = None
     icon_url = server_data.get("favicon")
     if icon_url:
@@ -158,7 +158,11 @@ async def _draw_icon(img: Image.Image, server_data: Dict[str, Any], current_y: i
                 img.paste(img_avatar, (horizontal_offset + LAYOUT_BASE_PADDING, current_y), img_avatar)
                 return
 
-        with Image.open(DEFAULT_SERVER_ICON_PATH) as default_icon:
+        # 根据服务器在线状态选择不同的默认图标
+        is_online = server_data.get('online', False)
+        icon_path = DEFAULT_SERVER_ICON_PATH if is_online else OFFLINE_SERVER_ICON_PATH
+        
+        with Image.open(icon_path) as default_icon:
             default_icon = default_icon.resize((LAYOUT_SERVER_ICON_SIZE, LAYOUT_SERVER_ICON_SIZE)).convert("RGBA")
             img.paste(default_icon, (horizontal_offset + LAYOUT_BASE_PADDING, current_y), default_icon)
     except Exception as e:
