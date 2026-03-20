@@ -1,110 +1,68 @@
-# import time
-# from collections import defaultdict
-
-from nonebot import on_message
-from nonebot.adapters.onebot.v11 import GroupMessageEvent#, Bot
+from nonebot import on_command, on_message
+from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message
+from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
+from nonebot.rule import Rule, to_me
 
 __plugin_meta__ = PluginMetadata(
     name="xducraft_happy_bot",
-    description="被@回复“喵~”",
-    usage="被@时自动回复“喵~”",
+    description="被@或被回复时自动点表情回应",
+    usage="自动触发：@机器人或回复机器人消息；命令：/ans set <emoji_id>（或 /answer set <emoji_id>）",
 )
 
-from nonebot.rule import to_me
+from xducraft_bot.plugins.xducraft_happy_bot.data_manager import get_emoji_id, set_emoji_id
+from xducraft_bot.plugins.xducraft_mc_status.utils import is_admin
 
-from xducraft_bot.plugins.xducraft_happy_bot.data_manager import get_at_me_status, set_at_me_status
+ANSWER_USAGE = "用法：/ans set <emoji_id>\n示例：/ans set 123"
+
+
+async def is_reply_to_bot(event: GroupMessageEvent) -> bool:
+    if event.reply is None or event.reply.sender is None:
+        return False
+    return str(event.reply.sender.user_id) == str(event.self_id)
+
+answer_command = on_command(
+    "ans",
+    aliases={"answer"},
+    priority=10,
+    block=True,
+)
 
 
 at_me_reply = on_message(
-    rule=to_me(),
+    rule=to_me() | Rule(is_reply_to_bot),
     priority=10,
     block=True
 )
 
 
+@answer_command.handle()
+async def handle_answer_command(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
+    if not await is_admin(bot, event):
+        await answer_command.finish("你没有执行该命令的权限")
+
+    raw = args.extract_plain_text().strip()
+    arg_list = raw.split(maxsplit=1)
+
+    if len(arg_list) != 2 or arg_list[0].lower() != "set":
+        await answer_command.finish(ANSWER_USAGE)
+
+    emoji_id = arg_list[1].strip()
+    if not emoji_id.isdigit():
+        await answer_command.finish("emoji_id 必须是纯数字")
+
+    set_emoji_id(emoji_id)
+    await answer_command.finish(f"已将回应表情设置为 emoji_id={emoji_id}")
+
+
 @at_me_reply.handle()
-async def handle_at_me(event: GroupMessageEvent):
+async def handle_at_me(bot: Bot, event: GroupMessageEvent):
+    emoji_id = get_emoji_id()
 
-    group_id = event.group_id
-    is_enabled = get_at_me_status(group_id)
-
-    if is_enabled:
-    # if True:
-        await at_me_reply.finish("喵~")
-#
-#
-# # --- 1. 复读机配置与状态存储 ---
-#
-# # 配置参数
-# REPEAT_COUNT = 5  # 复读触发次数：同一消息重复 3 次后触发
-# REPEAT_TIME_LIMIT = 120  # 5分钟 = 300秒：消息记录的有效时间窗口
-#
-# # 消息记录存储：
-# # {group_id: [{"message": str, "time": float, "user_id": int}, ...]}
-# # 注意：我们存储的是消息的纯文本内容 (str) 和时间戳 (float)
-# message_records = defaultdict(list)
-#
-# # 临时存储群聊开关状态 (实际项目中推荐使用 nonebot-plugin-datastore 或 JSON 文件存储)
-# # group_repeat_switch = {123456: True, 654321: False} # 示例: 123456群开启
-#
-# # --- 2. 复读匹配器 ---
-#
-# # 复读匹配器实例：捕获所有群聊消息
-# repeater = on_message(
-#     priority=90,  # 较低优先级，低于 @喵回复和具体命令
-#     block=False  # **关键：不阻塞，允许消息继续传递给其他插件**
-# )
-#
-#
-# @repeater.handle()
-# async def handle_repeater(bot: Bot, event: GroupMessageEvent):
-#     group_id = event.group_id
-#     current_time = time.time()
-#
-#     # --- 群聊开关逻辑（你可以基于之前的 JSON 存储实现） ---
-#     is_enabled = get_at_me_status(group_id)
-#     if not is_enabled:
-#         return
-#
-#     # 提取消息内容：使用纯文本作为复读判断依据，忽略图片等非文本内容
-#     message_content = event.message
-#     print(message_content)
-#
-#     # 忽略空消息或 Bot 自己的消息
-#     if not message_content or event.self_id == event.user_id:
-#         return
-#
-#     # --- 消息记录处理 ---
-#
-#     # 1. 清理过期消息 (移除早于时间限制的消息)
-#     records = message_records[group_id]
-#     message_records[group_id] = [
-#         r for r in records if current_time - r["time"] <= REPEAT_TIME_LIMIT
-#     ]
-#
-#     # 2. 记录当前消息
-#     message_records[group_id].append({
-#         "message": message_content,
-#         "time": current_time,
-#     })
-#     print('现在的message:')
-#     print(message_records[group_id])
-#
-#     # 3. 统计复读次数
-#     repeat_count = 0
-#     for record in message_records[group_id]:
-#         if record["message"] == message_content:
-#             repeat_count += 1
-#
-#     # 4. 判断是否触发复读
-#     if repeat_count >= REPEAT_COUNT:
-#         print("已经复读啦")
-#         # 触发复读，发送消息
-#         await bot.send(event=event, message=event.message)
-#
-#         # 5. 清空该消息的记录
-#         # 清空所有匹配该内容的记录，防止 Bot 和群友无限复读
-#         message_records[group_id] = [
-#             r for r in message_records[group_id] if r["message"] != message_content
-#         ]
+    await bot.call_api(
+        "set_msg_emoji_like",
+        message_id=event.message_id,
+        emoji_id=emoji_id,
+        set=True,
+    )
+    await at_me_reply.finish()

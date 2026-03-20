@@ -1,33 +1,31 @@
-# 定义存储数据的文件路径，放在插件目录下的 data 文件夹里
-# 注意：__file__ 必须在 NoneBot 插件的主文件中才能正确获取路径
 import json
 import os
-from typing import Dict, Union
+from typing import Dict
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
-DATA_FILE = os.path.join(DATA_DIR, "at_me_switch.json")  # 专门用于存储开关状态的文件
+DATA_FILE = os.path.join(DATA_DIR, "emoji_like_config.json")
+DEFAULT_EMOJI_ID = "123"
 
 
-def _load_data() -> Dict[str, bool]:
-    """
-    内部函数：从文件中加载所有群聊开关数据。
-    返回格式：{'123456': True, '654321': False}
-    """
+def _load_data() -> Dict[str, str]:
     if not os.path.exists(DATA_FILE):
-        return {}
+        return {"emoji_id": DEFAULT_EMOJI_ID}
 
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         try:
-            return json.load(f)
+            raw = json.load(f)
+            if not isinstance(raw, dict):
+                return {"emoji_id": DEFAULT_EMOJI_ID}
+            emoji_id = str(raw.get("emoji_id", DEFAULT_EMOJI_ID)).strip()
+            if not emoji_id.isdigit():
+                emoji_id = DEFAULT_EMOJI_ID
+            return {"emoji_id": emoji_id}
         except json.JSONDecodeError:
             print(f"警告：{DATA_FILE} 内容不是有效的JSON，将使用空数据。")
-            return {}
+            return {"emoji_id": DEFAULT_EMOJI_ID}
 
 
-def _save_data(data: Dict[str, bool]):
-    """
-    内部函数：将所有群聊开关数据保存到文件中。
-    """
+def _save_data(data: Dict[str, str]):
     if not os.path.exists(DATA_DIR):
         os.makedirs(DATA_DIR)
 
@@ -35,22 +33,17 @@ def _save_data(data: Dict[str, bool]):
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 
-def get_at_me_status(group_id: Union[int, str]) -> bool:
-    """
-    获取指定群聊的 @喵 功能开关状态。
-    """
-    group_id_str = str(group_id)
+def get_emoji_id() -> str:
     data = _load_data()
-    # 默认是 False (关闭)
-    return data.get(group_id_str, False)
+    emoji_id = str(data.get("emoji_id", DEFAULT_EMOJI_ID)).strip()
+    if not emoji_id.isdigit():
+        return DEFAULT_EMOJI_ID
+    return emoji_id
 
 
-def set_at_me_status(group_id: Union[int, str], status: bool) -> None:
-    """
-    设置指定群聊的 @喵 功能开关状态。
-    """
-    group_id_str = str(group_id)
-    data = _load_data()
-    data[group_id_str] = status
-    _save_data(data)
+def set_emoji_id(emoji_id: str) -> None:
+    value = str(emoji_id).strip()
+    if not value.isdigit():
+        raise ValueError("emoji_id must be numeric")
+    _save_data({"emoji_id": value})
 
