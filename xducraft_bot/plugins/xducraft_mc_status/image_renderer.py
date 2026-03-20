@@ -266,7 +266,7 @@ def _draw_status_info(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], cu
     """绘制右对齐的状态信息 (ping, 玩家数, 版本, 玩家列表)。"""
     if server_data.get('online'):
         ping = int(server_data.get('ping', 0))
-        ping_color = PING_COLOR_RED if ping >= 100 else PING_COLOR_GREEN
+        ping_color = PING_COLOR_RED if ping >= 200 else PING_COLOR_GREEN
         ping_text = f"{ping}ms"
         draw.text((IMAGE_WIDTH - LAYOUT_BASE_PADDING, current_y), ping_text, fill=ping_color, anchor='ra', font=FONT_MC_MEDIUM)
 
