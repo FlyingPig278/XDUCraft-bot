@@ -29,10 +29,14 @@ class ChatLogDataManager:
     def _default_config() -> Dict[str, Any]:
         return {
             "enabled_groups": [],
+            "ban_user_ids": [],
             "min_word_length": 2,
             "max_words": 200,
             "retention_days": 1095,
             "additional_stopwords": [],
+            "footer_subtitle": "",
+            "footer_branding_enabled": True,
+            "footer_branding_text": "Powered by FlyingPig278",
         }
 
     def _normalize_config(self, raw: Any) -> Dict[str, Any]:
@@ -55,6 +59,21 @@ class ChatLogDataManager:
                 seen.add(gid)
             cfg["enabled_groups"] = normalized_groups
 
+        ban_user_ids = raw.get("ban_user_ids", raw.get("blacklist_user_ids", []))
+        if isinstance(ban_user_ids, list):
+            normalized_blacklist = []
+            seen = set()
+            for user_id in ban_user_ids:
+                try:
+                    uid = int(user_id)
+                except (TypeError, ValueError):
+                    continue
+                if uid in seen:
+                    continue
+                normalized_blacklist.append(uid)
+                seen.add(uid)
+            cfg["ban_user_ids"] = normalized_blacklist
+
         min_word_length = raw.get("min_word_length", cfg["min_word_length"])
         max_words = raw.get("max_words", cfg["max_words"])
         retention_days = raw.get("retention_days", cfg["retention_days"])
@@ -69,6 +88,18 @@ class ChatLogDataManager:
         if isinstance(additional_stopwords, list):
             cfg["additional_stopwords"] = [str(word).strip().lower() for word in additional_stopwords if str(word).strip()]
 
+        footer_subtitle = raw.get("footer_subtitle", "")
+        if isinstance(footer_subtitle, str):
+            cfg["footer_subtitle"] = footer_subtitle.strip()
+
+        footer_branding_enabled = raw.get("footer_branding_enabled", cfg["footer_branding_enabled"])
+        if isinstance(footer_branding_enabled, bool):
+            cfg["footer_branding_enabled"] = footer_branding_enabled
+
+        footer_branding_text = raw.get("footer_branding_text", cfg["footer_branding_text"])
+        if isinstance(footer_branding_text, str):
+            cfg["footer_branding_text"] = footer_branding_text.strip()
+
         return cfg
 
     def _connect(self) -> sqlite3.Connection:
@@ -78,6 +109,8 @@ class ChatLogDataManager:
 
     def _ensure_storage(self) -> None:
         os.makedirs(self.data_dir, exist_ok=True)
+        os.makedirs(os.path.join(self.data_dir, "avatars"), exist_ok=True)
+        os.makedirs(os.path.join(self.data_dir, "group_avatar_cache"), exist_ok=True)
 
         if not os.path.exists(self.config_file):
             with open(self.config_file, "w", encoding="utf-8") as f:
@@ -89,13 +122,23 @@ class ChatLogDataManager:
                 CREATE TABLE IF NOT EXISTS chat_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     group_id INTEGER NOT NULL,
+                    user_id INTEGER,
                     chat_date TEXT NOT NULL,
                     message TEXT NOT NULL,
-                    created_at INTEGER NOT NULL
+                    created_at INTEGER NOT NULL,
+                    message_id INTEGER
                 )
                 """
             )
+            table_info = conn.execute("PRAGMA table_info(chat_logs)").fetchall()
+            existing_columns = {str(row[1]) for row in table_info}
+            if "user_id" not in existing_columns:
+                conn.execute("ALTER TABLE chat_logs ADD COLUMN user_id INTEGER")
+            if "message_id" not in existing_columns:
+                conn.execute("ALTER TABLE chat_logs ADD COLUMN message_id INTEGER")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_logs_group_date ON chat_logs(group_id, chat_date)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_logs_group_message_id ON chat_logs(group_id, message_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_logs_group_user ON chat_logs(group_id, user_id)")
             conn.commit()
 
     def load_config(self) -> Dict[str, Any]:
@@ -143,11 +186,69 @@ class ChatLogDataManager:
             "max_words": int(cfg.get("max_words", 200)),
         }
 
+    def get_ban_user_ids(self) -> List[int]:
+        cfg = self.load_config()
+        return [int(uid) for uid in cfg.get("ban_user_ids", [])]
+
+    def is_user_banned(self, user_id: int) -> bool:
+        return int(user_id) in set(self.get_ban_user_ids())
+
+    def set_user_banned(self, user_id: int, banned: bool) -> bool:
+        cfg = self.load_config()
+        users = [int(uid) for uid in cfg.get("ban_user_ids", [])]
+        uid = int(user_id)
+
+        if banned and uid in users:
+            return False
+        if (not banned) and uid not in users:
+            return False
+
+        if banned:
+            users.append(uid)
+        else:
+            users = [item for item in users if item != uid]
+
+        cfg["ban_user_ids"] = users
+        self.save_config(cfg)
+        return True
+
+    def get_blacklist_user_ids(self) -> List[int]:
+        return self.get_ban_user_ids()
+
+    def is_user_blacklisted(self, user_id: int) -> bool:
+        return self.is_user_banned(user_id)
+
+    def set_user_blacklisted(self, user_id: int, blacklisted: bool) -> bool:
+        return self.set_user_banned(user_id, blacklisted)
+
     def get_retention_days(self) -> int:
         cfg = self.load_config()
         return max(30, int(cfg.get("retention_days", 1095)))
 
-    def add_message(self, group_id: int, message: str, created_at: Optional[int] = None) -> None:
+    def get_footer_subtitle(self) -> str:
+        cfg = self.load_config()
+        subtitle = cfg.get("footer_subtitle", "")
+        if isinstance(subtitle, str):
+            return subtitle.strip()
+        return ""
+
+    def get_footer_branding_options(self) -> Dict[str, Any]:
+        cfg = self.load_config()
+        enabled = cfg.get("footer_branding_enabled", True)
+        text = cfg.get("footer_branding_text", "Powered by FlyingPig278")
+        return {
+            "enabled": bool(enabled),
+            "text": str(text).strip(),
+        }
+
+    def add_message(
+        self,
+        group_id: int,
+        message: str,
+        created_at: Optional[int] = None,
+        message_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+    ) -> None:
         clean = (message or "").strip()
         if not clean:
             return
@@ -158,28 +259,95 @@ class ChatLogDataManager:
         with self._lock:
             with self._connect() as conn:
                 conn.execute(
-                    "INSERT INTO chat_logs(group_id, chat_date, message, created_at) VALUES (?, ?, ?, ?)",
-                    (int(group_id), d, clean, ts),
+                    "INSERT INTO chat_logs(group_id, user_id, chat_date, message, created_at, message_id) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        int(group_id),
+                        int(user_id) if user_id is not None else None,
+                        d,
+                        clean,
+                        ts,
+                        int(message_id) if message_id is not None else None,
+                    ),
                 )
                 conn.commit()
 
-    def get_messages_for_date(self, group_id: int, target_date: date) -> List[str]:
+    def delete_message_by_message_id(self, group_id: int, message_id: int) -> int:
+        with self._lock:
+            with self._connect() as conn:
+                cursor = conn.execute(
+                    "DELETE FROM chat_logs WHERE group_id = ? AND message_id = ?",
+                    (int(group_id), int(message_id)),
+                )
+                conn.commit()
+                return int(cursor.rowcount or 0)
+
+    def delete_messages_by_user_id(self, group_id: int, user_id: int) -> int:
+        with self._lock:
+            with self._connect() as conn:
+                cursor = conn.execute(
+                    "DELETE FROM chat_logs WHERE group_id = ? AND user_id = ?",
+                    (int(group_id), int(user_id)),
+                )
+                conn.commit()
+                return int(cursor.rowcount or 0)
+
+    def get_messages_for_date(
+        self,
+        group_id: int,
+        target_date: date,
+        excluded_user_ids: Optional[Set[int]] = None,
+    ) -> List[str]:
         d = target_date.isoformat()
+        excluded = {int(uid) for uid in (excluded_user_ids or set())}
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT message FROM chat_logs WHERE group_id = ? AND chat_date = ? ORDER BY id ASC",
+                "SELECT message, user_id FROM chat_logs WHERE group_id = ? AND chat_date = ? ORDER BY id ASC",
                 (int(group_id), d),
             ).fetchall()
-        return [str(row["message"]) for row in rows]
+        output: List[str] = []
+        for row in rows:
+            row_user_id = row["user_id"]
+            if row_user_id is not None and int(row_user_id) in excluded:
+                continue
+            output.append(str(row["message"]))
+        return output
 
-    def get_messages_for_month(self, group_id: int, year: int, month: int) -> List[str]:
+    def get_messages_for_month(
+        self,
+        group_id: int,
+        year: int,
+        month: int,
+        excluded_user_ids: Optional[Set[int]] = None,
+    ) -> List[str]:
         month_prefix = f"{year:04d}-{month:02d}"
+        excluded = {int(uid) for uid in (excluded_user_ids or set())}
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT message FROM chat_logs WHERE group_id = ? AND chat_date LIKE ? ORDER BY id ASC",
+                "SELECT message, user_id FROM chat_logs WHERE group_id = ? AND chat_date LIKE ? ORDER BY id ASC",
                 (int(group_id), f"{month_prefix}%"),
             ).fetchall()
-        return [str(row["message"]) for row in rows]
+        output: List[str] = []
+        for row in rows:
+            row_user_id = row["user_id"]
+            if row_user_id is not None and int(row_user_id) in excluded:
+                continue
+            output.append(str(row["message"]))
+        return output
+
+    def get_messages_for_group(self, group_id: int, excluded_user_ids: Optional[Set[int]] = None) -> List[str]:
+        excluded = {int(uid) for uid in (excluded_user_ids or set())}
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT message, user_id FROM chat_logs WHERE group_id = ? ORDER BY id ASC",
+                (int(group_id),),
+            ).fetchall()
+        output: List[str] = []
+        for row in rows:
+            row_user_id = row["user_id"]
+            if row_user_id is not None and int(row_user_id) in excluded:
+                continue
+            output.append(str(row["message"]))
+        return output
 
     def cleanup_old_messages(self, keep_days: int = 3, ref_date: Optional[date] = None) -> int:
         base = ref_date or date.today()
