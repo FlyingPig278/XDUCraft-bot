@@ -21,6 +21,12 @@ async def is_reply_to_bot(event: GroupMessageEvent) -> bool:
         return False
     return str(event.reply.sender.user_id) == str(event.self_id)
 
+
+async def check_at_or_reply(event: GroupMessageEvent) -> bool:
+    """检查是否被@或被回复"""
+    return event.is_tome() or await is_reply_to_bot(event)
+
+
 answer_command = on_command(
     "ans",
     aliases={"answer"},
@@ -30,7 +36,7 @@ answer_command = on_command(
 
 
 at_me_reply = on_message(
-    rule=to_me() | Rule(is_reply_to_bot),
+    rule=Rule(check_at_or_reply),
     priority=10,
     block=True
 )
