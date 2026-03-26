@@ -33,7 +33,8 @@ PIG_BASE_URL = "https://www.pighub.top"
 PIG_ALL_IMAGES_API = f"{PIG_BASE_URL}/api/all-images"
 AUTO_PUSH_INTERVAL_SECONDS = 6 * 60 * 60
 REQUEST_TIMEOUT_SECONDS = 15.0
-QUERY_COOLDOWN_SECONDS = 5.0
+QUERY_COOLDOWN_SECONDS = 3.0
+MAX_FORWARD_RESULTS = 5
 
 COMMAND_USAGE = (
     "用法:\n"
@@ -179,21 +180,30 @@ async def _send_pig_image(matcher, image: Dict[str, str], prefix: str = "") -> N
     await matcher.finish(MessageSegment.image(file=url))
 
 
-async def _send_merged_pig_images(bot: Bot, event: MessageEvent, images: List[Dict[str, str]]) -> bool:
+async def _send_merged_pig_images(
+    bot: Bot,
+    event: MessageEvent,
+    images: List[Dict[str, str]],
+    total_count: Optional[int] = None,
+) -> bool:
     valid_images = [image for image in images if image.get("url")]
     if not valid_images:
         return False
 
     sender_name = "猪猪图查询"
     sender_uin = str(event.self_id)
-    total = len(valid_images)
+    shown_count = len(valid_images)
+    total = total_count if total_count is not None else shown_count
     nodes = []
 
     for image in valid_images:
         content = MessageSegment.image(file=image["url"])
         nodes.append({"type": "node", "data": {"name": sender_name, "uin": sender_uin, "content": content}})
 
-    await pig_command.send(f"查询到 {total} 张匹配的猪猪图，正在发送合并转发。")
+    if total > shown_count:
+        await pig_command.send(f"查询到 {total} 张匹配的猪猪图，已发送前 {shown_count} 张。")
+    else:
+        await pig_command.send(f"查询到 {shown_count} 张匹配的猪猪图，正在发送合并转发。")
 
     try:
         if isinstance(event, GroupMessageEvent):
@@ -294,13 +304,22 @@ async def handle_pig_command(bot: Bot, event: MessageEvent, args: Message = Comm
         await _finish_status(pig_command, "获取猪猪图失败，请稍后再试。")
         return
 
+    if not keyword:
+        selected = pick_random_image(all_images)
+        if not selected:
+            await _finish_status(pig_command, "没有可用的猪猪图，请稍后再试。")
+            return
+        await _send_pig_image(pig_command, selected)
+        return
+
     matched = find_images_by_keyword(all_images, keyword)
     if not matched:
         await _finish_status(pig_command, "没有找到匹配的猪猪图。")
         return
 
     if len(matched) > 1:
-        sent = await _send_merged_pig_images(bot, event, matched)
+        limited = matched[:MAX_FORWARD_RESULTS]
+        sent = await _send_merged_pig_images(bot, event, limited, total_count=len(matched))
         if sent:
             await pig_command.finish()
             return
