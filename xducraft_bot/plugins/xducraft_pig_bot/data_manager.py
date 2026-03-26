@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 
 DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 DEFAULT_DATA_FILE = os.path.join(DEFAULT_DATA_DIR, "pig_config.json")
+DEFAULT_MAX_FORWARD_RESULTS = 5
 
 
 class DataManager:
@@ -22,8 +23,17 @@ class DataManager:
 
     def _default_data(self) -> Dict[str, Any]:
         return {
+            "max_forward_results": DEFAULT_MAX_FORWARD_RESULTS,
             "groups": {},
         }
+
+    @staticmethod
+    def _normalize_max_forward_results(value: Any) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return DEFAULT_MAX_FORWARD_RESULTS
+        return max(1, parsed)
 
     def _normalize_data(self, raw_data: Any) -> Dict[str, Any]:
         data = self._default_data()
@@ -33,6 +43,10 @@ class DataManager:
         raw_groups = raw_data.get("groups", {})
         if not isinstance(raw_groups, dict):
             return data
+
+        data["max_forward_results"] = self._normalize_max_forward_results(
+            raw_data.get("max_forward_results", DEFAULT_MAX_FORWARD_RESULTS)
+        )
 
         normalized_groups: Dict[str, Dict[str, bool]] = {}
         for group_id, cfg in raw_groups.items():
@@ -119,6 +133,12 @@ class DataManager:
             except ValueError:
                 continue
         return groups
+
+    def get_max_forward_results(self) -> int:
+        self.reload()
+        return self._normalize_max_forward_results(
+            self.data.get("max_forward_results", DEFAULT_MAX_FORWARD_RESULTS)
+        )
 
 
 # singleton export

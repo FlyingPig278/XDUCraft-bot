@@ -34,7 +34,6 @@ PIG_ALL_IMAGES_API = f"{PIG_BASE_URL}/api/all-images"
 AUTO_PUSH_INTERVAL_SECONDS = 6 * 60 * 60
 REQUEST_TIMEOUT_SECONDS = 15.0
 QUERY_COOLDOWN_SECONDS = 3.0
-MAX_FORWARD_RESULTS = 5
 
 COMMAND_USAGE = (
     "用法:\n"
@@ -201,7 +200,9 @@ async def _send_merged_pig_images(
         nodes.append({"type": "node", "data": {"name": sender_name, "uin": sender_uin, "content": content}})
 
     if total > shown_count:
-        await pig_command.send(f"查询到 {total} 张匹配的猪猪图，已发送前 {shown_count} 张。")
+        await pig_command.send(
+            f"查询到 {total} 张匹配的猪猪图，已随机发送 {shown_count} 张。请提供更精确的查询词以缩小范围。"
+        )
     else:
         await pig_command.send(f"查询到 {shown_count} 张匹配的猪猪图，正在发送合并转发。")
 
@@ -318,7 +319,11 @@ async def handle_pig_command(bot: Bot, event: MessageEvent, args: Message = Comm
         return
 
     if len(matched) > 1:
-        limited = matched[:MAX_FORWARD_RESULTS]
+        max_forward_results = pig_data_manager.get_max_forward_results()
+        if len(matched) > max_forward_results:
+            limited = random.sample(matched, max_forward_results)
+        else:
+            limited = matched
         sent = await _send_merged_pig_images(bot, event, limited, total_count=len(matched))
         if sent:
             await pig_command.finish()
