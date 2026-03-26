@@ -1,12 +1,13 @@
 import asyncio
 import os
 import random
+import time
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional
 
 import httpx
 from nonebot import get_bots, on_command, require
-from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment
+from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageEvent, MessageSegment, PrivateMessageEvent
 from nonebot.log import logger
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
@@ -32,6 +33,7 @@ PIG_BASE_URL = "https://www.pighub.top"
 PIG_ALL_IMAGES_API = f"{PIG_BASE_URL}/api/all-images"
 AUTO_PUSH_INTERVAL_SECONDS = 6 * 60 * 60
 REQUEST_TIMEOUT_SECONDS = 15.0
+QUERY_COOLDOWN_SECONDS = 5.0
 
 COMMAND_USAGE = (
     "用法:\n"
@@ -45,6 +47,7 @@ ENABLE_ACTIONS = {"on", "open", "enable", "start", "开启", "打开", "开", "�
 DISABLE_ACTIONS = {"off", "close", "disable", "stop", "关闭", "关", "停用"}
 
 _push_lock = asyncio.Lock()
+_query_cooldown_tracker: Dict[str, float] = {}
 
 pig_command = on_command(
     "pig",
@@ -176,7 +179,7 @@ async def _send_pig_image(matcher, image: Dict[str, str], prefix: str = "") -> N
     await matcher.finish(MessageSegment.image(file=url))
 
 
-async def _send_merged_pig_images(bot: Bot, event: GroupMessageEvent, images: List[Dict[str, str]]) -> bool:
+async def _send_merged_pig_images(bot: Bot, event: MessageEvent, images: List[Dict[str, str]]) -> bool:
     valid_images = [image for image in images if image.get("url")]
     if not valid_images:
         return False
@@ -193,7 +196,12 @@ async def _send_merged_pig_images(bot: Bot, event: GroupMessageEvent, images: Li
     await pig_command.send(f"查询到 {total} 张匹配的猪猪图，正在发送合并转发。")
 
     try:
-        await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
+        if isinstance(event, GroupMessageEvent):
+            await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
+        elif isinstance(event, PrivateMessageEvent):
+            await bot.call_api("send_private_forward_msg", user_id=event.user_id, messages=nodes)
+        else:
+            return False
     except Exception as e:
         logger.error("[Pig-Bot] Failed to send merged forward message: %s", e)
         return False
@@ -201,16 +209,29 @@ async def _send_merged_pig_images(bot: Bot, event: GroupMessageEvent, images: Li
     return True
 
 
+def _check_query_cooldown(user_id: int) -> float:
+    now = time.monotonic()
+    key = str(user_id)
+    last_time = _query_cooldown_tracker.get(key)
+    if last_time is not None:
+        elapsed = now - last_time
+        if elapsed < QUERY_COOLDOWN_SECONDS:
+            return QUERY_COOLDOWN_SECONDS - elapsed
+
+    _query_cooldown_tracker[key] = now
+    return 0.0
+
+
 async def _finish_status(matcher, status_text: str) -> None:
     await matcher.finish(status_text)
 
 
 @pig_command.handle()
-async def handle_pig_command(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
+async def handle_pig_command(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
     raw = args.extract_plain_text().strip()
     arg_list = raw.split()
 
-    if arg_list and arg_list[0].lower() in {"auto", "query", "status", "help"}:
+    if isinstance(event, GroupMessageEvent) and arg_list and arg_list[0].lower() in {"auto", "query", "status", "help"}:
         if not await _can_manage(bot, event):
             await _finish_status(pig_command, "你没有执行该命令的权限")
             return
@@ -254,9 +275,15 @@ async def handle_pig_command(bot: Bot, event: GroupMessageEvent, args: Message =
         await _finish_status(pig_command, f"本群猪猪图查询已是{'开启' if enabled else '关闭'}状态")
         return
 
-    cfg = pig_data_manager.get_group_config(event.group_id)
-    if not cfg["query_enabled"]:
-        await _finish_status(pig_command, "本群已关闭猪猪图查询功能，请联系管理员开启。")
+    if isinstance(event, GroupMessageEvent):
+        cfg = pig_data_manager.get_group_config(event.group_id)
+        if not cfg["query_enabled"]:
+            await _finish_status(pig_command, "本群已关闭猪猪图查询功能，请联系管理员开启。")
+            return
+
+    cooldown_left = _check_query_cooldown(event.user_id)
+    if cooldown_left > 0:
+        await _finish_status(pig_command, f"查询过于频繁，请在 {cooldown_left:.1f} 秒后再试。")
         return
 
     keyword = raw
