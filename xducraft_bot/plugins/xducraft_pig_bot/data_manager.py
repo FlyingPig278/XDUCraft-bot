@@ -70,7 +70,11 @@ class DataManager:
     def _load(self) -> Dict[str, Any]:
         try:
             with open(self.data_file, "r", encoding="utf-8") as f:
-                return self._normalize_data(json.load(f))
+                raw_data = json.load(f)
+            normalized_data = self._normalize_data(raw_data)
+            if normalized_data != raw_data:
+                self._save(normalized_data)
+            return normalized_data
         except Exception:
             return self._default_data()
 
@@ -95,6 +99,8 @@ class DataManager:
         groups = self.data.setdefault("groups", {})
         if group_key not in groups:
             groups[group_key] = self._default_group_config()
+            self._save(self.data)
+            return self.data["groups"][group_key]
         return groups[group_key]
 
     def get_group_config(self, group_id: int) -> Dict[str, bool]:
