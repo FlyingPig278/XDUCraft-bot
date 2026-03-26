@@ -176,6 +176,31 @@ async def _send_pig_image(matcher, image: Dict[str, str], prefix: str = "") -> N
     await matcher.finish(MessageSegment.image(file=url))
 
 
+async def _send_merged_pig_images(bot: Bot, event: GroupMessageEvent, images: List[Dict[str, str]]) -> bool:
+    valid_images = [image for image in images if image.get("url")]
+    if not valid_images:
+        return False
+
+    sender_name = "猪猪图查询"
+    sender_uin = str(event.self_id)
+    total = len(valid_images)
+    nodes = []
+
+    for image in valid_images:
+        content = MessageSegment.image(file=image["url"])
+        nodes.append({"type": "node", "data": {"name": sender_name, "uin": sender_uin, "content": content}})
+
+    await pig_command.send(f"查询到 {total} 张匹配的猪猪图，正在发送合并转发。")
+
+    try:
+        await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
+    except Exception as e:
+        logger.error("[Pig-Bot] Failed to send merged forward message: %s", e)
+        return False
+
+    return True
+
+
 async def _finish_status(matcher, status_text: str) -> None:
     await matcher.finish(status_text)
 
@@ -245,6 +270,14 @@ async def handle_pig_command(bot: Bot, event: GroupMessageEvent, args: Message =
     matched = find_images_by_keyword(all_images, keyword)
     if not matched:
         await _finish_status(pig_command, "没有找到匹配的猪猪图。")
+        return
+
+    if len(matched) > 1:
+        sent = await _send_merged_pig_images(bot, event, matched)
+        if sent:
+            await pig_command.finish()
+            return
+        await _finish_status(pig_command, "发送合并转发失败，请稍后重试。")
         return
 
     selected = pick_random_image(matched)
