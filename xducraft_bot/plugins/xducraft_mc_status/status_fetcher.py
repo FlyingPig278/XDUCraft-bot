@@ -7,6 +7,7 @@ from html import escape
 from typing import List, Dict, Any, Tuple
 from urllib.parse import urlparse
 
+import httpx
 from mcstatus import JavaServer
 
 from . import data_manager
@@ -15,6 +16,7 @@ from .constants import DEFAULT_SERVER_PRIORITY
 
 DEFAULT_SERVER_PORT = 25565
 STATUS_QUERY_TIMEOUT = 3.0
+SJTU_STATUS_API_URL = "https://mc.sjtu.cn/custom/serverlist/"
 
 
 def _encode_varint(value: int) -> bytes:
@@ -183,7 +185,7 @@ def _normalize_player_sample(sample: Any) -> List[Dict[str, str]]:
     return normalized_sample
 
 
-async def get_single_server_status(ip: str) -> Dict[str, Any]:
+async def _get_single_server_status_via_protocol(ip: str) -> Dict[str, Any]:
     """通过 Java 版状态协议直接获取单个 Minecraft 服务器的状态。"""
     hostname, port = _parse_server_address(ip)
     fallback_response = {
@@ -208,6 +210,7 @@ async def get_single_server_status(ip: str) -> Dict[str, Any]:
             connection_candidates.append(direct_target)
 
         last_error: Exception | None = None
+        attempt_errors: list[str] = []
         raw_status: dict[str, Any] | None = None
         latency: int | None = None
         resolved_host_for_output = hostname
@@ -226,8 +229,13 @@ async def get_single_server_status(ip: str) -> Dict[str, Any]:
                 break
             except Exception as connect_error:
                 last_error = connect_error
+                attempt_errors.append(
+                    f"{connect_host}:{connect_port} -> {type(connect_error).__name__}: {connect_error}"
+                )
 
         if raw_status is None or latency is None:
+            if attempt_errors:
+                raise RuntimeError("; ".join(attempt_errors))
             if last_error is not None:
                 raise last_error
             raise RuntimeError("状态查询失败")
@@ -265,6 +273,68 @@ async def get_single_server_status(ip: str) -> Dict[str, Any]:
     except Exception as e:
         fallback_response["error"] = str(e)
         return fallback_response
+
+
+async def _get_single_server_status_via_sjtu(ip: str) -> Dict[str, Any]:
+    """通过 SJTU 聚合 API 获取单个 Minecraft 服务器状态。"""
+    hostname, port = _parse_server_address(ip)
+    fallback_response = {
+        "online": False,
+        "hostname": hostname,
+        "port": port,
+        "original_query": ip,
+        "ip": ip,
+    }
+
+    async with httpx.AsyncClient(timeout=STATUS_QUERY_TIMEOUT) as client:
+        try:
+            response = await client.get(SJTU_STATUS_API_URL, params={"query": ip})
+            response.raise_for_status()
+            data = response.json()
+
+            if not isinstance(data, dict):
+                raise ValueError("SJTU API 返回格式异常")
+
+            data["original_query"] = ip
+            data["ip"] = ip
+            data.setdefault("hostname", hostname)
+            data.setdefault("port", port)
+            return data
+        except Exception as e:
+            fallback_response["error"] = str(e)
+            return fallback_response
+
+
+def _is_successful_online_result(result: Dict[str, Any]) -> bool:
+    """判断某次查询结果是否成功在线。"""
+    return bool(result.get("online"))
+
+
+async def get_single_server_status(ip: str, group_id: int | None = None) -> Dict[str, Any]:
+    """根据群配置的数据源获取单个 Minecraft 服务器状态。"""
+    api_source = "protocol"
+    if group_id is not None:
+        api_source = data_manager.get_status_api_source(group_id)
+
+    if api_source == "sjtu":
+        return await _get_single_server_status_via_sjtu(ip)
+
+    protocol_result = await _get_single_server_status_via_protocol(ip)
+    if api_source == "auto":
+        if _is_successful_online_result(protocol_result):
+            return protocol_result
+
+        sjtu_result = await _get_single_server_status_via_sjtu(ip)
+        if _is_successful_online_result(sjtu_result):
+            return sjtu_result
+
+        protocol_error = protocol_result.get("error")
+        sjtu_error = sjtu_result.get("error")
+        if protocol_error or sjtu_error:
+            protocol_result["error"] = f"protocol: {protocol_error or '无错误信息'}; sjtu: {sjtu_error or '无错误信息'}"
+        return protocol_result
+
+    return protocol_result
 
 
 def _merge_results_into_tree(
@@ -311,7 +381,7 @@ async def get_all_servers_status(group_id: int) -> List[Dict[str, Any]]:
         return []
 
     # 3. 并发获取所有服务器的状态
-    tasks = [get_single_server_status(server['ip']) for server in flat_server_list]
+    tasks = [get_single_server_status(server['ip'], group_id=group_id) for server in flat_server_list]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # 4. 创建一个从IP到状态结果的映射，便于查找

@@ -17,7 +17,8 @@ EDITING_USERS = {}
 from .config_coder import compress_config, decompress_config
 from .constants import WEB_UI_BASE_URL, USAGE_USER, USAGE_ADMIN
 from .data_manager import add_server, remove_server, clear_footer, add_footer, get_footer, set_server_attribute, \
-    clear_server_attribute, export_group_data, import_group_data, get_server_list, get_server_info
+    clear_server_attribute, export_group_data, import_group_data, get_server_list, get_server_info, get_status_api_source, \
+    set_status_api_source
 from .image_renderer import render_status_image
 from .status_fetcher import get_all_servers_status, get_single_server_status
 from .utils import is_admin, is_valid_server_address, is_valid_hex_color
@@ -288,6 +289,37 @@ async def _handle_help(bot: Bot, event: GroupMessageEvent, arg_list: list):
         await mc_status.finish()
 
 
+async def _handle_source(bot: Bot, event: GroupMessageEvent, arg_list: list):
+    from . import mc_status
+    if not await is_admin(bot, event):
+        await mc_status.finish("你没有执行该命令的权限")
+
+    source_name_map = {
+        "protocol": "本地协议直连",
+        "sjtu": "SJTU 聚合 API",
+        "auto": "自动回退（先协议，失败后SJTU）",
+    }
+
+    if len(arg_list) == 1:
+        current_source = get_status_api_source(event.group_id)
+        display_name = source_name_map.get(current_source, current_source)
+        await mc_status.finish(
+            f"当前状态查询源：{display_name} ({current_source})\n"
+            "可选值：protocol / sjtu / auto\n"
+            "使用方式：/mcs source <protocol|sjtu|auto>"
+        )
+
+    if len(arg_list) != 2:
+        await mc_status.finish("命令格式错误，请使用 /mcs source <protocol|sjtu|auto>")
+
+    new_source = arg_list[1].strip().lower()
+    if not set_status_api_source(event.group_id, new_source):
+        await mc_status.finish("无效的查询源，请使用：protocol / sjtu / auto")
+
+    display_name = source_name_map.get(new_source, new_source)
+    await mc_status.finish(f"已将状态查询源切换为：{display_name} ({new_source})")
+
+
 async def handle_query_all(bot: Bot, event: GroupMessageEvent,show_all_servers: bool):
     from . import mc_status
     """查询所有服务器状态"""
@@ -372,7 +404,7 @@ async def handle_query_single(bot: Bot, event: GroupMessageEvent, ip: str):
         await mc_status.send(f"正在查询服务器 {ip} 的状态...")
 
         # 1. 获取实时服务器状态
-        live_status_data = await get_single_server_status(ip)
+        live_status_data = await get_single_server_status(ip, group_id=event.group_id)
 
         # 2. 获取本地存储的服务器配置信息
         saved_config = get_server_info(event.group_id, ip)
@@ -460,6 +492,8 @@ SUBCOMMAND_HANDLERS = {
     "editor": _handle_edit,
     "export": _handle_edit,
     "export_json": _handle_export_json,
+    "source": _handle_source,
+    "api": _handle_source,
     "help": _handle_help,
 }
 

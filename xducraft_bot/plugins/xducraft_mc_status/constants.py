@@ -135,6 +135,7 @@ USAGE_ADMIN= """【Web编辑器 (推荐)】
 【快捷命令】
 /mcs add <IP>: 添加服务器
 /mcs remove <IP>: 移除服务器
+/mcs source <protocol|sjtu|auto>: 切换状态查询源
 ---
 【高级/调试命令】
 /mcs set <IP> <attr> <value>: 设置服务器属性 (支持: tag, tag_color, comment, priority, ignore_in_list, hide_ip, display_name)

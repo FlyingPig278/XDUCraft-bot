@@ -34,7 +34,8 @@ def _ensure_group_data_exists(data: Dict[str, Any], group_id_str: str):
     data.setdefault(group_id_str, {
         "servers": [],
         "footer": "",
-        "show_offline_by_default": False
+        "show_offline_by_default": False,
+        "status_api_source": "protocol",
     })
 
 
@@ -103,6 +104,28 @@ def get_show_offline_by_default(group_id: int) -> bool:
     data = _load_data()
     group_id_str = str(group_id)
     return data.get(group_id_str, {}).get("show_offline_by_default", False)
+
+
+def get_status_api_source(group_id: int) -> str:
+    """获取一个群组的状态查询 API 源。"""
+    data = _load_data()
+    group_id_str = str(group_id)
+    api_source = data.get(group_id_str, {}).get("status_api_source", "protocol")
+    return api_source if api_source in {"protocol", "sjtu", "auto"} else "protocol"
+
+
+def set_status_api_source(group_id: int, api_source: str) -> bool:
+    """设置一个群组的状态查询 API 源。"""
+    normalized_source = str(api_source).strip().lower()
+    if normalized_source not in {"protocol", "sjtu", "auto"}:
+        return False
+
+    data = _load_data()
+    group_id_str = str(group_id)
+    _ensure_group_data_exists(data, group_id_str)
+    data[group_id_str]["status_api_source"] = normalized_source
+    _save_data(data)
+    return True
 
 def add_server(group_id: int, server_ip: str, tag: str = "", tag_color: str = "",
                comment: str = "", ignore_in_list: bool = False, hide_ip: bool = False, # 新增 hide_ip
@@ -226,6 +249,8 @@ def import_group_data(group_id: int, data_to_import: Dict[str, Any]) -> bool:
     data[group_id_str]['servers'] = data_to_import.get("servers", [])
     data[group_id_str]['footer'] = data_to_import.get("footer", "")
     data[group_id_str]['show_offline_by_default'] = data_to_import.get("show_offline_by_default", False)
+    imported_api_source = str(data_to_import.get("status_api_source", "protocol")).strip().lower()
+    data[group_id_str]['status_api_source'] = imported_api_source if imported_api_source in {"protocol", "sjtu", "auto"} else "protocol"
 
     _save_data(data)
     return True
