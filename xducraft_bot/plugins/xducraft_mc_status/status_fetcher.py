@@ -2,6 +2,7 @@ import asyncio
 import json
 import struct
 import time
+from contextlib import suppress
 from html import escape
 from typing import List, Dict, Any, Tuple
 from urllib.parse import urlparse
@@ -91,7 +92,8 @@ async def _fetch_raw_status_payload(
         return json.loads(payload.decode("utf-8")), latency
     finally:
         writer.close()
-        await writer.wait_closed()
+        with suppress(Exception):
+            await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
 
 
 def _parse_server_address(address: str) -> tuple[str, int]:
@@ -193,13 +195,42 @@ async def get_single_server_status(ip: str) -> Dict[str, Any]:
     }
 
     try:
-        server = await JavaServer.async_lookup(ip, timeout=STATUS_QUERY_TIMEOUT)
-        raw_status, latency = await _fetch_raw_status_payload(
-            connect_host=server.address.host,
-            connect_port=server.address.port,
-            handshake_host=hostname,
-            handshake_port=port,
-        )
+        connection_candidates: list[tuple[str, int]] = []
+
+        try:
+            server = await JavaServer.async_lookup(ip, timeout=STATUS_QUERY_TIMEOUT)
+            connection_candidates.append((server.address.host, server.address.port))
+        except Exception:
+            pass
+
+        direct_target = (hostname, port)
+        if direct_target not in connection_candidates:
+            connection_candidates.append(direct_target)
+
+        last_error: Exception | None = None
+        raw_status: dict[str, Any] | None = None
+        latency: int | None = None
+        resolved_host_for_output = hostname
+        resolved_port_for_output = port
+
+        for connect_host, connect_port in connection_candidates:
+            try:
+                raw_status, latency = await _fetch_raw_status_payload(
+                    connect_host=connect_host,
+                    connect_port=connect_port,
+                    handshake_host=hostname,
+                    handshake_port=port,
+                )
+                resolved_host_for_output = connect_host
+                resolved_port_for_output = connect_port
+                break
+            except Exception as connect_error:
+                last_error = connect_error
+
+        if raw_status is None or latency is None:
+            if last_error is not None:
+                raise last_error
+            raise RuntimeError("状态查询失败")
 
         players = raw_status.get("players", {}) if isinstance(raw_status.get("players"), dict) else {}
         version = raw_status.get("version", {})
@@ -208,8 +239,8 @@ async def get_single_server_status(ip: str) -> Dict[str, Any]:
         response_data: Dict[str, Any] = {
             **fallback_response,
             "online": True,
-            "hostname": server.address.host,
-            "port": server.address.port,
+            "hostname": resolved_host_for_output,
+            "port": resolved_port_for_output,
             "ping": latency,
             "version": version.get("name", "N/A") if isinstance(version, dict) else str(version),
             "protocol": version.get("protocol") if isinstance(version, dict) else None,
