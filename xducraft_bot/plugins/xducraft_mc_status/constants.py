@@ -135,7 +135,11 @@ USAGE_ADMIN= """【Web编辑器 (推荐)】
 【快捷命令】
 /mcs add <IP>: 添加服务器
 /mcs remove <IP>: 移除服务器
-/mcs source <protocol|sjtu|jsu|custom|auto>: 切换状态查询源
+/mcs source: 查看当前生效状态查询源（群级/全局）
+/mcs source set <protocol|sjtu|jsu|custom|auto>: 设置本群状态查询源
+/mcs source clear: 清空本群状态查询源覆盖
+/mcs source global set <protocol|sjtu|jsu|custom|auto>: 设置全局默认状态查询源
+/mcs source global clear: 清空全局默认状态查询源（恢复 protocol）
 /mcs api: 查看当前生效的自定义 API URL
 /mcs api set <url>: 设置本群自定义 API URL
 /mcs api clear: 清空本群自定义 API URL

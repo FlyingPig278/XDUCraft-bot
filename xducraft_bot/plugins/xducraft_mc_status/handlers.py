@@ -18,8 +18,10 @@ EDITING_USERS = {}
 from .config_coder import compress_config, decompress_config
 from .constants import WEB_UI_BASE_URL, USAGE_USER, USAGE_ADMIN
 from .data_manager import add_server, remove_server, clear_footer, add_footer, get_footer, set_server_attribute, \
-    clear_server_attribute, export_group_data, import_group_data, get_server_list, get_server_info, get_status_api_source, \
-    set_status_api_source, get_effective_status_api_url, set_group_status_api_url, clear_group_status_api_url, \
+    clear_server_attribute, export_group_data, import_group_data, get_server_list, get_server_info, \
+    get_effective_status_api_source, set_group_status_api_source, clear_group_status_api_source, set_global_status_api_source, \
+    clear_global_status_api_source, \
+    get_effective_status_api_url, set_group_status_api_url, clear_group_status_api_url, \
     set_global_status_api_url, clear_global_status_api_url
 from .image_renderer import render_status_image
 from .status_fetcher import get_all_servers_status, get_single_server_status
@@ -319,24 +321,93 @@ async def _handle_source(bot: Bot, event: GroupMessageEvent, arg_list: list):
         "auto": "自动回退（先协议，后custom，再JSU，最后SJTU）",
     }
 
+    def _format_source(source: str) -> str:
+        return f"{source_name_map.get(source, source)} ({source})"
+
     if len(arg_list) == 1:
-        current_source = get_status_api_source(event.group_id)
-        display_name = source_name_map.get(current_source, current_source)
+        current_source, scope = get_effective_status_api_source(event.group_id)
+        scope_name = {
+            "group": "群级覆盖",
+            "global": "全局默认",
+        }.get(scope, scope)
         await mc_status.finish(
-            f"当前状态查询源：{display_name} ({current_source})\n"
+            f"当前生效状态查询源（{scope_name}）：{_format_source(current_source)}\n"
             "可选值：protocol / sjtu / jsu / custom / auto\n"
-            "使用方式：/mcs source <protocol|sjtu|jsu|custom|auto>"
+            "命令：\n"
+            "/mcs source set <source>\n"
+            "/mcs source clear\n"
+            "/mcs source global set <source>\n"
+            "/mcs source global clear\n"
+            "兼容旧用法：/mcs source <source>"
         )
 
-    if len(arg_list) != 2:
-        await mc_status.finish("命令格式错误，请使用 /mcs source <protocol|sjtu|jsu|custom|auto>")
+    valid_sources = {"protocol", "sjtu", "jsu", "custom", "auto"}
 
-    new_source = arg_list[1].strip().lower()
-    if not set_status_api_source(event.group_id, new_source):
-        await mc_status.finish("无效的查询源，请使用：protocol / sjtu / jsu / custom / auto")
+    if len(arg_list) == 2:
+        # 兼容旧语法：/mcs source <source>
+        shorthand_source = arg_list[1].strip().lower()
+        if shorthand_source not in valid_sources:
+            await mc_status.finish("命令格式错误，请使用 /mcs source <protocol|sjtu|jsu|custom|auto>")
 
-    display_name = source_name_map.get(new_source, new_source)
-    await mc_status.finish(f"已将状态查询源切换为：{display_name} ({new_source})")
+        changed = set_group_status_api_source(event.group_id, shorthand_source)
+        if changed:
+            await mc_status.finish(f"已设置本群状态查询源：{_format_source(shorthand_source)}")
+        await mc_status.finish(f"本群状态查询源未变化：{_format_source(shorthand_source)}")
+
+    action = arg_list[1].strip().lower()
+
+    if action == "set":
+        if len(arg_list) != 3:
+            await mc_status.finish("命令格式错误，请使用 /mcs source set <source>")
+
+        new_source = arg_list[2].strip().lower()
+        if new_source not in valid_sources:
+            await mc_status.finish("无效的查询源，请使用：protocol / sjtu / jsu / custom / auto")
+
+        changed = set_group_status_api_source(event.group_id, new_source)
+        if changed:
+            await mc_status.finish(f"已设置本群状态查询源：{_format_source(new_source)}")
+        await mc_status.finish(f"本群状态查询源未变化：{_format_source(new_source)}")
+
+    if action == "clear":
+        if len(arg_list) != 2:
+            await mc_status.finish("命令格式错误，请使用 /mcs source clear")
+
+        if clear_group_status_api_source(event.group_id):
+            await mc_status.finish("已清空本群状态查询源覆盖配置，将回退到全局默认源。")
+        await mc_status.finish("本群状态查询源本就未设置覆盖（已使用全局默认或 protocol）。")
+
+    if action == "global":
+        if len(arg_list) == 4 and arg_list[2].strip().lower() == "set":
+            global_source = arg_list[3].strip().lower()
+            if global_source not in valid_sources:
+                await mc_status.finish("无效的查询源，请使用：protocol / sjtu / jsu / custom / auto")
+
+            changed = set_global_status_api_source(global_source)
+            if changed:
+                await mc_status.finish(f"已设置全局默认状态查询源：{_format_source(global_source)}")
+            await mc_status.finish(f"全局默认状态查询源未变化：{_format_source(global_source)}")
+
+        if len(arg_list) == 3 and arg_list[2].strip().lower() == "clear":
+            if clear_global_status_api_source():
+                await mc_status.finish("已清空全局默认状态查询源，恢复为 protocol。")
+            await mc_status.finish("全局默认状态查询源本就为 protocol。")
+
+        await mc_status.finish(
+            "命令格式错误，请使用：\n"
+            "/mcs source global set <source>\n"
+            "/mcs source global clear"
+        )
+
+    await mc_status.finish(
+        "命令格式错误，请使用：\n"
+        "/mcs source\n"
+        "/mcs source set <source>\n"
+        "/mcs source clear\n"
+        "/mcs source global set <source>\n"
+        "/mcs source global clear\n"
+        "兼容旧用法：/mcs source <source>"
+    )
 
 
 async def _handle_api(bot: Bot, event: GroupMessageEvent, arg_list: list):

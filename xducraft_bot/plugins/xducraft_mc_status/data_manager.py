@@ -16,7 +16,7 @@ def _default_group_data() -> Dict[str, Any]:
         "servers": [],
         "footer": "",
         "show_offline_by_default": False,
-        "status_api_source": "protocol",
+        "status_api_source": "jsu",  # 默认使用 jsu 作为状态查询源
         "status_api_url": "",
     }
 
@@ -24,6 +24,7 @@ def _default_group_data() -> Dict[str, Any]:
 def _default_global_config() -> Dict[str, Any]:
     return {
         "status_api_url": "",
+        "status_api_source": "jsu",  # 全局默认使用 jsu 作为状态查询源
     }
 
 
@@ -137,17 +138,19 @@ def get_show_offline_by_default(group_id: int) -> bool:
     return data.get(group_id_str, {}).get("show_offline_by_default", False)
 
 
-def get_status_api_source(group_id: int) -> str:
-    """获取一个群组的状态查询 API 源。"""
+def get_group_status_api_source(group_id: int) -> str:
+    """获取一个群组覆盖的状态查询 API 源。"""
     data = _load_data()
     group_id_str = str(group_id)
     _ensure_group_data_exists(data, group_id_str)
-    api_source = data.get(group_id_str, {}).get("status_api_source", "protocol")
-    return api_source if api_source in {"protocol", "sjtu", "jsu", "custom", "auto"} else "protocol"
+    api_source = str(data.get(group_id_str, {}).get("status_api_source", "") or "").strip().lower()
+    if not api_source:
+        return ""
+    return api_source if api_source in {"protocol", "sjtu", "jsu", "custom", "auto"} else ""
 
 
-def set_status_api_source(group_id: int, api_source: str) -> bool:
-    """设置一个群组的状态查询 API 源。"""
+def set_group_status_api_source(group_id: int, api_source: str) -> bool:
+    """设置一个群组覆盖的状态查询 API 源。"""
     normalized_source = str(api_source).strip().lower()
     if normalized_source not in {"protocol", "sjtu", "jsu", "custom", "auto"}:
         return False
@@ -158,6 +161,85 @@ def set_status_api_source(group_id: int, api_source: str) -> bool:
     data[group_id_str]["status_api_source"] = normalized_source
     _save_data(data)
     return True
+
+
+def clear_group_status_api_source(group_id: int) -> bool:
+    """清空一个群组覆盖的状态查询 API 源，回退到全局默认。"""
+    data = _load_data()
+    group_id_str = str(group_id)
+    _ensure_group_data_exists(data, group_id_str)
+    current_source = str(data[group_id_str].get("status_api_source", "") or "").strip().lower()
+    if not current_source:
+        return False
+
+    data[group_id_str]["status_api_source"] = ""
+    _save_data(data)
+    return True
+
+
+def get_global_status_api_source() -> str:
+    """获取全局默认状态查询 API 源。"""
+    data = _load_data()
+    _ensure_global_config_exists(data)
+    api_source = data.get(GLOBAL_CONFIG_KEY, {}).get("status_api_source", "protocol")
+    return str(api_source).strip().lower() if str(api_source).strip().lower() in {"protocol", "sjtu", "jsu", "custom", "auto"} else "protocol"
+
+
+def set_global_status_api_source(api_source: str) -> bool:
+    """设置全局默认状态查询 API 源。"""
+    normalized_source = str(api_source).strip().lower()
+    if normalized_source not in {"protocol", "sjtu", "jsu", "custom", "auto"}:
+        return False
+
+    data = _load_data()
+    _ensure_global_config_exists(data)
+
+    if str(data[GLOBAL_CONFIG_KEY].get("status_api_source", "protocol") or "protocol").strip().lower() == normalized_source:
+        return False
+
+    data[GLOBAL_CONFIG_KEY]["status_api_source"] = normalized_source
+    _save_data(data)
+    return True
+
+
+def clear_global_status_api_source() -> bool:
+    """清空全局默认状态查询 API 源，恢复为 protocol。"""
+    data = _load_data()
+    _ensure_global_config_exists(data)
+    current_source = str(data[GLOBAL_CONFIG_KEY].get("status_api_source", "protocol") or "protocol").strip().lower()
+    if current_source == "protocol":
+        return False
+
+    data[GLOBAL_CONFIG_KEY]["status_api_source"] = "protocol"
+    _save_data(data)
+    return True
+
+
+def get_effective_status_api_source(group_id: int) -> Tuple[str, str]:
+    """
+    获取群组当前生效的状态查询 API 源。
+
+    返回值:
+        (source, scope)
+        scope 为 group/global。
+    """
+    group_source = get_group_status_api_source(group_id)
+    if group_source:
+        return group_source, "group"
+
+    global_source = get_global_status_api_source()
+    return global_source, "global"
+
+
+def get_status_api_source(group_id: int) -> str:
+    """获取一个群组当前生效的状态查询 API 源。"""
+    source, _ = get_effective_status_api_source(group_id)
+    return source
+
+
+def set_status_api_source(group_id: int, api_source: str) -> bool:
+    """兼容旧接口：设置群组覆盖的状态查询 API 源。"""
+    return set_group_status_api_source(group_id, api_source)
 
 
 def get_group_status_api_url(group_id: int) -> str:
@@ -371,8 +453,8 @@ def import_group_data(group_id: int, data_to_import: Dict[str, Any]) -> bool:
     data[group_id_str]['servers'] = data_to_import.get("servers", [])
     data[group_id_str]['footer'] = data_to_import.get("footer", "")
     data[group_id_str]['show_offline_by_default'] = data_to_import.get("show_offline_by_default", False)
-    imported_api_source = str(data_to_import.get("status_api_source", "protocol")).strip().lower()
-    data[group_id_str]['status_api_source'] = imported_api_source if imported_api_source in {"protocol", "sjtu", "jsu", "custom", "auto"} else "protocol"
+    imported_api_source = str(data_to_import.get("status_api_source", "")).strip().lower()
+    data[group_id_str]['status_api_source'] = imported_api_source if imported_api_source in {"protocol", "sjtu", "jsu", "custom", "auto"} else ""
     data[group_id_str]['status_api_url'] = str(data_to_import.get("status_api_url", "") or "").strip()
 
     _save_data(data)
