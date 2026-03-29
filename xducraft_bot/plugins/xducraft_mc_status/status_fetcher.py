@@ -17,6 +17,39 @@ from .constants import DEFAULT_SERVER_PRIORITY
 DEFAULT_SERVER_PORT = 25565
 STATUS_QUERY_TIMEOUT = 3.0
 SJTU_STATUS_API_URL = "https://mc.sjtu.cn/custom/serverlist/"
+JSU_STATUS_API_URL = "https://api.jsumc.fun/ping"
+
+
+def _is_tls_verification_error(error: Exception) -> bool:
+    """判断异常是否由 TLS 证书校验失败引起。"""
+    error_text = str(error).lower()
+    keywords = [
+        "certificate verify failed",
+        "certificateverifyfailed",
+        "self signed certificate",
+        "unable to get local issuer certificate",
+        "ssl: cert",
+    ]
+    return any(keyword in error_text for keyword in keywords)
+
+
+async def _request_custom_status(ip: str, api_url: str, verify_tls: bool) -> Dict[str, Any]:
+    """请求自定义 API，并补齐标准字段。"""
+    hostname, port = _parse_server_address(ip)
+
+    async with httpx.AsyncClient(timeout=STATUS_QUERY_TIMEOUT, verify=verify_tls) as client:
+        response = await client.get(api_url, params={"query": ip})
+        response.raise_for_status()
+        data = response.json()
+
+    if not isinstance(data, dict):
+        raise ValueError("自定义 API 返回格式异常")
+
+    data["original_query"] = ip
+    data["ip"] = ip
+    data.setdefault("hostname", hostname)
+    data.setdefault("port", port)
+    return data
 
 
 def _encode_varint(value: int) -> bytes:
@@ -305,6 +338,71 @@ async def _get_single_server_status_via_sjtu(ip: str) -> Dict[str, Any]:
             return fallback_response
 
 
+async def _get_single_server_status_via_jsu(ip: str) -> Dict[str, Any]:
+    """通过 JSU API 获取单个 Minecraft 服务器状态。"""
+    hostname, port = _parse_server_address(ip)
+    fallback_response = {
+        "online": False,
+        "hostname": hostname,
+        "port": port,
+        "original_query": ip,
+        "ip": ip,
+    }
+
+    async with httpx.AsyncClient(timeout=STATUS_QUERY_TIMEOUT) as client:
+        try:
+            response = await client.get(JSU_STATUS_API_URL, params={"server": ip})
+            response.raise_for_status()
+            data = response.json()
+
+            if not isinstance(data, dict):
+                raise ValueError("JSU API 返回格式异常")
+
+            info = data.get("info")
+            if not isinstance(info, dict):
+                raise ValueError("JSU API 缺少 info 字段")
+
+            target = str(data.get("target", "") or "").strip()
+            target_hostname = hostname
+            target_port = port
+            if target:
+                target_hostname, target_port = _parse_server_address(target)
+
+            version = info.get("version", {}) if isinstance(info.get("version"), dict) else {}
+            players = info.get("players", {}) if isinstance(info.get("players"), dict) else {}
+            raw_description = info.get("description")
+
+            response_data: Dict[str, Any] = {
+                **fallback_response,
+                "online": True,
+                "hostname": target_hostname,
+                "port": target_port,
+                "ping": int(data.get("latency", 0) or 0),
+                "version": version.get("name", "N/A") if isinstance(version, dict) else str(version),
+                "protocol": version.get("protocol") if isinstance(version, dict) else None,
+                "players": {
+                    "online": players.get("online", 0),
+                    "max": players.get("max", 0),
+                    "sample": _normalize_player_sample(players.get("sample")),
+                },
+            }
+
+            if raw_description is not None:
+                response_data["description_raw"] = raw_description
+                normalized_description = _normalize_description(raw_description)
+                if normalized_description:
+                    response_data["description"] = normalized_description
+
+            favicon = info.get("favicon")
+            if favicon:
+                response_data["favicon"] = favicon
+
+            return response_data
+        except Exception as e:
+            fallback_response["error"] = str(e)
+            return fallback_response
+
+
 async def _get_single_server_status_via_custom(ip: str, api_url: str) -> Dict[str, Any]:
     """通过自定义后端 API 获取单个 Minecraft 服务器状态。"""
     hostname, port = _parse_server_address(ip)
@@ -321,23 +419,22 @@ async def _get_single_server_status_via_custom(ip: str, api_url: str) -> Dict[st
         fallback_response["error"] = "未配置自定义 API URL"
         return fallback_response
 
-    async with httpx.AsyncClient(timeout=STATUS_QUERY_TIMEOUT) as client:
-        try:
-            response = await client.get(normalized_api_url, params={"query": ip})
-            response.raise_for_status()
-            data = response.json()
+    try:
+        return await _request_custom_status(ip, normalized_api_url, verify_tls=True)
+    except Exception as first_error:
+        if _is_tls_verification_error(first_error):
+            try:
+                data = await _request_custom_status(ip, normalized_api_url, verify_tls=False)
+                data["tls_verify_bypassed"] = True
+                return data
+            except Exception as second_error:
+                fallback_response["error"] = (
+                    f"TLS 校验失败且重试未通过: verify=true -> {first_error}; verify=false -> {second_error}"
+                )
+                return fallback_response
 
-            if not isinstance(data, dict):
-                raise ValueError("自定义 API 返回格式异常")
-
-            data["original_query"] = ip
-            data["ip"] = ip
-            data.setdefault("hostname", hostname)
-            data.setdefault("port", port)
-            return data
-        except Exception as e:
-            fallback_response["error"] = str(e)
-            return fallback_response
+        fallback_response["error"] = str(first_error)
+        return fallback_response
 
 
 def _is_successful_online_result(result: Dict[str, Any]) -> bool:
@@ -356,6 +453,9 @@ async def get_single_server_status(ip: str, group_id: int | None = None) -> Dict
     if api_source == "custom":
         return await _get_single_server_status_via_custom(ip, custom_api_url)
 
+    if api_source == "jsu":
+        return await _get_single_server_status_via_jsu(ip)
+
     if api_source == "sjtu":
         return await _get_single_server_status_via_sjtu(ip)
 
@@ -370,17 +470,23 @@ async def get_single_server_status(ip: str, group_id: int | None = None) -> Dict
             if _is_successful_online_result(custom_result):
                 return custom_result
 
+        jsu_result = await _get_single_server_status_via_jsu(ip)
+        if _is_successful_online_result(jsu_result):
+            return jsu_result
+
         sjtu_result = await _get_single_server_status_via_sjtu(ip)
         if _is_successful_online_result(sjtu_result):
             return sjtu_result
 
         protocol_error = protocol_result.get("error")
         custom_error = custom_result.get("error") if custom_result is not None else "未配置或未启用"
+        jsu_error = jsu_result.get("error")
         sjtu_error = sjtu_result.get("error")
-        if protocol_error or custom_error or sjtu_error:
+        if protocol_error or custom_error or jsu_error or sjtu_error:
             protocol_result["error"] = (
                 f"protocol: {protocol_error or '无错误信息'}; "
                 f"custom: {custom_error or '无错误信息'}; "
+                f"jsu: {jsu_error or '无错误信息'}; "
                 f"sjtu: {sjtu_error or '无错误信息'}"
             )
         return protocol_result

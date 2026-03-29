@@ -313,9 +313,10 @@ async def _handle_source(bot: Bot, event: GroupMessageEvent, arg_list: list):
 
     source_name_map = {
         "protocol": "本地协议直连",
-        "sjtu": "SJTU 聚合 API",
+        "sjtu": "SJTU API",
+        "jsu": "JSU API",
         "custom": "自定义后端 API",
-        "auto": "自动回退（先协议，后custom，最后SJTU）",
+        "auto": "自动回退（先协议，后custom，再JSU，最后SJTU）",
     }
 
     if len(arg_list) == 1:
@@ -323,16 +324,16 @@ async def _handle_source(bot: Bot, event: GroupMessageEvent, arg_list: list):
         display_name = source_name_map.get(current_source, current_source)
         await mc_status.finish(
             f"当前状态查询源：{display_name} ({current_source})\n"
-            "可选值：protocol / sjtu / custom / auto\n"
-            "使用方式：/mcs source <protocol|sjtu|custom|auto>"
+            "可选值：protocol / sjtu / jsu / custom / auto\n"
+            "使用方式：/mcs source <protocol|sjtu|jsu|custom|auto>"
         )
 
     if len(arg_list) != 2:
-        await mc_status.finish("命令格式错误，请使用 /mcs source <protocol|sjtu|custom|auto>")
+        await mc_status.finish("命令格式错误，请使用 /mcs source <protocol|sjtu|jsu|custom|auto>")
 
     new_source = arg_list[1].strip().lower()
     if not set_status_api_source(event.group_id, new_source):
-        await mc_status.finish("无效的查询源，请使用：protocol / sjtu / custom / auto")
+        await mc_status.finish("无效的查询源，请使用：protocol / sjtu / jsu / custom / auto")
 
     display_name = source_name_map.get(new_source, new_source)
     await mc_status.finish(f"已将状态查询源切换为：{display_name} ({new_source})")
