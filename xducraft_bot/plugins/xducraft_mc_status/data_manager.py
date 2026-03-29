@@ -8,6 +8,23 @@ from .constants import DEFAULT_SERVER_PRIORITY
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 DATA_FILE = os.path.join(DATA_DIR, "server_data.json")
+GLOBAL_CONFIG_KEY = "__global__"
+
+
+def _default_group_data() -> Dict[str, Any]:
+    return {
+        "servers": [],
+        "footer": "",
+        "show_offline_by_default": False,
+        "status_api_source": "protocol",
+        "status_api_url": "",
+    }
+
+
+def _default_global_config() -> Dict[str, Any]:
+    return {
+        "status_api_url": "",
+    }
 
 
 def _load_data() -> dict:
@@ -31,12 +48,26 @@ def _save_data(data: Dict[str, Any]):
 
 def _ensure_group_data_exists(data: Dict[str, Any], group_id_str: str):
     """确保一个群组的基础数据结构存在。"""
-    data.setdefault(group_id_str, {
-        "servers": [],
-        "footer": "",
-        "show_offline_by_default": False,
-        "status_api_source": "protocol",
-    })
+    existing = data.setdefault(group_id_str, _default_group_data())
+    if not isinstance(existing, dict):
+        data[group_id_str] = _default_group_data()
+        return
+
+    defaults = _default_group_data()
+    for key, value in defaults.items():
+        existing.setdefault(key, value)
+
+
+def _ensure_global_config_exists(data: Dict[str, Any]):
+    """确保全局配置结构存在。"""
+    existing = data.setdefault(GLOBAL_CONFIG_KEY, _default_global_config())
+    if not isinstance(existing, dict):
+        data[GLOBAL_CONFIG_KEY] = _default_global_config()
+        return
+
+    defaults = _default_global_config()
+    for key, value in defaults.items():
+        existing.setdefault(key, value)
 
 
 # --- 树形结构遍历与操作辅助函数 ---
@@ -110,14 +141,15 @@ def get_status_api_source(group_id: int) -> str:
     """获取一个群组的状态查询 API 源。"""
     data = _load_data()
     group_id_str = str(group_id)
+    _ensure_group_data_exists(data, group_id_str)
     api_source = data.get(group_id_str, {}).get("status_api_source", "protocol")
-    return api_source if api_source in {"protocol", "sjtu", "auto"} else "protocol"
+    return api_source if api_source in {"protocol", "sjtu", "custom", "auto"} else "protocol"
 
 
 def set_status_api_source(group_id: int, api_source: str) -> bool:
     """设置一个群组的状态查询 API 源。"""
     normalized_source = str(api_source).strip().lower()
-    if normalized_source not in {"protocol", "sjtu", "auto"}:
+    if normalized_source not in {"protocol", "sjtu", "custom", "auto"}:
         return False
 
     data = _load_data()
@@ -126,6 +158,96 @@ def set_status_api_source(group_id: int, api_source: str) -> bool:
     data[group_id_str]["status_api_source"] = normalized_source
     _save_data(data)
     return True
+
+
+def get_group_status_api_url(group_id: int) -> str:
+    """获取一个群组覆盖的自定义状态 API URL。"""
+    data = _load_data()
+    group_id_str = str(group_id)
+    _ensure_group_data_exists(data, group_id_str)
+    return str(data.get(group_id_str, {}).get("status_api_url", "") or "").strip()
+
+
+def set_group_status_api_url(group_id: int, api_url: str) -> bool:
+    """设置一个群组覆盖的自定义状态 API URL。"""
+    normalized_url = str(api_url).strip()
+    data = _load_data()
+    group_id_str = str(group_id)
+    _ensure_group_data_exists(data, group_id_str)
+
+    if str(data[group_id_str].get("status_api_url", "") or "").strip() == normalized_url:
+        return False
+
+    data[group_id_str]["status_api_url"] = normalized_url
+    _save_data(data)
+    return True
+
+
+def clear_group_status_api_url(group_id: int) -> bool:
+    """清空一个群组覆盖的自定义状态 API URL。"""
+    data = _load_data()
+    group_id_str = str(group_id)
+    _ensure_group_data_exists(data, group_id_str)
+    current_url = str(data[group_id_str].get("status_api_url", "") or "").strip()
+    if not current_url:
+        return False
+
+    data[group_id_str]["status_api_url"] = ""
+    _save_data(data)
+    return True
+
+
+def get_global_status_api_url() -> str:
+    """获取全局默认自定义状态 API URL。"""
+    data = _load_data()
+    _ensure_global_config_exists(data)
+    return str(data.get(GLOBAL_CONFIG_KEY, {}).get("status_api_url", "") or "").strip()
+
+
+def set_global_status_api_url(api_url: str) -> bool:
+    """设置全局默认自定义状态 API URL。"""
+    normalized_url = str(api_url).strip()
+    data = _load_data()
+    _ensure_global_config_exists(data)
+
+    if str(data[GLOBAL_CONFIG_KEY].get("status_api_url", "") or "").strip() == normalized_url:
+        return False
+
+    data[GLOBAL_CONFIG_KEY]["status_api_url"] = normalized_url
+    _save_data(data)
+    return True
+
+
+def clear_global_status_api_url() -> bool:
+    """清空全局默认自定义状态 API URL。"""
+    data = _load_data()
+    _ensure_global_config_exists(data)
+    current_url = str(data[GLOBAL_CONFIG_KEY].get("status_api_url", "") or "").strip()
+    if not current_url:
+        return False
+
+    data[GLOBAL_CONFIG_KEY]["status_api_url"] = ""
+    _save_data(data)
+    return True
+
+
+def get_effective_status_api_url(group_id: int) -> Tuple[str, str]:
+    """
+    获取群组当前生效的状态 API URL。
+
+    返回值:
+        (url, scope)
+        scope 为 group/global/none。
+    """
+    group_url = get_group_status_api_url(group_id)
+    if group_url:
+        return group_url, "group"
+
+    global_url = get_global_status_api_url()
+    if global_url:
+        return global_url, "global"
+
+    return "", "none"
 
 def add_server(group_id: int, server_ip: str, tag: str = "", tag_color: str = "",
                comment: str = "", ignore_in_list: bool = False, hide_ip: bool = False, # 新增 hide_ip
@@ -250,7 +372,8 @@ def import_group_data(group_id: int, data_to_import: Dict[str, Any]) -> bool:
     data[group_id_str]['footer'] = data_to_import.get("footer", "")
     data[group_id_str]['show_offline_by_default'] = data_to_import.get("show_offline_by_default", False)
     imported_api_source = str(data_to_import.get("status_api_source", "protocol")).strip().lower()
-    data[group_id_str]['status_api_source'] = imported_api_source if imported_api_source in {"protocol", "sjtu", "auto"} else "protocol"
+    data[group_id_str]['status_api_source'] = imported_api_source if imported_api_source in {"protocol", "sjtu", "custom", "auto"} else "protocol"
+    data[group_id_str]['status_api_url'] = str(data_to_import.get("status_api_url", "") or "").strip()
 
     _save_data(data)
     return True

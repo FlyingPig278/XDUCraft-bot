@@ -305,6 +305,41 @@ async def _get_single_server_status_via_sjtu(ip: str) -> Dict[str, Any]:
             return fallback_response
 
 
+async def _get_single_server_status_via_custom(ip: str, api_url: str) -> Dict[str, Any]:
+    """通过自定义后端 API 获取单个 Minecraft 服务器状态。"""
+    hostname, port = _parse_server_address(ip)
+    fallback_response = {
+        "online": False,
+        "hostname": hostname,
+        "port": port,
+        "original_query": ip,
+        "ip": ip,
+    }
+
+    normalized_api_url = str(api_url).strip()
+    if not normalized_api_url:
+        fallback_response["error"] = "未配置自定义 API URL"
+        return fallback_response
+
+    async with httpx.AsyncClient(timeout=STATUS_QUERY_TIMEOUT) as client:
+        try:
+            response = await client.get(normalized_api_url, params={"query": ip})
+            response.raise_for_status()
+            data = response.json()
+
+            if not isinstance(data, dict):
+                raise ValueError("自定义 API 返回格式异常")
+
+            data["original_query"] = ip
+            data["ip"] = ip
+            data.setdefault("hostname", hostname)
+            data.setdefault("port", port)
+            return data
+        except Exception as e:
+            fallback_response["error"] = str(e)
+            return fallback_response
+
+
 def _is_successful_online_result(result: Dict[str, Any]) -> bool:
     """判断某次查询结果是否成功在线。"""
     return bool(result.get("online"))
@@ -313,8 +348,13 @@ def _is_successful_online_result(result: Dict[str, Any]) -> bool:
 async def get_single_server_status(ip: str, group_id: int | None = None) -> Dict[str, Any]:
     """根据群配置的数据源获取单个 Minecraft 服务器状态。"""
     api_source = "protocol"
+    custom_api_url = ""
     if group_id is not None:
         api_source = data_manager.get_status_api_source(group_id)
+        custom_api_url, _ = data_manager.get_effective_status_api_url(group_id)
+
+    if api_source == "custom":
+        return await _get_single_server_status_via_custom(ip, custom_api_url)
 
     if api_source == "sjtu":
         return await _get_single_server_status_via_sjtu(ip)
@@ -324,14 +364,25 @@ async def get_single_server_status(ip: str, group_id: int | None = None) -> Dict
         if _is_successful_online_result(protocol_result):
             return protocol_result
 
+        custom_result: Dict[str, Any] | None = None
+        if custom_api_url:
+            custom_result = await _get_single_server_status_via_custom(ip, custom_api_url)
+            if _is_successful_online_result(custom_result):
+                return custom_result
+
         sjtu_result = await _get_single_server_status_via_sjtu(ip)
         if _is_successful_online_result(sjtu_result):
             return sjtu_result
 
         protocol_error = protocol_result.get("error")
+        custom_error = custom_result.get("error") if custom_result is not None else "未配置或未启用"
         sjtu_error = sjtu_result.get("error")
-        if protocol_error or sjtu_error:
-            protocol_result["error"] = f"protocol: {protocol_error or '无错误信息'}; sjtu: {sjtu_error or '无错误信息'}"
+        if protocol_error or custom_error or sjtu_error:
+            protocol_result["error"] = (
+                f"protocol: {protocol_error or '无错误信息'}; "
+                f"custom: {custom_error or '无错误信息'}; "
+                f"sjtu: {sjtu_error or '无错误信息'}"
+            )
         return protocol_result
 
     return protocol_result

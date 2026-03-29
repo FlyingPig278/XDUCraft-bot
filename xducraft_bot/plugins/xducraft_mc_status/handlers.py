@@ -1,6 +1,7 @@
 import json
 import random
 import re
+from urllib.parse import urlparse
 
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment, PrivateMessageEvent
 from nonebot.exception import MatcherException
@@ -18,10 +19,26 @@ from .config_coder import compress_config, decompress_config
 from .constants import WEB_UI_BASE_URL, USAGE_USER, USAGE_ADMIN
 from .data_manager import add_server, remove_server, clear_footer, add_footer, get_footer, set_server_attribute, \
     clear_server_attribute, export_group_data, import_group_data, get_server_list, get_server_info, get_status_api_source, \
-    set_status_api_source
+    set_status_api_source, get_effective_status_api_url, set_group_status_api_url, clear_group_status_api_url, \
+    set_global_status_api_url, clear_global_status_api_url
 from .image_renderer import render_status_image
 from .status_fetcher import get_all_servers_status, get_single_server_status
 from .utils import is_admin, is_valid_server_address, is_valid_hex_color
+
+
+def _is_valid_api_url(url: str) -> bool:
+    try:
+        parsed = urlparse(str(url).strip())
+    except Exception:
+        return False
+
+    if parsed.scheme not in {"http", "https"}:
+        return False
+
+    if not parsed.netloc:
+        return False
+
+    return True
 
 
 async def _handle_add(bot: Bot, event: GroupMessageEvent, arg_list: list):
@@ -297,7 +314,8 @@ async def _handle_source(bot: Bot, event: GroupMessageEvent, arg_list: list):
     source_name_map = {
         "protocol": "本地协议直连",
         "sjtu": "SJTU 聚合 API",
-        "auto": "自动回退（先协议，失败后SJTU）",
+        "custom": "自定义后端 API",
+        "auto": "自动回退（先协议，后custom，最后SJTU）",
     }
 
     if len(arg_list) == 1:
@@ -305,19 +323,103 @@ async def _handle_source(bot: Bot, event: GroupMessageEvent, arg_list: list):
         display_name = source_name_map.get(current_source, current_source)
         await mc_status.finish(
             f"当前状态查询源：{display_name} ({current_source})\n"
-            "可选值：protocol / sjtu / auto\n"
-            "使用方式：/mcs source <protocol|sjtu|auto>"
+            "可选值：protocol / sjtu / custom / auto\n"
+            "使用方式：/mcs source <protocol|sjtu|custom|auto>"
         )
 
     if len(arg_list) != 2:
-        await mc_status.finish("命令格式错误，请使用 /mcs source <protocol|sjtu|auto>")
+        await mc_status.finish("命令格式错误，请使用 /mcs source <protocol|sjtu|custom|auto>")
 
     new_source = arg_list[1].strip().lower()
     if not set_status_api_source(event.group_id, new_source):
-        await mc_status.finish("无效的查询源，请使用：protocol / sjtu / auto")
+        await mc_status.finish("无效的查询源，请使用：protocol / sjtu / custom / auto")
 
     display_name = source_name_map.get(new_source, new_source)
     await mc_status.finish(f"已将状态查询源切换为：{display_name} ({new_source})")
+
+
+async def _handle_api(bot: Bot, event: GroupMessageEvent, arg_list: list):
+    from . import mc_status
+    if not await is_admin(bot, event):
+        await mc_status.finish("你没有执行该命令的权限")
+
+    if len(arg_list) == 1:
+        effective_url, scope = get_effective_status_api_url(event.group_id)
+        scope_name = {
+            "group": "群级覆盖",
+            "global": "全局默认",
+            "none": "未配置",
+        }.get(scope, scope)
+        if effective_url:
+            await mc_status.finish(
+                f"当前生效 API URL（{scope_name}）：{effective_url}\n"
+                "命令：\n"
+                "/mcs api set <url>\n"
+                "/mcs api clear\n"
+                "/mcs api global set <url>\n"
+                "/mcs api global clear"
+            )
+
+        await mc_status.finish(
+            "当前未配置自定义 API URL。\n"
+            "命令：\n"
+            "/mcs api set <url>\n"
+            "/mcs api global set <url>"
+        )
+
+    action = arg_list[1].strip().lower()
+
+    if action == "set":
+        if len(arg_list) != 3:
+            await mc_status.finish("命令格式错误，请使用 /mcs api set <url>")
+
+        new_url = arg_list[2].strip()
+        if not _is_valid_api_url(new_url):
+            await mc_status.finish("URL 无效，请使用 http(s):// 开头的完整地址。")
+
+        changed = set_group_status_api_url(event.group_id, new_url)
+        if changed:
+            await mc_status.finish(f"已设置本群自定义 API URL：{new_url}")
+        await mc_status.finish(f"本群自定义 API URL 未变化：{new_url}")
+
+    if action == "clear":
+        if len(arg_list) != 2:
+            await mc_status.finish("命令格式错误，请使用 /mcs api clear")
+
+        if clear_group_status_api_url(event.group_id):
+            await mc_status.finish("已清空本群自定义 API URL，将回退到全局默认 URL（若存在）。")
+        await mc_status.finish("本群原本就未配置自定义 API URL。")
+
+    if action == "global":
+        if len(arg_list) == 4 and arg_list[2].strip().lower() == "set":
+            new_url = arg_list[3].strip()
+            if not _is_valid_api_url(new_url):
+                await mc_status.finish("URL 无效，请使用 http(s):// 开头的完整地址。")
+
+            changed = set_global_status_api_url(new_url)
+            if changed:
+                await mc_status.finish(f"已设置全局默认 API URL：{new_url}")
+            await mc_status.finish(f"全局默认 API URL 未变化：{new_url}")
+
+        if len(arg_list) == 3 and arg_list[2].strip().lower() == "clear":
+            if clear_global_status_api_url():
+                await mc_status.finish("已清空全局默认 API URL。")
+            await mc_status.finish("全局默认 API URL 原本就未配置。")
+
+        await mc_status.finish(
+            "命令格式错误，请使用：\n"
+            "/mcs api global set <url>\n"
+            "/mcs api global clear"
+        )
+
+    await mc_status.finish(
+        "命令格式错误，请使用：\n"
+        "/mcs api\n"
+        "/mcs api set <url>\n"
+        "/mcs api clear\n"
+        "/mcs api global set <url>\n"
+        "/mcs api global clear"
+    )
 
 
 async def handle_query_all(bot: Bot, event: GroupMessageEvent,show_all_servers: bool):
@@ -493,7 +595,7 @@ SUBCOMMAND_HANDLERS = {
     "export": _handle_edit,
     "export_json": _handle_export_json,
     "source": _handle_source,
-    "api": _handle_source,
+    "api": _handle_api,
     "help": _handle_help,
 }
 

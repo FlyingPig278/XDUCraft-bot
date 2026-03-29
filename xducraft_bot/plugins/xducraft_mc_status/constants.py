@@ -135,7 +135,12 @@ USAGE_ADMIN= """【Web编辑器 (推荐)】
 【快捷命令】
 /mcs add <IP>: 添加服务器
 /mcs remove <IP>: 移除服务器
-/mcs source <protocol|sjtu|auto>: 切换状态查询源
+/mcs source <protocol|sjtu|custom|auto>: 切换状态查询源
+/mcs api: 查看当前生效的自定义 API URL
+/mcs api set <url>: 设置本群自定义 API URL
+/mcs api clear: 清空本群自定义 API URL
+/mcs api global set <url>: 设置全局默认 API URL
+/mcs api global clear: 清空全局默认 API URL
 ---
 【高级/调试命令】
 /mcs set <IP> <attr> <value>: 设置服务器属性 (支持: tag, tag_color, comment, priority, ignore_in_list, hide_ip, display_name)

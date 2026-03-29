@@ -24,6 +24,8 @@ __plugin_meta__ = PluginMetadata(
 /mcs edit: (私聊)获取配置链接以在Web UI中编辑
 /mcs add <IP>: 快速添加服务器
 /mcs remove <IP>: 快速移除服务器
+/mcs source <protocol|sjtu|custom|auto>: 切换状态查询源
+/mcs api ... : 配置自定义状态 API 链接
 ...更多命令请使用 /mcs help 查看""",
 )
 
