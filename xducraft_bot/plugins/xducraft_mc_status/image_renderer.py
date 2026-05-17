@@ -4,7 +4,7 @@ from math import ceil
 from typing import List, Dict, Any
 
 # 2. 第三方库导入
-from PIL import Image, ImageDraw, ImageFile
+from PIL import Image, ImageColor, ImageDraw, ImageFile
 
 # 3. 本地应用/项目特定导入
 from .constants import *
@@ -194,11 +194,26 @@ def _draw_tag_with_background(draw: ImageDraw.ImageDraw, tag: str, tag_color_hex
     if tag=='':
         return 0,center_y
 
+    tag_text_color = _resolve_tag_text_color(fill_color)
     draw.rounded_rectangle(xy=(x0, y0, x1, y1), fill=fill_color, radius=3)
     draw.text(xy=(center_x, center_y), text=tag_text,
-              fill=TAG_TEXT_COLOR, font=FONT_ZH_TAG, anchor='mm')
+              fill=tag_text_color, font=FONT_ZH_TAG, anchor='mm')
 
     return rect_width + ICON_TEXT_SPACING, center_y
+
+
+def _resolve_tag_text_color(background_color: str) -> tuple[int, int, int, int]:
+    """根据 tag 背景亮度在白字/黑字之间切换，保证浅色背景可读性。"""
+    try:
+        r, g, b, _ = ImageColor.getcolor(background_color, "RGBA")
+    except ValueError:
+        return TAG_TEXT_COLOR
+
+    perceived_brightness = (0.299 * r) + (0.587 * g) + (0.114 * b)
+    if perceived_brightness >= TAG_TEXT_BRIGHTNESS_THRESHOLD:
+        alpha = TAG_TEXT_COLOR[3] if len(TAG_TEXT_COLOR) > 3 else 255
+        return 0, 0, 0, alpha
+    return TAG_TEXT_COLOR
 
 
 def _draw_motd(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], current_y: int, horizontal_offset: int,

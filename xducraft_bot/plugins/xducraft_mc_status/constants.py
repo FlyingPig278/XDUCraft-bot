@@ -44,7 +44,8 @@ PING_COLOR_RED = (255, 85, 85, 255)  # Ping 值较高或服务器离线时显示
 
 # --- 组件特定颜色 ---
 TAG_DEFAULT_BACKGROUND = '#282828'  # 服务器 Tag 的默认背景色（十六进制字符串）
-TAG_TEXT_COLOR = (255, 255, 255, 255)  # Tag 内部文字的颜色，设计为白色以适应任何背景
+TAG_TEXT_COLOR = (255, 255, 255, 255)  # Tag 默认文字色（深色背景）
+TAG_TEXT_BRIGHTNESS_THRESHOLD = 186  # 感知亮度 >= 186 时视为浅色背景，切换为深色文字以提升可读性
 CONNECTOR_LINE_COLOR = (150, 150, 150, 255)  # 连接主服和子服的线条颜色
 
 # --- MOTD 颜色代码映射 ---
