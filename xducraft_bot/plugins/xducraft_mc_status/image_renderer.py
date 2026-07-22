@@ -1,5 +1,4 @@
 # 1. 标准库导入
-import re
 from math import ceil
 from typing import List, Dict, Any
 
@@ -10,7 +9,7 @@ from PIL import Image, ImageColor, ImageDraw, ImageFile
 from .constants import *
 from .data_manager import get_footer
 from .decode_image import decode_image
-from .drawing_utils import draw_colored_title_html, calculate_clean_length
+from .drawing_utils import draw_colored_title, draw_colored_title_html, calculate_clean_length
 from .fonts import FONT_MC_SMALL, FONT_MC_MEDIUM, FONT_MC_MOTD, FONT_ZH_TAG, FONT_MC_TITLE, FONT_ZH_CREDIT
 from .status_fetcher import preprocess_server_data, prepare_data_for_display
 
@@ -207,7 +206,23 @@ def _resolve_tag_text_color(background_color: str) -> tuple[int, int, int, int]:
     try:
         r, g, b, _ = ImageColor.getcolor(background_color, "RGBA")
     except ValueError:
-        return TAG_TEXT_COLOR
+        # Pillow 不解析 CSS 的小数 alpha（例如 rgba(..., 0.6)），但 Web UI
+        # 导入的 tag_color 可能采用这种形式；亮度判断只需要前三个通道。
+        color_text = str(background_color).strip().lower()
+        if not (color_text.startswith("rgba(") and color_text.endswith(")")):
+            return TAG_TEXT_COLOR
+        try:
+            channels = [part.strip() for part in color_text[5:-1].split(",")]
+            if len(channels) != 4:
+                return TAG_TEXT_COLOR
+            r, g, b = (int(channels[index]) for index in range(3))
+            if any(channel < 0 or channel > 255 for channel in (r, g, b)):
+                return TAG_TEXT_COLOR
+            alpha = float(channels[3])
+            if alpha < 0 or alpha > 1:
+                return TAG_TEXT_COLOR
+        except (TypeError, ValueError):
+            return TAG_TEXT_COLOR
 
     perceived_brightness = (0.299 * r) + (0.587 * g) + (0.114 * b)
     if perceived_brightness >= TAG_TEXT_BRIGHTNESS_THRESHOLD:
@@ -234,15 +249,17 @@ def _draw_motd(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], current_y
     description_data = server_data.get("description")
 
     if isinstance(description_data, dict):
-        title = description_data.get('html') or description_data.get('text', 'Unknown Server Name')
+        html_title = description_data.get('html')
+        title = html_title or description_data.get('text', 'Unknown Server Name')
         title = title.replace('服务器已离线...', '')
         check_title = title.replace('<br>', ' | ')
-        is_html_mode = 'html' in description_data
+        is_html_mode = bool(html_title)
 
         # 简单的截断逻辑 (如果需要可以改进)
         max_len_px = IMAGE_WIDTH - motd_start_x - 100  # 为ping/players保留空间
         if title == 'A Minecraft Server' and server_data.get('comment'):
             final_title = server_data.get('comment')
+            is_html_mode = False
         elif calculate_clean_length(check_title, FONT_MC_MOTD, is_html=is_html_mode) > max_len_px:
             final_title = title.split('<br>', 1)[0]
         else:
@@ -251,12 +268,10 @@ def _draw_motd(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], current_y
         if is_html_mode:
             draw_colored_title_html(draw, final_title, (motd_start_x, motd_center_y), font=FONT_MC_MOTD)
         else:
-            final_title = re.sub(r'§[klmno]', '', final_title)
-            try:
-                from .drawing_utils import draw_colored_title
-                draw_colored_title(draw, final_title, (motd_start_x, motd_center_y), font=FONT_MC_MOTD)
-            except ImportError:
-                draw.text((motd_start_x, motd_center_y), final_title, fill=PRIMARY_TEXT_COLOR, font=FONT_MC_MOTD, anchor="lm")
+            draw_colored_title(draw, final_title, (motd_start_x, motd_center_y), font=FONT_MC_MOTD)
+
+    elif isinstance(description_data, str):
+        draw_colored_title(draw, description_data, (motd_start_x, motd_center_y), font=FONT_MC_MOTD)
 
     else:
         draw.text((motd_start_x, current_y), motd_text, fill=SECONDARY_TEXT_COLOR, font=FONT_MC_MOTD)
@@ -296,8 +311,14 @@ def _draw_status_info(draw: ImageDraw.ImageDraw, server_data: Dict[str, Any], cu
             version_text = version_info
         else:
             version_text = 'N/A'
-        draw.text((IMAGE_WIDTH - LAYOUT_BASE_PADDING, current_y + OFFSET_VERSION_Y), version_text,
-                  fill=SECONDARY_TEXT_COLOR, anchor='ra', font=FONT_MC_MEDIUM)
+        draw_colored_title(
+            draw,
+            str(version_text),
+            (IMAGE_WIDTH - LAYOUT_BASE_PADDING, current_y + OFFSET_VERSION_Y),
+            font=FONT_MC_MEDIUM,
+            default_color=SECONDARY_TEXT_COLOR,
+            anchor='ra',
+        )
 
         player_sample = server_data.get('players', {}).get('sample')
         if server_data.get('players', {}).get('online') != 0 and player_sample:
