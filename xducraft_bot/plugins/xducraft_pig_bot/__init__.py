@@ -13,12 +13,13 @@ from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 
-from xducraft_bot.plugins.xducraft_mc_status.utils import is_admin
+from xducraft_bot.shared import feature_gate
+from xducraft_bot.shared.permissions import is_admin
 
 from .data_manager import pig_data_manager
 
 require("nonebot_plugin_apscheduler")
-from nonebot_plugin_apscheduler import scheduler
+from nonebot_plugin_apscheduler import scheduler  # noqa: E402
 
 __plugin_meta__ = PluginMetadata(
     name="XDUCraft_pig_bot",
@@ -28,6 +29,30 @@ __plugin_meta__ = PluginMetadata(
         "管理员命令: /pig auto on|off, /pig query on|off, /pig status"
     ),
 )
+
+PIG_QUERY_FEATURE_KEY = "pig_query"
+PIG_AUTO_PUSH_FEATURE_KEY = "pig_auto_push"
+
+feature_gate.register(feature_gate.Feature(
+    key=PIG_QUERY_FEATURE_KEY,
+    name="猪猪图查询",
+    description="/pig 手动查询猪猪图",
+    default_enabled=True,
+    passive=False,
+    getter=lambda group_id: pig_data_manager.get_group_config(group_id)["query_enabled"],
+    setter=pig_data_manager.set_query_enabled,
+))
+
+feature_gate.register(feature_gate.Feature(
+    key=PIG_AUTO_PUSH_FEATURE_KEY,
+    name="猪猪图推送",
+    description="定时向本群推送随机猪猪图",
+    default_enabled=False,
+    passive=True,
+    getter=lambda group_id: pig_data_manager.get_group_config(group_id)["auto_push_enabled"],
+    setter=pig_data_manager.set_auto_push_enabled,
+    lister=pig_data_manager.list_auto_push_groups,
+))
 
 PIG_BASE_URL = "https://www.pighub.top"
 PIG_ALL_IMAGES_API = f"{PIG_BASE_URL}/api/all-images"

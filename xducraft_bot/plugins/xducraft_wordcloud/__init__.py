@@ -1,7 +1,9 @@
+# ruff: noqa: E402
+
+import asyncio
 import os
 import random
 import re
-import urllib.request
 import warnings
 from collections import Counter
 from datetime import date, datetime, timedelta
@@ -14,6 +16,7 @@ warnings.filterwarnings(
     module=r"jieba\._compat",
 )
 
+import httpx
 import jieba
 from nonebot import get_bots, on_command, on_message, on_notice, require
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, GroupRecallNoticeEvent, Message
@@ -21,10 +24,12 @@ from nonebot.log import logger
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
+from nonebot.rule import Rule
 from PIL import Image, ImageDraw, ImageFont
 from wordcloud import WordCloud
 
-from xducraft_bot.plugins.xducraft_mc_status.utils import is_admin
+from xducraft_bot.shared import feature_gate
+from xducraft_bot.shared.permissions import is_admin
 
 from .data_manager import chat_log_data_manager
 
@@ -42,8 +47,31 @@ __plugin_meta__ = PluginMetadata(
     ),
 )
 
-record_group_message = on_message(priority=99, block=False)
-group_recall_notice = on_notice(priority=99, block=False)
+FEATURE_KEY = "wordcloud"
+
+# 开关状态仍然存在词云自己的 config 里，这里只是把它接进统一面板，
+# 这样 /功能 能一次列出所有插件的状态，而不用把已有配置迁移一遍。
+feature_gate.register(feature_gate.Feature(
+    key=FEATURE_KEY,
+    name="群聊词云",
+    description="记录群聊文本，每天 0 点推送前一天的词云图",
+    default_enabled=False,
+    passive=True,
+    getter=chat_log_data_manager.is_group_enabled,
+    setter=chat_log_data_manager.set_group_enabled,
+    lister=chat_log_data_manager.get_enabled_groups,
+))
+
+record_group_message = on_message(
+    priority=99,
+    block=False,
+    rule=Rule(lambda event: isinstance(event, GroupMessageEvent)),
+)
+group_recall_notice = on_notice(
+    priority=99,
+    block=False,
+    rule=Rule(lambda event: isinstance(event, GroupRecallNoticeEvent)),
+)
 wordcloud_command = on_command("wc", aliases={"词云", "wordcloud"}, priority=10, block=True)
 
 
@@ -171,8 +199,9 @@ def _download_group_avatar_cached(group_id: int, cache_ttl_seconds: int = 86400)
 
     avatar_url = f"https://p.qlogo.cn/gh/{group_id}/{group_id}/640"
     try:
-        with urllib.request.urlopen(avatar_url, timeout=8) as response:
-            data = response.read()
+        response = httpx.get(avatar_url, timeout=8, follow_redirects=True)
+        response.raise_for_status()
+        data = response.content
         if data:
             cache_file.write_bytes(data)
             return cache_file
@@ -405,7 +434,9 @@ async def _generate_and_send_for_group(group_id: int, target_kind: str, target: 
     stopwords = chat_log_data_manager.get_stopwords()
     options = chat_log_data_manager.get_wordcloud_options()
     words = _tokenize_messages(messages, stopwords, options.get("min_word_length", 2))
-    image_path = _build_wordcloud_image(group_id, output_label, words)
+    # 分词后的绘图、头像下载和 Pillow 合成都属于阻塞工作，放到线程里避免
+    # 每次生成词云时卡住机器人的整个事件循环。
+    image_path = await asyncio.to_thread(_build_wordcloud_image, group_id, output_label, words)
     if not image_path:
         return False
 

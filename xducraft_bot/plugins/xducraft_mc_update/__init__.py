@@ -4,22 +4,42 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from nonebot import require, on_command, get_bots
-from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message
+from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 from nonebot.log import logger
 
+from xducraft_bot.shared import feature_gate
+
 from .data_manager import data_manager
 
 require("nonebot_plugin_apscheduler")
-from nonebot_plugin_apscheduler import scheduler
+from nonebot_plugin_apscheduler import scheduler  # noqa: E402
 
 __plugin_meta__ = PluginMetadata(
     name="MC更新推送",
     description="监控 Minecraft 官方版本更新并推送到群",
     usage="推荐指令：/MC更新 订阅 或 /MC更新 取消订阅（兼容 /mcup on|off）"
 )
+
+FEATURE_KEY = "mc_update"
+
+feature_gate.register(feature_gate.Feature(
+    key=FEATURE_KEY,
+    name="MC 更新推送",
+    description="Minecraft 正式版和快照发布时自动推送",
+    default_enabled=False,
+    passive=True,
+    getter=lambda group_id: int(group_id) in set(data_manager.get_subscribed_groups()),
+    setter=lambda group_id, enabled: (
+        data_manager.add_group(int(group_id))
+        if enabled
+        else data_manager.remove_group(int(group_id))
+    ),
+    lister=data_manager.get_subscribed_groups,
+    superuser_only=True,
+))
 
 MOJANG_API = "https://launchermeta.mojang.com/mc/game/version_manifest.json"
 CHECK_INTERVAL = 60
@@ -56,9 +76,14 @@ def normalize_command_action(raw_arg: str) -> str:
 
 
 @mc_command.handle()
-async def handle_mc_command(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
+async def handle_mc_command(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
+    group_id = getattr(event, "group_id", None)
+    if group_id is None:
+        await mc_command.finish("请在群里使用该命令。")
+        return
+
     args = args.extract_plain_text().strip()
-    gid = event.group_id
+    gid = int(group_id)
 
     if not await SUPERUSER(bot, event):
         return
