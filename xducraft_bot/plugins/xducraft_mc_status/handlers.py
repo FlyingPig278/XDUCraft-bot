@@ -317,7 +317,7 @@ SETTABLE_ATTRIBUTES: Dict[str, Tuple[str, Callable[[str], Any]]] = {
     "tag_color": ("标签底色，6 位十六进制如 3498DB", _parse_tag_color),
     "comment": ("服务器名称/备注", lambda value: value),
     "display_name": ("图片中的线路名称/连接提示（设置后自动隐藏查询地址）", lambda value: value),
-    "auth_mode": ("登录验证方式：XDU / MUA / 正版 / 外置 / 离线 / 混合", auth.normalize_mode),
+    "auth_mode": ("登录验证方式：正版 / MUA / XDU / 外置 / 离线 / 混合", auth.normalize_mode),
     "hide_ip": ("是否隐藏 IP：on / off", _parse_bool),
     "ignore_in_list": ("是否在列表中隐藏：on / off", _parse_bool),
     "priority": ("排序优先级，数字越小越靠前", _parse_priority),
@@ -419,7 +419,7 @@ AUTH_USAGE = (
     "/mcs auth clear <IP> — 清除单服配置并回退本群默认值\n"
     "/mcs auth default <验证方式|clear> — 设置本群默认\n"
     "/mcs auth detect on|off — 开关尽力而为的自动探测（默认关）\n"
-    "验证方式可填：XDU / MUA / 正版 / 外置 / 离线 / 混合\n"
+    "验证方式可填：正版 / MUA / XDU / 外置 / 离线 / 混合\n"
     "提示：MUA 是包含 XDU 的联合认证；标记为 MUA 的服务器可直接使用 XDU 账号登录。"
 )
 
@@ -465,13 +465,13 @@ async def _handle_auth(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
 
     if action == "set":
         if len(args) != 3:
-            await _finish("用法：/mcs auth set <IP> <XDU|MUA|正版|外置|离线|混合>")
+            await _finish("用法：/mcs auth set <IP> <正版|MUA|XDU|外置|离线|混合>")
         ip, raw_mode = args[1], args[2]
         mode = auth.normalize_mode(raw_mode)
         if mode is None:
             await _finish(
                 f"无法识别的验证方式：{raw_mode}\n"
-                "可填：XDU / MUA / 正版 / 外置 / 离线 / 混合"
+                "可填：正版 / MUA / XDU / 外置 / 离线 / 混合"
             )
         if not mode:
             await _finish("要清除单服配置并回退本群默认值，请用：/mcs auth clear <IP>")
@@ -497,7 +497,7 @@ async def _handle_auth(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
 
     if action == "default":
         if len(args) != 2:
-            await _finish("用法：/mcs auth default <XDU|MUA|正版|外置|离线|混合|clear>")
+            await _finish("用法：/mcs auth default <正版|MUA|XDU|外置|离线|混合|clear>")
         raw = args[1].strip().lower()
         if raw == "clear":
             set_group_default_auth_mode(event.group_id, "")

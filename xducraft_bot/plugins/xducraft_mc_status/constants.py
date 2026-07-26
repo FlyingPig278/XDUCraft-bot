@@ -188,7 +188,7 @@ USAGE_ADMIN = """【Web 编辑器（推荐）】
 /mcs auth clear <IP> — 清除单服配置并回退本群默认值
 /mcs auth default <验证方式|clear> — 设置本群默认验证方式
 /mcs auth detect on|off — 开关尽力而为的自动探测（默认关）
-  验证方式可填：XDU / MUA / 正版 / 外置 / 离线 / 混合
+  验证方式可填：正版 / MUA / XDU / 外置 / 离线 / 混合
   MUA 为包含 XDU 的联合认证；标记为 MUA 时可直接使用 XDU 账号登录
 ---
 【数据源】

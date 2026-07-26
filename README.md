@@ -136,7 +136,7 @@ A Minecraft server status query plugin for NoneBot, specially designed for XDUCr
 ### ⛏️ MC 服务器状态（xducraft_mc_status）
 
 - `/mcs`、`/mcs all`、`/mcs <地址>`：查询本群服务器或指定服务器。
-- `/mcs auth`：查看并显式配置 XDU、MUA、正版、第三方外置、离线或混合登录方式；自动探测默认关闭。
+- `/mcs auth`：查看并显式配置正版、MUA、XDU、第三方外置、离线或混合登录方式；自动探测默认关闭。
 - `/mcs source`、`/mcs api`：按群或全局选择本地协议、公共 API 或自建后端。
 - `/mcs edit`：私聊获取网页编辑链接；编辑会话 30 分钟过期且只允许导入一次。
 - `/mcs diag`：查看配置、缓存和各状态源连通性。

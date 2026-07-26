@@ -122,15 +122,27 @@ def _iter_cards(cards: List[CardLayout]):
             yield from _iter_cards(card.children)
 
 
+def _resolve_rendered_auth(
+    server_data: Dict[str, Any],
+    group_default: str,
+) -> Optional[auth.ResolvedAuth]:
+    """图片只展示显式配置（单服或群默认），不把自动探测当成展示配置。"""
+    configured = auth.normalize_mode(server_data.get("auth_mode")) or ""
+    inherited = auth.normalize_mode(group_default) or ""
+    if not configured and not inherited:
+        return None
+    return auth.resolve_auth(server_data, group_default)
+
+
 def _collect_auth_modes(cards: List[CardLayout], group_default: str) -> List[str]:
     """图例里要展示哪些验证方式（按固定顺序，只列出实际出现过的）。"""
     present = set()
     for card in cards:
-        resolved = auth.resolve_auth(card.node, group_default)
-        if resolved.mode != auth.MODE_UNKNOWN:
+        resolved = _resolve_rendered_auth(card.node, group_default)
+        if resolved is not None and resolved.mode != auth.MODE_UNKNOWN:
             present.add(resolved.mode)
     order = (
-        auth.MODE_XDU, auth.MODE_MUA, auth.MODE_OFFICIAL,
+        auth.MODE_OFFICIAL, auth.MODE_MUA, auth.MODE_XDU,
         auth.MODE_YGGDRASIL, auth.MODE_OFFLINE, auth.MODE_MIXED,
     )
     return [mode for mode in order if mode in present]
@@ -403,8 +415,12 @@ def _draw_address_and_auth(draw: ImageDraw.ImageDraw, card: CardLayout, group_de
 
     address = get_server_display_address(server_data, pixel_font=True)
 
-    resolved = auth.resolve_auth(server_data, group_default)
-    badge_text = resolved.style.short_label if resolved.mode != auth.MODE_UNKNOWN else ""
+    resolved = _resolve_rendered_auth(server_data, group_default)
+    badge_text = (
+        resolved.style.short_label
+        if resolved is not None and resolved.mode != auth.MODE_UNKNOWN
+        else ""
+    )
     badge_width = 0
     if badge_text:
         badge_width = text_size(draw, badge_text, FONT_ZH_BADGE)[0] + 2 * AUTH_BADGE_PADDING_X + AUTH_BADGE_SPACING

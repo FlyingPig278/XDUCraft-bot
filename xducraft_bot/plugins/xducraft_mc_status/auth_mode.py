@@ -43,8 +43,8 @@ MODE_MIXED = "mixed"
 MODE_UNKNOWN = "unknown"
 
 #: 管理员可以显式配置的取值（``""`` 只为兼容旧配置保留）。
-#: 顺序按 XDUCraft 日常使用频率排列，Web 编辑器和帮助文本也保持一致。
-CONFIGURABLE_MODES = (MODE_XDU, MODE_MUA, MODE_OFFICIAL, MODE_YGGDRASIL, MODE_OFFLINE, MODE_MIXED)
+#: 管理界面与图例中的固定顺序，Web 编辑器和帮助文本也保持一致。
+CONFIGURABLE_MODES = (MODE_OFFICIAL, MODE_MUA, MODE_XDU, MODE_YGGDRASIL, MODE_OFFLINE, MODE_MIXED)
 
 #: 判定来源，决定展示时说“已确认”还是“据配置”。
 ORIGIN_DETECTED = "detected"    # 本次查询从玩家样本里实测出来的
