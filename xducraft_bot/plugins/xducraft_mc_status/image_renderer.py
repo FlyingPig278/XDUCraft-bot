@@ -128,7 +128,10 @@ def _collect_auth_modes(cards: List[CardLayout], group_default: str) -> List[str
         resolved = auth.resolve_auth(card.node, group_default)
         if resolved.mode != auth.MODE_UNKNOWN:
             present.add(resolved.mode)
-    order = (auth.MODE_OFFICIAL, auth.MODE_MUA, auth.MODE_YGGDRASIL, auth.MODE_OFFLINE, auth.MODE_MIXED)
+    order = (
+        auth.MODE_XDU, auth.MODE_MUA, auth.MODE_OFFICIAL,
+        auth.MODE_YGGDRASIL, auth.MODE_OFFLINE, auth.MODE_MIXED,
+    )
     return [mode for mode in order if mode in present]
 
 

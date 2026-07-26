@@ -19,7 +19,7 @@
                         "tag": "生存",
                         "tag_color": "da3c8f",
                         "priority": 2,
-                        "auth_mode": "",
+                        "auth_mode": "xdu",
                         "children": []
                     }
                 ]
@@ -41,7 +41,7 @@
         "status_api_source": "",
         "status_api_url": "",
         "default_auth_mode": "",
-        "auth_detect": true,
+        "auth_detect": false,
         "quiet_admin_replies": true
     }
 }

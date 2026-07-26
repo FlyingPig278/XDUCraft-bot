@@ -185,10 +185,10 @@ USAGE_ADMIN = """【Web 编辑器（推荐）】
 【登录验证方式】
 /mcs auth — 查看本群所有服务器的验证方式
 /mcs auth set <IP> <验证方式> — 指定某台服务器的验证方式
-/mcs auth clear <IP> — 改回自动探测
+/mcs auth clear <IP> — 清除单服配置并回退本群默认值
 /mcs auth default <验证方式|clear> — 设置本群默认验证方式
-/mcs auth detect on|off — 开关自动探测
-  验证方式可填：正版 / MUA / 外置 / 离线 / 混合
+/mcs auth detect on|off — 开关尽力而为的自动探测（默认关）
+  验证方式可填：XDU / MUA / 正版 / 外置 / 离线 / 混合
 ---
 【数据源】
 /mcs source — 查看当前生效的查询源

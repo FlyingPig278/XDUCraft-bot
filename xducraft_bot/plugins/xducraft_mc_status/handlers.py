@@ -314,7 +314,7 @@ SETTABLE_ATTRIBUTES: Dict[str, Tuple[str, Callable[[str], Any]]] = {
     "tag_color": ("标签底色，6 位十六进制如 3498DB", _parse_tag_color),
     "comment": ("服务器名称/备注", lambda value: value),
     "display_name": ("隐藏 IP 时展示的替代文字", lambda value: value),
-    "auth_mode": ("登录验证方式：正版 / MUA / 外置 / 离线 / 混合", auth.normalize_mode),
+    "auth_mode": ("登录验证方式：XDU / MUA / 正版 / 外置 / 离线 / 混合", auth.normalize_mode),
     "hide_ip": ("是否隐藏 IP：on / off", _parse_bool),
     "ignore_in_list": ("是否在列表中隐藏：on / off", _parse_bool),
     "priority": ("排序优先级，数字越小越靠前", _parse_priority),
@@ -410,10 +410,10 @@ AUTH_USAGE = (
     "用法：\n"
     "/mcs auth — 查看本群所有服务器的登录验证方式\n"
     "/mcs auth set <IP> <验证方式> — 指定某台服务器\n"
-    "/mcs auth clear <IP> — 改回自动探测\n"
+    "/mcs auth clear <IP> — 清除单服配置并回退本群默认值\n"
     "/mcs auth default <验证方式|clear> — 设置本群默认\n"
-    "/mcs auth detect on|off — 开关自动探测\n"
-    "验证方式可填：正版 / MUA / 外置 / 离线 / 混合"
+    "/mcs auth detect on|off — 开关尽力而为的自动探测（默认关）\n"
+    "验证方式可填：XDU / MUA / 正版 / 外置 / 离线 / 混合"
 )
 
 
@@ -458,13 +458,16 @@ async def _handle_auth(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
 
     if action == "set":
         if len(args) != 3:
-            await _finish("用法：/mcs auth set <IP> <正版|MUA|外置|离线|混合>")
+            await _finish("用法：/mcs auth set <IP> <XDU|MUA|正版|外置|离线|混合>")
         ip, raw_mode = args[1], args[2]
         mode = auth.normalize_mode(raw_mode)
         if mode is None:
-            await _finish(f"无法识别的验证方式：{raw_mode}\n可填：正版 / MUA / 外置 / 离线 / 混合")
+            await _finish(
+                f"无法识别的验证方式：{raw_mode}\n"
+                "可填：XDU / MUA / 正版 / 外置 / 离线 / 混合"
+            )
         if not mode:
-            await _finish("要改回自动探测请用：/mcs auth clear <IP>")
+            await _finish("要清除单服配置并回退本群默认值，请用：/mcs auth clear <IP>")
         if not get_server_info(event.group_id, ip):
             await _finish(f"本群没有找到服务器 {ip}。用 /mcs list 看看确切地址。")
 
@@ -478,11 +481,16 @@ async def _handle_auth(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
         if not get_server_info(event.group_id, ip):
             await _finish(f"本群没有找到服务器 {ip}。")
         clear_server_attribute(event.group_id, ip, "auth_mode")
-        await _finish_admin(bot, event, f"已清除 {ip} 的验证方式配置，将回到自动探测。")
+        await _finish_admin(
+            bot,
+            event,
+            f"已清除 {ip} 的验证方式配置，将回退本群默认值；"
+            "若本群也未设置默认值，则不显示验证方式。",
+        )
 
     if action == "default":
         if len(args) != 2:
-            await _finish("用法：/mcs auth default <正版|MUA|外置|离线|混合|clear>")
+            await _finish("用法：/mcs auth default <XDU|MUA|正版|外置|离线|混合|clear>")
         raw = args[1].strip().lower()
         if raw == "clear":
             set_group_default_auth_mode(event.group_id, "")
@@ -507,7 +515,11 @@ async def _handle_auth(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
         await _finish_admin(
             bot, event,
             f"已{'开启' if parsed else '关闭'}登录验证方式自动探测。\n"
-            + ("探测依据是在线玩家的 UUID，没有玩家在线时无法判断。" if parsed else "今后只按配置显示。"),
+            + (
+                "此功能只能根据在线玩家 UUID 尝试推断，联合认证可能无法区分，"
+                "建议以显式配置为准。"
+                if parsed else "今后只按显式配置或本群默认值显示。"
+            ),
         )
 
     await _finish(f"未知参数：{args[0]}\n\n{AUTH_USAGE}")

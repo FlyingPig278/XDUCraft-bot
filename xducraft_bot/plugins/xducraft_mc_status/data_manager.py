@@ -65,8 +65,8 @@ def _default_group_data() -> Dict[str, Any]:
         "status_api_url": "",
         # 本群所有服务器的默认登录验证方式（空串 = 不设默认）。
         "default_auth_mode": "",
-        # 是否根据在线玩家样本自动探测验证方式。
-        "auth_detect": True,
+        # 状态协议无法可靠区分联合认证后端，默认关闭；仅保留为旧配置的可选功能。
+        "auth_detect": False,
         # 管理类指令的回执是否走私聊，避免在大群里刷屏。
         "quiet_admin_replies": True,
     }
@@ -118,7 +118,7 @@ def _normalize_data(raw: Any) -> Dict[str, Any]:
         group["status_api_source"] = _normalize_source(value.get("status_api_source"), "")
         group["status_api_url"] = as_str(value.get("status_api_url"))
         group["default_auth_mode"] = _normalize_auth_mode(value.get("default_auth_mode"))
-        group["auth_detect"] = as_bool(value.get("auth_detect"), True)
+        group["auth_detect"] = as_bool(value.get("auth_detect"), False)
         group["quiet_admin_replies"] = as_bool(value.get("quiet_admin_replies"), True)
         data[str(key)] = group
 
@@ -394,7 +394,7 @@ def set_show_offline_by_default(group_id: int, enabled: bool) -> bool:
 
 def get_auth_detect_enabled(group_id: int) -> bool:
     """本群是否启用登录验证方式的自动探测。"""
-    return as_bool(_get_group_field(group_id, "auth_detect", True), True)
+    return as_bool(_get_group_field(group_id, "auth_detect", False), False)
 
 
 def set_auth_detect_enabled(group_id: int, enabled: bool) -> bool:

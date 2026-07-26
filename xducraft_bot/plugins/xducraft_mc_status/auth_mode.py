@@ -1,6 +1,6 @@
 """服务器登录验证方式：数据模型 + 自动探测。
 
-要回答的问题是：这个服务器上的人，究竟是**离线验证**进来的、走 **MUA 联合
+要回答的问题是：这个服务器上的人，究竟是**离线验证**进来的、走 **XDU / MUA
 皮肤站**进来的，还是**正版**进来的。
 
 状态协议本身不会告诉你这件事，但玩家样本（``players.sample``）里的 UUID 会：
@@ -12,7 +12,7 @@
 2. **正版 / 外置登录要靠名字反查 UUID 再比对。**
    同一个名字可能在 Mojang 和某个皮肤站上**同时**存在，所以判定依据必须是
    “查出来的 UUID 和服务器报的 UUID 相等”，而不是“这个名字查得到”。
-3. 剩下的既不是离线、也对不上 Mojang 和 MUA，那就是**别的外置登录皮肤站**。
+3. 剩下的既不是离线、也对不上 XDU、MUA 和 Mojang，那才是**别的外置登录皮肤站**。
 
 因为样本经常是空的（0 人在线、或者服务器关掉了样本），探测天然是**尽力而为**
 的，所以真正的事实来源永远是管理员配置的 ``auth_mode``，探测只用来补充和佐证。
@@ -35,14 +35,16 @@ from nonebot.log import logger
 # ==============================================================================
 
 MODE_OFFICIAL = "official"
+MODE_XDU = "xdu"
 MODE_MUA = "mua"
 MODE_YGGDRASIL = "yggdrasil"
 MODE_OFFLINE = "offline"
 MODE_MIXED = "mixed"
 MODE_UNKNOWN = "unknown"
 
-#: 管理员可以显式配置的取值（``""`` 表示未配置 / 交给自动探测）。
-CONFIGURABLE_MODES = (MODE_OFFICIAL, MODE_MUA, MODE_YGGDRASIL, MODE_OFFLINE, MODE_MIXED)
+#: 管理员可以显式配置的取值（``""`` 只为兼容旧配置保留）。
+#: 顺序按 XDUCraft 日常使用频率排列，Web 编辑器和帮助文本也保持一致。
+CONFIGURABLE_MODES = (MODE_XDU, MODE_MUA, MODE_OFFICIAL, MODE_YGGDRASIL, MODE_OFFLINE, MODE_MIXED)
 
 #: 判定来源，决定展示时说“已确认”还是“据配置”。
 ORIGIN_DETECTED = "detected"    # 本次查询从玩家样本里实测出来的
@@ -67,6 +69,14 @@ _WHITE = (255, 255, 255, 255)
 _INK = (24, 18, 12, 255)
 
 AUTH_MODE_STYLES: Dict[str, AuthModeStyle] = {
+    MODE_XDU: AuthModeStyle(
+        key=MODE_XDU,
+        label="XDU 皮肤站登录",
+        short_label="XDU",
+        color=(31, 111, 235, 255),
+        text_color=_WHITE,
+        description="玩家通过 XDUCraft 本校皮肤站（外置登录）进入服务器。",
+    ),
     MODE_OFFICIAL: AuthModeStyle(
         key=MODE_OFFICIAL,
         label="正版登录",
@@ -89,7 +99,7 @@ AUTH_MODE_STYLES: Dict[str, AuthModeStyle] = {
         short_label="外置",
         color=(0, 168, 181, 255),
         text_color=_WHITE,
-        description="玩家通过 MUA 以外的 Yggdrasil 皮肤站进入服务器。",
+        description="玩家通过 XDU / MUA 以外的 Yggdrasil 皮肤站进入服务器。",
     ),
     MODE_OFFLINE: AuthModeStyle(
         key=MODE_OFFLINE,
@@ -120,6 +130,8 @@ AUTH_MODE_STYLES: Dict[str, AuthModeStyle] = {
 
 #: 面向用户的别名 -> 标准值，让管理员能用中文设置。
 MODE_ALIASES: Dict[str, str] = {
+    "xdu": MODE_XDU, "xducraft": MODE_XDU, "西电": MODE_XDU,
+    "xdu皮肤站": MODE_XDU, "西电皮肤站": MODE_XDU, "本校": MODE_XDU,
     "official": MODE_OFFICIAL, "mojang": MODE_OFFICIAL, "premium": MODE_OFFICIAL,
     "online": MODE_OFFICIAL, "正版": MODE_OFFICIAL, "正版登录": MODE_OFFICIAL,
     "mua": MODE_MUA, "union": MODE_MUA, "联合": MODE_MUA, "联合登录": MODE_MUA,
@@ -140,6 +152,8 @@ MODE_TO_CODE: Dict[str, int] = {
     MODE_YGGDRASIL: 3,
     MODE_OFFLINE: 4,
     MODE_MIXED: 5,
+    # 只能追加，不能重排已有编号，否则旧配置链接会错位。
+    MODE_XDU: 6,
 }
 CODE_TO_MODE: Dict[int, str] = {code: mode for mode, code in MODE_TO_CODE.items()}
 
@@ -215,6 +229,7 @@ def is_offline_uuid(player_name: str, player_uuid: Any) -> bool:
 # 3. 名字 -> UUID 的外部查询（带缓存）
 # ==============================================================================
 
+XDU_YGGDRASIL_ROOT = "https://www.xducraft.cn/api/yggdrasil"
 MUA_YGGDRASIL_ROOT = "https://skin.mualliance.ltd/api/union/yggdrasil"
 MOJANG_BULK_LOOKUP_URL = "https://api.minecraftservices.com/minecraft/profile/lookup/bulk/byname"
 
@@ -229,6 +244,7 @@ PROFILE_CACHE_MAX = 4096
 VERDICT_CACHE_TTL = 5 * 60
 VERDICT_CACHE_MAX = 512
 
+SOURCE_XDU = "xdu"
 SOURCE_MUA = "mua"
 SOURCE_MOJANG = "mojang"
 
@@ -243,7 +259,7 @@ class ProfileLookup:
     """一次名字反查的结果。
 
     ``completed`` 记录哪些名字已经得到确定答复（包括“查无此人”）。网络失败的
-    名字不会放进去，避免把“接口不可用”误当成“两个官方源都没有，因此是外置”。
+    名字不会放进去，避免把“接口不可用”误当成“已知来源都没有，因此是其他外置站”。
     """
 
     profiles: Dict[str, str]
@@ -300,7 +316,12 @@ async def _lookup_uncached(
         return {}
 
     try:
-        if source == SOURCE_MUA:
+        if source == SOURCE_XDU:
+            response = await client.post(
+                f"{XDU_YGGDRASIL_ROOT}/api/profiles/minecraft",
+                json=list(names),
+            )
+        elif source == SOURCE_MUA:
             response = await client.post(
                 f"{MUA_YGGDRASIL_ROOT}/api/profiles/minecraft",
                 json=list(names),
@@ -322,7 +343,7 @@ async def lookup_profiles(
     """带缓存的批量查询。只有缓存缺失的名字才会真的发请求。
 
     命中“查过但不存在”也会被缓存（存 ``""``），避免对同一批离线玩家反复打
-    Mojang 和 MUA 的接口。
+    XDU、MUA 和 Mojang 的接口。
     """
     resolved: Dict[str, str] = {}
     completed = set()
@@ -434,8 +455,10 @@ async def detect_auth_mode(sample: Any, *, client: Optional[httpx.AsyncClient] =
     判定顺序是刻意的：
 
     1. **先做离线判定**——它是确定性的、不联网的，也不可能误判；
-    2. 再查 MUA，最后查 Mojang，两者都必须 **UUID 相等**才算数；
-    3. 三者都不是，就说明是别的外置登录站。
+    2. 并发查询 XDU、MUA 和 Mojang，必须 **名字与 UUID 同时相等**才算命中；
+    3. 三个已知源都完成查询且只命中一个，才采用该结论；同时命中多个来源时
+       无法从状态协议区分服务器实际使用的认证后端；
+    4. 三个已知源都明确答复且都不匹配，才说明是别的外置登录站。
 
     任何网络异常都只会让结论退化（``partial=True``），不会抛出。
     """
@@ -462,38 +485,46 @@ async def detect_auth_mode(sample: Any, *, client: Optional[httpx.AsyncClient] =
         verdict.mode = _aggregate(counts)
         return verdict
 
-    # --- 第二、三步：外部查询，整体限时 ---
+    # --- 第二步：三个外部源并发查询，整体限时 ---
+    #
+    # MUA 站偶尔连通性不佳，若按来源串行探测，会白白吃掉一次完整超时并挤压
+    # XDU / Mojang 的查询预算。并发后总耗时约等于最慢的那一个，而不是三者相加。
     async def _resolve_remaining() -> None:
         names = [name for name, _ in remaining]
         owns_client = client is None
         active = client or httpx.AsyncClient(timeout=LOOKUP_TIMEOUT)
         try:
-            mua_lookup = await lookup_profiles(SOURCE_MUA, names, active)
-            still_unknown = [
-                (name, player_uuid)
-                for name, player_uuid in remaining
-                if mua_lookup.profiles.get(name.lower()) != player_uuid
-            ]
-            for _ in range(len(remaining) - len(still_unknown)):
-                mark(MODE_MUA)
-
-            if not still_unknown:
-                return
-
-            mojang_lookup = await lookup_profiles(
-                SOURCE_MOJANG, [name for name, _ in still_unknown], active
+            xdu_lookup, mua_lookup, mojang_lookup = await asyncio.gather(
+                lookup_profiles(SOURCE_XDU, names, active),
+                lookup_profiles(SOURCE_MUA, names, active),
+                lookup_profiles(SOURCE_MOJANG, names, active),
             )
-            for name, player_uuid in still_unknown:
+
+            for name, player_uuid in remaining:
                 normalized_name = name.lower()
-                if mojang_lookup.profiles.get(normalized_name) == player_uuid:
-                    mark(MODE_OFFICIAL)
-                elif (
-                    normalized_name in mua_lookup.completed
-                    and normalized_name in mojang_lookup.completed
-                ):
+                completed = all(
+                    normalized_name in lookup.completed
+                    for lookup in (xdu_lookup, mua_lookup, mojang_lookup)
+                )
+                matches = [
+                    mode
+                    for mode, lookup in (
+                        (MODE_XDU, xdu_lookup),
+                        (MODE_MUA, mua_lookup),
+                        (MODE_OFFICIAL, mojang_lookup),
+                    )
+                    if lookup.profiles.get(normalized_name) == player_uuid
+                ]
+
+                # MUA 是联合认证，同一个高校站角色可能同时出现在 XDU 和 MUA
+                # 的查询结果里。状态响应只给名字和 UUID，无法知道服务端实际加载
+                # 的认证地址；必须把这种情况留作未知，而不是按列表顺序猜测。
+                if completed and len(matches) == 1:
+                    mark(matches[0])
+                elif completed and not matches:
                     mark(MODE_YGGDRASIL)
                 else:
-                    # 至少一个外部源没有给出确定答复，不能武断地归为第三方外置。
+                    # 接口未完成或同时命中多个来源，都不足以形成唯一结论。
                     mark(MODE_UNKNOWN)
                     verdict.partial = True
         finally:
@@ -682,12 +713,12 @@ def clear_caches() -> None:
 
 
 __all__ = [
-    "MODE_OFFICIAL", "MODE_MUA", "MODE_YGGDRASIL", "MODE_OFFLINE", "MODE_MIXED", "MODE_UNKNOWN",
+    "MODE_XDU", "MODE_MUA", "MODE_OFFICIAL", "MODE_YGGDRASIL", "MODE_OFFLINE", "MODE_MIXED", "MODE_UNKNOWN",
     "CONFIGURABLE_MODES", "AUTH_MODE_STYLES", "AuthModeStyle", "AuthVerdict", "ResolvedAuth",
     "ProfileLookup",
     "ORIGIN_DETECTED", "ORIGIN_CONFIGURED", "ORIGIN_INHERITED", "ORIGIN_NONE",
     "style_for", "normalize_mode", "mode_to_code", "code_to_mode",
     "offline_uuid", "normalize_uuid", "is_offline_uuid",
     "detect_auth_mode", "detect_for_server", "annotate_servers", "resolve_auth",
-    "clear_caches", "MUA_YGGDRASIL_ROOT",
+    "clear_caches", "XDU_YGGDRASIL_ROOT", "MUA_YGGDRASIL_ROOT",
 ]
