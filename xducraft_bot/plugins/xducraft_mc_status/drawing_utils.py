@@ -178,9 +178,9 @@ def parse_minecraft_formatting(
     default_color: Color = (255, 255, 255, 255),
     *,
     is_html: bool = False,
-    # 多行 MOTD 压成一行时的分隔符。像素字体里的 "|" 是一根齐高的粗竖条，
-    # 看起来像分栏线而不是分隔符，中点更轻。
-    line_separator: str = " · ",
+    # 多行 MOTD 压成一行时的分隔符。Minecraft AE 的 U+00B7 字形映射异常，
+    # 会被画成类似字母 ``u`` 的形状；U+2022 在这套字体里显示为正常圆点。
+    line_separator: str = " • ",
 ) -> List[ColoredSegment]:
     """把 Minecraft legacy/HTML 文本解析成可供 Pillow 绘制的彩色分段。"""
     normalized_default = _as_rgba(default_color)
