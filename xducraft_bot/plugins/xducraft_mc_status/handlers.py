@@ -42,7 +42,10 @@ from .data_manager import (
 from .decode_image import get_cache_stats
 from .image_renderer import render_status_image
 from .status_fetcher import get_all_servers_status, get_single_server_status
-from .utils import is_admin, is_valid_api_url, is_valid_hex_color, is_valid_server_address
+from .utils import (
+    get_server_display_address, is_admin, is_valid_api_url, is_valid_hex_color,
+    is_valid_server_address,
+)
 
 #: ``/mcs edit`` 之后等待私聊导入的用户： user_id -> (group_id, 发起时间)
 #:
@@ -313,7 +316,7 @@ SETTABLE_ATTRIBUTES: Dict[str, Tuple[str, Callable[[str], Any]]] = {
     "tag": ("标签文字", lambda value: value),
     "tag_color": ("标签底色，6 位十六进制如 3498DB", _parse_tag_color),
     "comment": ("服务器名称/备注", lambda value: value),
-    "display_name": ("隐藏 IP 时展示的替代文字", lambda value: value),
+    "display_name": ("图片中的线路名称/连接提示（设置后自动隐藏查询地址）", lambda value: value),
     "auth_mode": ("登录验证方式：XDU / MUA / 正版 / 外置 / 离线 / 混合", auth.normalize_mode),
     "hide_ip": ("是否隐藏 IP：on / off", _parse_bool),
     "ignore_in_list": ("是否在列表中隐藏：on / off", _parse_bool),
@@ -346,8 +349,11 @@ async def _handle_set(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
         await _finish(f"本群没有找到服务器 {ip}。用 /mcs list 看看确切地址。")
 
     if set_server_attribute(event.group_id, ip, attribute, value):
+        if attribute == "display_name" and str(value).strip():
+            set_server_attribute(event.group_id, ip, "hide_ip", True)
         shown = auth.style_for(value).label if attribute == "auth_mode" and value else value
-        await _finish_admin(bot, event, f"已设置 {ip} 的 {attribute} = {shown}")
+        suffix = "（已自动隐藏实际查询地址）" if attribute == "display_name" and str(value).strip() else ""
+        await _finish_admin(bot, event, f"已设置 {ip} 的 {attribute} = {shown}{suffix}")
     await _finish_admin(bot, event, f"设置失败：{ip} 不存在。")
 
 
@@ -413,7 +419,8 @@ AUTH_USAGE = (
     "/mcs auth clear <IP> — 清除单服配置并回退本群默认值\n"
     "/mcs auth default <验证方式|clear> — 设置本群默认\n"
     "/mcs auth detect on|off — 开关尽力而为的自动探测（默认关）\n"
-    "验证方式可填：XDU / MUA / 正版 / 外置 / 离线 / 混合"
+    "验证方式可填：XDU / MUA / 正版 / 外置 / 离线 / 混合\n"
+    "提示：MUA 是包含 XDU 的联合认证；标记为 MUA 的服务器可直接使用 XDU 账号登录。"
 )
 
 
@@ -427,7 +434,7 @@ def _auth_overview(group_id: int) -> str:
     lines = []
     for server in servers:
         resolved = auth.resolve_auth(server, group_default)
-        address = server.get("display_name") or server.get("ip") if server.get("hide_ip") else server.get("ip")
+        address = get_server_display_address(server)
         marker = "✔" if resolved.confirmed else "·"
         line = f"{marker} {address} → {resolved.style.label}"
         if resolved.conflict:
@@ -627,7 +634,7 @@ async def handle_list_simple(bot: Bot, event: GroupMessageEvent):
     def format_tree(nodes: List[Dict[str, Any]], level: int = 0) -> List[str]:
         lines = []
         for node in nodes:
-            address = node.get("display_name") or "[IP 已隐藏]" if node.get("hide_ip") else node.get("ip", "未知")
+            address = get_server_display_address(node)
             tag = f"[{node['tag']}] " if node.get("tag") else ""
             comment = f"（{node['comment']}）" if node.get("comment") else ""
             resolved = auth.resolve_auth(node, group_default)

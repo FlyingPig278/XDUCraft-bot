@@ -87,11 +87,14 @@ AUTH_MODE_STYLES: Dict[str, AuthModeStyle] = {
     ),
     MODE_MUA: AuthModeStyle(
         key=MODE_MUA,
-        label="MUA 联合皮肤站登录",
+        label="MUA 联合登录（含 XDU）",
         short_label="MUA",
         color=(88, 101, 242, 255),
         text_color=_WHITE,
-        description="玩家通过 MUA 高校联盟的联合皮肤站（外置登录）进入服务器。",
+        description=(
+            "MUA 是包含 XDUCraft 本校皮肤站的高校联合认证；"
+            "标记为 MUA 的服务器可以直接使用 XDU 账号登录。"
+        ),
     ),
     MODE_YGGDRASIL: AuthModeStyle(
         key=MODE_YGGDRASIL,

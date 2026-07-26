@@ -55,6 +55,7 @@ from .fonts import (
     FONT_ZH_CREDIT, FONT_ZH_LEGEND, FONT_ZH_SUMMARY, FONT_ZH_TAG,
 )
 from .status_fetcher import has_player_list, prepare_data_for_display, preprocess_server_data, summarize
+from .utils import get_server_display_address
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -400,10 +401,7 @@ def _draw_address_and_auth(draw: ImageDraw.ImageDraw, card: CardLayout, group_de
     start_x = card.left + CARD_TEXT_OFFSET_X
     center_y = card.top + OFFSET_IP_CENTER_Y
 
-    if server_data.get("hide_ip"):
-        address = str(server_data.get("display_name") or "") or "[IP 已隐藏]"
-    else:
-        address = str(server_data.get("ip") or "未知服务器")
+    address = get_server_display_address(server_data, pixel_font=True)
 
     resolved = auth.resolve_auth(server_data, group_default)
     badge_text = resolved.style.short_label if resolved.mode != auth.MODE_UNKNOWN else ""

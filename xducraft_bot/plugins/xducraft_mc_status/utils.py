@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from typing import Any, Mapping
 from urllib.parse import urlparse
 
 from xducraft_bot.shared.permissions import can_manage, is_admin, is_superuser  # noqa: F401
@@ -18,6 +19,45 @@ BLACKLISTED_PATTERNS = [
     "gov.cn",
     "mil.cn",
 ]
+
+
+def format_address_for_pixel_font(value: Any) -> str:
+    """给像素字体中的地址分隔符留出呼吸空间。
+
+    Minecraft AE 的点号和冒号非常贴近相邻字符，域名、IPv4 与端口容易糊成一团。
+    旧渲染器会在 ``.``、``:`` 和线路分隔 ``|`` 两侧加空格；这里把这项规则集中
+    起来，并同时用于查询地址与管理员填写的线路说明。
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"\s*\.\s*", " . ", text)
+    text = re.sub(r"\s*:\s*", " : ", text)
+    return re.sub(r"\s*\|\s*", "   |   ", text)
+
+
+def get_server_display_address(
+    server: Mapping[str, Any],
+    *,
+    pixel_font: bool = False,
+) -> str:
+    """按兼容旧配置的规则解析一台服务器应该展示的地址。
+
+    ``ip`` 始终是实际查询目标；``hide_ip + display_name`` 是旧配置沿用至今的
+    存储形式。新版编辑器只把它们包装成“原地址 / 自定义线路说明 / 完全隐藏”
+    三种显示方式，不需要迁移已有数据。
+    """
+    if bool(server.get("hide_ip")):
+        address = str(server.get("display_name") or "").strip() or "[IP 已隐藏]"
+    else:
+        address = str(
+            server.get("original_query")
+            or server.get("ip")
+            or server.get("hostname")
+            or "未知服务器"
+        ).strip()
+
+    return format_address_for_pixel_font(address) if pixel_font else address
 
 
 def is_valid_server_address(address: str) -> bool:
@@ -98,5 +138,6 @@ def is_valid_api_url(url: str) -> bool:
 __all__ = [
     "is_admin", "is_superuser", "can_manage",
     "is_valid_server_address", "is_valid_hex_color", "is_valid_api_url",
+    "format_address_for_pixel_font", "get_server_display_address",
     "BLACKLISTED_PATTERNS",
 ]
