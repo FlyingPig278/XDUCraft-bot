@@ -1,39 +1,47 @@
-//json标准不允许注释，若要直接使用请删除注释文本。
+// JSON 标准不允许注释，若要直接使用请删除注释行。
 {
-    // [YOUR_GROUP_ID]: 这是一个占位符群号，你需要用实际的 QQ 群号替换它。
+    // 所有没有群级覆盖的群都会继承这里的状态查询源和自建后端地址。
+    "__global__": {
+        "status_api_source": "auto",
+        "status_api_url": ""
+    },
     "123456789": {
         "servers": [
             {
-                // 主服（Parent）：提供连接，作为子服的父级。
                 "ip": "hub.example.com",
                 "tag": "大厅",
                 "tag_color": "3181d0",
-                "server_type": "parent",
-                "parent_ip": "",
-                "priority": 1
+                "priority": 1,
+                "auth_mode": "mua",
+                "children": [
+                    {
+                        "ip": "survival.example.com:25566",
+                        "tag": "生存",
+                        "tag_color": "da3c8f",
+                        "priority": 2,
+                        "auth_mode": "",
+                        "children": []
+                    }
+                ]
             },
             {
-                // 子服（Child）：依赖于一个 Parent_IP，通常是生存服或小游戏服。
-                "ip": "survival.example.com:25566",
-                "tag": "生存",
-                "tag_color": "da3c8f",
-                "server_type": "child",
-                "parent_ip": "hub.example.com",
-                "priority": 2
-            },
-            {
-                // 独立服（Standalone）：不依赖任何父 IP，自己提供完整连接。
                 "ip": "modpack.independent.net:25570",
                 "tag": "模组",
                 "tag_color": "dd6d1e",
-                "server_type": "standalone",
-                "parent_ip": "",
                 "priority": 3,
-                // ignore_in_list：可选字段，设置为 true 则不在服务器列表图片中显示该项。
-                "ignore_in_list": false
+                "ignore_in_list": false,
+                "hide_ip": false,
+                "display_name": "",
+                "auth_mode": "offline",
+                "children": []
             }
         ],
-        // footer：图片底部的自定义文本。
-        "footer": "这是一个示例页脚，请替换为您的群号或公告。",
+        "footer": "这是一个示例页脚，请替换为群公告。",
+        "show_offline_by_default": false,
+        "status_api_source": "",
+        "status_api_url": "",
+        "default_auth_mode": "",
+        "auth_detect": true,
+        "quiet_admin_replies": true
     }
 }

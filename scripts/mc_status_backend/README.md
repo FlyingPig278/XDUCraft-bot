@@ -22,6 +22,10 @@
 3. 启动服务：
    - `uvicorn scripts.mc_status_backend.app:app --host 0.0.0.0 --port 8099`
 
+也可以只复制 `app.py` 到目标机器后使用 `uvicorn app:app ...` 启动；此时会自动
+使用 `mcstatus` 兼容实现。放在完整仓库中运行时则复用机器人的原始状态协议实现，
+能保留更完整的 MOTD 和玩家样本信息。
+
 ## 机器人配置建议
 
 1. 机器人群内设置：`/mcs source custom`

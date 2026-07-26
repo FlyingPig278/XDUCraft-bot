@@ -1,674 +1,819 @@
+"""``/mcs`` 各子命令的实现。
+
+三个贯穿全文件的约定：
+
+1. **权限检查用 :func:`admin_only` 装饰器**，不再每个函数开头抄一遍
+   ``if not await is_admin(...)``。
+2. **管理类操作的回执默认走私聊**（见 ``/mcs quiet``）。机器人接在几百人的大群
+   里，改一次配置就在群里回一条，很快就是刷屏。
+3. **群级 / 全局两级配置由 :class:`ScopedSetting` 统一处理**。旧代码里
+   ``/mcs source`` 和 ``/mcs api`` 是两份逐行对应的实现，加一个新配置项就要再抄
+   一份。
+"""
+
+from __future__ import annotations
+
 import json
 import random
 import re
-from urllib.parse import urlparse
+import time
+from dataclasses import dataclass
+from functools import wraps
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment, PrivateMessageEvent
-from nonebot.exception import MatcherException
+from nonebot.log import logger
 
+from xducraft_bot.shared.onebot import make_node, notify_privately, send_private_forward, send_text_sections
 
-# Dictionary to track users who are in the process of editing a group's config
-#
-# Stores a mapping from a user_id to the group_id they are editing.
-# This allows the bot to know which group's data to update when it receives an
-# import command in a private message from that user.
-EDITING_USERS = {}
-
-
+from . import auth_mode as auth
 from .config_coder import compress_config, decompress_config
-from .constants import WEB_UI_BASE_URL, USAGE_USER, USAGE_ADMIN
-from .data_manager import add_server, remove_server, clear_footer, add_footer, get_footer, set_server_attribute, \
-    clear_server_attribute, export_group_data, import_group_data, get_server_list, get_server_info, \
-    get_effective_status_api_source, set_group_status_api_source, clear_group_status_api_source, set_global_status_api_source, \
-    clear_global_status_api_source, \
-    get_effective_status_api_url, set_group_status_api_url, clear_group_status_api_url, \
-    set_global_status_api_url, clear_global_status_api_url
+from .constants import USAGE_ADMIN, USAGE_USER, WEB_UI_BASE_URL
+from .data_manager import (
+    VALID_API_SOURCES, add_footer, add_server, clear_footer, clear_global_status_api_source,
+    clear_global_status_api_url, clear_group_status_api_source, clear_group_status_api_url,
+    clear_server_attribute, export_group_data, get_all_servers_flat, get_auth_detect_enabled,
+    get_effective_status_api_source, get_effective_status_api_url, get_group_default_auth_mode,
+    get_quiet_admin_replies, get_server_info, get_server_list, import_group_data, remove_server,
+    set_auth_detect_enabled, set_global_status_api_source, set_global_status_api_url,
+    set_group_default_auth_mode, set_group_status_api_source, set_group_status_api_url,
+    set_quiet_admin_replies, set_server_attribute,
+)
+from .decode_image import get_cache_stats
 from .image_renderer import render_status_image
 from .status_fetcher import get_all_servers_status, get_single_server_status
-from .utils import is_admin, is_valid_server_address, is_valid_hex_color
+from .utils import is_admin, is_valid_api_url, is_valid_hex_color, is_valid_server_address
+
+#: ``/mcs edit`` 之后等待私聊导入的用户： user_id -> (group_id, 发起时间)
+#:
+#: 旧实现只存 user_id -> group_id 且**永不过期**：管理员点了 edit 之后忘了导入，
+#: 这条状态会一直留着，几个月后他在另一个群随手发一条 import 就会把当初那个群的
+#: 配置覆盖掉。现在加了有效期。
+EDITING_USERS: Dict[int, Tuple[int, float]] = {}
+EDIT_SESSION_TTL = 30 * 60
 
 
-def _is_valid_api_url(url: str) -> bool:
-    try:
-        parsed = urlparse(str(url).strip())
-    except Exception:
-        return False
-
-    if parsed.scheme not in {"http", "https"}:
-        return False
-
-    if not parsed.netloc:
-        return False
-
-    return True
-
-
-async def _handle_add(bot: Bot, event: GroupMessageEvent, arg_list: list):
+def _matcher():
+    """延迟拿 matcher，避免和 ``__init__`` 形成循环导入。"""
     from . import mc_status
-    if not await is_admin(bot, event):
-        await mc_status.finish("你没有执行该命令的权限")
+
+    return mc_status
+
+
+def _prune_edit_sessions() -> None:
+    now = time.time()
+    for user_id in [uid for uid, (_, started) in EDITING_USERS.items() if now - started > EDIT_SESSION_TTL]:
+        EDITING_USERS.pop(user_id, None)
+
+
+def start_edit_session(user_id: int, group_id: int) -> None:
+    _prune_edit_sessions()
+    EDITING_USERS[user_id] = (int(group_id), time.time())
+
+
+def take_edit_session(user_id: int) -> Optional[int]:
+    """取出并消费一次编辑会话；已过期或不存在返回 None。"""
+    _prune_edit_sessions()
+    entry = EDITING_USERS.pop(user_id, None)
+    return entry[0] if entry else None
+
+
+# ==============================================================================
+# 回复辅助
+# ==============================================================================
+
+async def _finish(text: str) -> None:
+    await _matcher().finish(text)
+
+
+async def _finish_admin(bot: Bot, event: GroupMessageEvent, text: str) -> None:
+    """管理类操作的回执。
+
+    开启安静模式时私聊发给操作者；私聊不通（没加好友）再退回群里，
+    保证操作者一定看得到结果。
+    """
+    matcher = _matcher()
+    if get_quiet_admin_replies(event.group_id) and await notify_privately(bot, event.user_id, text):
+        await matcher.finish()
+    await matcher.finish(text)
+
+
+def admin_only(handler: Callable) -> Callable:
+    """要求群管理员 / 群主 / SUPERUSER。"""
+
+    @wraps(handler)
+    async def wrapper(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
+        if not await is_admin(bot, event):
+            await _finish("这条命令只有群管理员可以使用。")
+        return await handler(bot, event, arg_list)
+
+    return wrapper
+
+
+# ==============================================================================
+# 群级 / 全局两级配置
+# ==============================================================================
+
+@dataclass
+class ScopedSetting:
+    """一个支持“群级覆盖 + 全局默认”的配置项。
+
+    ``/mcs source`` 和 ``/mcs api`` 的全部子命令语法都由这里生成，
+    两者只是校验函数和文案不同。
+    """
+
+    command: str                 # 子命令名，如 "source"
+    title: str                   # 展示名，如 "状态查询源"
+    value_hint: str              # 取值提示，如 "protocol / sjtu / jsu / custom / auto"
+    normalize: Callable[[str], Optional[str]]        # 输入 -> 标准值 / None 表示非法
+    describe: Callable[[str], str]                   # 标准值 -> 展示文本
+    get_effective: Callable[[int], Tuple[str, str]]
+    set_group: Callable[[int, str], bool]
+    clear_group: Callable[[int], bool]
+    set_global: Callable[[str], bool]
+    clear_global: Callable[[], bool]
+    allow_shorthand: bool = False   # 是否兼容 "/mcs source <值>" 这种老写法
+
+    @property
+    def usage(self) -> str:
+        lines = [
+            f"/mcs {self.command} — 查看当前生效值",
+            f"/mcs {self.command} set <值> — 设置本群",
+            f"/mcs {self.command} clear — 清除本群覆盖",
+            f"/mcs {self.command} global set <值> — 设置全局默认",
+            f"/mcs {self.command} global clear — 清除全局默认",
+            f"可用值：{self.value_hint}",
+        ]
+        return "\n".join(lines)
+
+
+SCOPE_NAMES = {"group": "本群配置", "global": "全局默认", "none": "未配置"}
+
+
+async def _handle_scoped_setting(
+    bot: Bot, event: GroupMessageEvent, arg_list: List[str], setting: ScopedSetting
+) -> None:
+    """``ScopedSetting`` 的统一分发。"""
+    args = arg_list[1:]
+
+    if not args:
+        value, scope = setting.get_effective(event.group_id)
+        scope_name = SCOPE_NAMES.get(scope, scope)
+        current = setting.describe(value) if value else "未配置"
+        await _finish(f"当前{setting.title}（{scope_name}）：{current}\n\n{setting.usage}")
+
+    action = args[0].strip().lower()
+
+    # 兼容老写法 "/mcs source jsu"
+    if setting.allow_shorthand and len(args) == 1 and action not in {"set", "clear", "global"}:
+        normalized = setting.normalize(action)
+        if normalized is None:
+            await _finish(f"无法识别的值：{args[0]}\n\n{setting.usage}")
+        changed = setting.set_group(event.group_id, normalized)
+        verb = "已设置" if changed else "未变化"
+        await _finish_admin(bot, event, f"{verb}本群{setting.title}：{setting.describe(normalized)}")
+
+    if action == "set":
+        if len(args) != 2:
+            await _finish(f"用法：/mcs {setting.command} set <值>\n可用值：{setting.value_hint}")
+        normalized = setting.normalize(args[1])
+        if normalized is None:
+            await _finish(f"无法识别的值：{args[1]}\n可用值：{setting.value_hint}")
+        changed = setting.set_group(event.group_id, normalized)
+        verb = "已设置" if changed else "未变化"
+        await _finish_admin(bot, event, f"{verb}本群{setting.title}：{setting.describe(normalized)}")
+
+    if action == "clear":
+        if setting.clear_group(event.group_id):
+            value, scope = setting.get_effective(event.group_id)
+            fallback = setting.describe(value) if value else "未配置"
+            await _finish_admin(
+                bot, event,
+                f"已清除本群{setting.title}覆盖，现在回退到{SCOPE_NAMES.get(scope, scope)}：{fallback}",
+            )
+        await _finish_admin(bot, event, f"本群原本就没有设置{setting.title}覆盖。")
+
+    if action == "global":
+        if len(args) == 3 and args[1].strip().lower() == "set":
+            normalized = setting.normalize(args[2])
+            if normalized is None:
+                await _finish(f"无法识别的值：{args[2]}\n可用值：{setting.value_hint}")
+            changed = setting.set_global(normalized)
+            verb = "已设置" if changed else "未变化"
+            await _finish_admin(bot, event, f"{verb}全局默认{setting.title}：{setting.describe(normalized)}")
+
+        if len(args) == 2 and args[1].strip().lower() == "clear":
+            if setting.clear_global():
+                await _finish_admin(bot, event, f"已清除全局默认{setting.title}。")
+            await _finish_admin(bot, event, f"全局默认{setting.title}原本就是默认值。")
+
+        await _finish(f"用法：\n/mcs {setting.command} global set <值>\n/mcs {setting.command} global clear")
+
+    await _finish(f"未知参数：{args[0]}\n\n{setting.usage}")
+
+
+SOURCE_LABELS = {
+    "protocol": "本地协议直连",
+    "sjtu": "SJTU 聚合 API",
+    "jsu": "JSU API",
+    "custom": "自定义后端 API",
+    "auto": "自动回退（协议 → 自定义 → JSU → SJTU）",
+}
+
+SOURCE_SETTING = ScopedSetting(
+    command="source",
+    title="状态查询源",
+    value_hint="protocol / sjtu / jsu / custom / auto",
+    normalize=lambda value: value.strip().lower() if value.strip().lower() in VALID_API_SOURCES else None,
+    describe=lambda value: f"{SOURCE_LABELS.get(value, value)}（{value}）",
+    get_effective=get_effective_status_api_source,
+    set_group=set_group_status_api_source,
+    clear_group=clear_group_status_api_source,
+    set_global=set_global_status_api_source,
+    clear_global=clear_global_status_api_source,
+    allow_shorthand=True,
+)
+
+API_SETTING = ScopedSetting(
+    command="api",
+    title="自定义后端地址",
+    value_hint="以 http:// 或 https:// 开头的完整地址",
+    normalize=lambda value: value.strip() if is_valid_api_url(value) else None,
+    describe=lambda value: value,
+    get_effective=get_effective_status_api_url,
+    set_group=set_group_status_api_url,
+    clear_group=clear_group_status_api_url,
+    set_global=set_global_status_api_url,
+    clear_global=clear_global_status_api_url,
+)
+
+
+@admin_only
+async def _handle_source(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
+    await _handle_scoped_setting(bot, event, arg_list, SOURCE_SETTING)
+
+
+@admin_only
+async def _handle_api(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
+    await _handle_scoped_setting(bot, event, arg_list, API_SETTING)
+
+
+# ==============================================================================
+# 服务器增删改
+# ==============================================================================
+
+@admin_only
+async def _handle_add(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
     if len(arg_list) < 2:
-        await mc_status.finish("命令格式错误，请使用 /mcs add <IP>")
+        await _finish("用法：/mcs add <IP[:端口]>\n例如：/mcs add mc.example.com:25565")
+
     ip = arg_list[1]
     if not is_valid_server_address(ip):
-        await mc_status.finish(f"无效的服务器地址格式: {ip}")
-    elif add_server(event.group_id, ip):
-        await mc_status.finish(f"成功添加服务器: {ip}")
-    else:
-        await mc_status.finish(f"服务器 {ip} 已存在或添加失败")
+        await _finish(f"这不是一个有效的服务器地址：{ip}\n支持域名、IPv4、IPv6，可带 :端口。")
+
+    if add_server(event.group_id, ip):
+        await _finish_admin(bot, event, f"已添加服务器：{ip}\n可以用 /mcs set {ip} tag <标签> 给它加个标签。")
+    await _finish_admin(bot, event, f"添加失败：{ip} 已经在本群的列表里了。")
 
 
-async def _handle_remove(bot: Bot, event: GroupMessageEvent, arg_list: list):
-    from . import mc_status
-    if not await is_admin(bot, event):
-        await mc_status.finish("你没有执行该命令的权限")
+@admin_only
+async def _handle_remove(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
     if len(arg_list) < 2:
-        await mc_status.finish("命令格式错误，请使用 /mcs remove <IP>")
+        await _finish("用法：/mcs remove <IP>\n可以先用 /mcs list 查看已添加的地址。")
+
     ip = arg_list[1]
     if remove_server(event.group_id, ip):
-        await mc_status.finish(f"成功移除服务器: {ip}")
-    else:
-        await mc_status.finish(f"服务器 {ip} 不存在或移除失败")
+        await _finish_admin(bot, event, f"已移除服务器：{ip}（它的子服务器也一并移除了）")
+    await _finish_admin(bot, event, f"移除失败：本群没有找到 {ip}。用 /mcs list 看看确切地址。")
 
 
-async def _handle_footer(bot: Bot, event: GroupMessageEvent, arg_list: list):
-    from . import mc_status
-    if not await is_admin(bot, event):
-        await mc_status.finish("你没有执行该命令的权限")
-    if len(arg_list) > 1:
-        if arg_list[1].lower() == "clear":
-            clear_footer(event.group_id)
-            await mc_status.finish("已清除页脚文本")
-        else:
-            footer_text = ' '.join(arg_list[1:])
-            add_footer(event.group_id, footer_text)
-            await mc_status.finish(f"已设置页脚: {footer_text}")
-    else:
-        current_footer = get_footer(event.group_id)
-        if current_footer:
-            await mc_status.finish(f"当前页脚: {current_footer}")
-        else:
-            await mc_status.finish("尚未设置页脚文本")
+#: ``/mcs set`` 支持的属性 -> (说明, 校验/转换函数)
+def _parse_bool(value: str) -> Optional[bool]:
+    lowered = value.strip().lower()
+    if lowered in {"true", "1", "yes", "y", "on", "是", "开"}:
+        return True
+    if lowered in {"false", "0", "no", "n", "off", "否", "关"}:
+        return False
+    return None
 
 
-async def _handle_set(bot: Bot, event: GroupMessageEvent, arg_list: list):
-    from . import mc_status
-    if not await is_admin(bot, event):
-        await mc_status.finish("你没有执行该命令的权限")
+def _parse_tag_color(value: str) -> Optional[str]:
+    candidate = value.strip().lstrip("#")
+    return candidate.upper() if is_valid_hex_color(candidate) else None
+
+
+def _parse_priority(value: str) -> Optional[int]:
+    try:
+        return int(value.strip())
+    except ValueError:
+        return None
+
+
+SETTABLE_ATTRIBUTES: Dict[str, Tuple[str, Callable[[str], Any]]] = {
+    "tag": ("标签文字", lambda value: value),
+    "tag_color": ("标签底色，6 位十六进制如 3498DB", _parse_tag_color),
+    "comment": ("服务器名称/备注", lambda value: value),
+    "display_name": ("隐藏 IP 时展示的替代文字", lambda value: value),
+    "auth_mode": ("登录验证方式：正版 / MUA / 外置 / 离线 / 混合", auth.normalize_mode),
+    "hide_ip": ("是否隐藏 IP：on / off", _parse_bool),
+    "ignore_in_list": ("是否在列表中隐藏：on / off", _parse_bool),
+    "priority": ("排序优先级，数字越小越靠前", _parse_priority),
+}
+
+
+@admin_only
+async def _handle_set(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
     if len(arg_list) < 4:
-        await mc_status.finish("命令格式错误，请使用 /mcs set <IP> <attr> <value>")
+        lines = [f"  {name} — {desc}" for name, (desc, _) in SETTABLE_ATTRIBUTES.items()]
+        await _finish("用法：/mcs set <IP> <属性> <值>\n可设置的属性：\n" + "\n".join(lines))
 
-    ip = arg_list[1]
-    attribute = arg_list[2].lower()
-    value = ' '.join(arg_list[3:]) # 允许值带有空格
+    ip, attribute, raw_value = arg_list[1], arg_list[2].lower(), " ".join(arg_list[3:])
 
-    valid_attributes = {"tag", "tag_color", "comment", "priority", "ignore_in_list", "hide_ip", "display_name"}
-    if attribute not in valid_attributes:
-        if attribute == "parent_ip":
-            await mc_status.finish(f"不支持直接修改 parent_ip。\n请使用 /mcs edit 命令打开Web UI，通过拖拽来修改服务器层级关系。")
-        await mc_status.finish(f"不支持设置属性: {attribute}。请从 {', '.join(valid_attributes)} 中选择。")
+    if attribute == "parent_ip":
+        await _finish("父子关系不能用 /mcs set 修改。\n请用 /mcs edit 打开网页编辑器，拖拽调整层级。")
 
-    if attribute == "priority":
-        try:
-            value = int(value)
-        except ValueError:
-            await mc_status.finish("优先级 (priority) 必须是一个整数。")
-    elif attribute in ["ignore_in_list", "hide_ip"]:
-        if value.lower() in ['true', '1', 'yes', 'y', '是']:
-            value = True
-        elif value.lower() in ['false', '0', 'no', 'n', '否']:
-            value = False
-        else:
-            await mc_status.finish(f"属性 [{attribute}] 的值必须是 True/False。")
-    elif attribute == "tag_color":
-        if value.startswith("#"):
-            value = value[1:]
-        if not is_valid_hex_color(value):
-            await mc_status.finish("颜色值无效。请使用标准的6位十六进制代码 (例如: FF00AA)。")
-        value = value.upper()
+    if attribute not in SETTABLE_ATTRIBUTES:
+        await _finish(
+            f"不支持的属性：{attribute}\n可用属性：{'、'.join(SETTABLE_ATTRIBUTES)}"
+        )
+
+    description, parser = SETTABLE_ATTRIBUTES[attribute]
+    value = parser(raw_value)
+    if value is None:
+        await _finish(f"「{raw_value}」不是合法的取值。\n{attribute} — {description}")
+
+    if not get_server_info(event.group_id, ip):
+        await _finish(f"本群没有找到服务器 {ip}。用 /mcs list 看看确切地址。")
 
     if set_server_attribute(event.group_id, ip, attribute, value):
-        await mc_status.finish(f"服务器 {ip} 的属性 [{attribute}] 已成功设置为: {value}")
-    else:
-        await mc_status.finish(f"设置失败: 服务器 {ip} 不存在。")
+        shown = auth.style_for(value).label if attribute == "auth_mode" and value else value
+        await _finish_admin(bot, event, f"已设置 {ip} 的 {attribute} = {shown}")
+    await _finish_admin(bot, event, f"设置失败：{ip} 不存在。")
 
 
-async def _handle_clear(bot: Bot, event: GroupMessageEvent, arg_list: list):
-    from . import mc_status
-    if not await is_admin(bot, event):
-        await mc_status.finish("你没有执行该命令的权限")
+@admin_only
+async def _handle_clear(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
     if len(arg_list) != 3:
-        await mc_status.finish("命令格式错误，请使用 /mcs clear <IP> <attribute>")
+        await _finish(f"用法：/mcs clear <IP> <属性>\n可重置的属性：{'、'.join(SETTABLE_ATTRIBUTES)}")
 
-    ip = arg_list[1]
-    attribute = arg_list[2].lower()
-    valid_attributes = {"tag", "tag_color", "parent_ip", "priority", "comment", "ignore_in_list", "hide_ip", "display_name"}
+    ip, attribute = arg_list[1], arg_list[2].lower()
+    if attribute not in SETTABLE_ATTRIBUTES:
+        await _finish(f"不支持的属性：{attribute}\n可用属性：{'、'.join(SETTABLE_ATTRIBUTES)}")
 
-    if attribute in valid_attributes:
-        if clear_server_attribute(event.group_id, ip, attribute):
-            await mc_status.finish(f"服务器 {ip} 的属性 [{attribute}] 已成功清空/重置。")
-        else:
-            await mc_status.finish(f"清空失败: 服务器 {ip} 不存在。")
-    else:
-        await mc_status.finish(f"不支持清空属性: {attribute}。请从 {', '.join(valid_attributes)} 中选择。")
+    if clear_server_attribute(event.group_id, ip, attribute):
+        await _finish_admin(bot, event, f"已重置 {ip} 的 {attribute}。")
+    await _finish_admin(bot, event, f"重置失败：本群没有找到 {ip}。")
 
 
-async def _handle_list(bot: Bot, event: GroupMessageEvent, arg_list: list):
-    from . import mc_status
+@admin_only
+async def _handle_footer(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
     if len(arg_list) == 1:
-        await handle_list_simple(bot, event)
-    else:
-        await mc_status.finish("未知参数，请使用 /mcs list 查看服务器列表。")
+        from .data_manager import get_footer
+
+        current = get_footer(event.group_id)
+        await _finish(f"当前页脚：{current}" if current else "还没有设置页脚。\n用法：/mcs footer <文本>")
+
+    if arg_list[1].lower() == "clear":
+        clear_footer(event.group_id)
+        await _finish_admin(bot, event, "已清除页脚文本。")
+
+    footer_text = " ".join(arg_list[1:])
+    add_footer(event.group_id, footer_text)
+    await _finish_admin(bot, event, f"已设置页脚：{footer_text}")
 
 
-async def _handle_edit(bot: Bot, event: GroupMessageEvent, arg_list: list):
-    from . import mc_status
-    if not await is_admin(bot, event):
-        await mc_status.finish("你没有执行该命令的权限")
-
-    user_id = event.user_id
-    group_id = event.group_id
-
-    group_data = export_group_data(group_id) or {}
-    compressed_str = compress_config(group_data)
-    if not compressed_str:
-        await mc_status.finish("导出失败：压缩配置时发生错误。")
-
-    export_url = f"{WEB_UI_BASE_URL}?data={compressed_str}"
-
-    # Store the user's state
-    EDITING_USERS[user_id] = group_id
-    
-    try:
-        # Send instructions as a regular private message
-        await bot.send_private_msg(
-            user_id=user_id,
-            message=(
-                "请点击下方链接前往Web UI编辑配置，完成后在页面上复制导入命令，并在此私聊中发送导入。\n注意：仅接受本次 `/mcs edit` 后的一次导入。"
-            )
+@admin_only
+async def _handle_quiet(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
+    """管理指令回执是否走私聊。"""
+    if len(arg_list) == 1:
+        state = "开启" if get_quiet_admin_replies(event.group_id) else "关闭"
+        await _finish(
+            f"安静模式：{state}\n"
+            "开启后，管理类指令的回执会私聊发给操作者，不在群里刷屏。\n"
+            "用法：/mcs quiet on|off"
         )
 
-        # Send the URL as a separate forwarded message for better presentation
-        url_message_nodes = [
-            {
-                "type": "node",
-                "data": {
-                    "name": "Web UI链接",
-                    "uin": event.self_id,
-                    "content": f"Web UI 配置链接：\n{export_url}"
-                }
-            }
-        ]
-        await bot.call_api('send_private_forward_msg', user_id=user_id, messages=url_message_nodes)
+    parsed = _parse_bool(arg_list[1])
+    if parsed is None:
+        await _finish("用法：/mcs quiet on|off")
 
-    except Exception as e:
-        # Clean up state if private message fails
-        if user_id in EDITING_USERS:
-            del EDITING_USERS[user_id]
-        await mc_status.finish(f"向您发送私信失败，请检查是否已添加机器人为好友或是否开启了临时会话权限。")
-
-    await mc_status.finish("已经通过私信发送编辑链接，请注意查收。")
+    set_quiet_admin_replies(event.group_id, parsed)
+    # 这条回执必须让操作者看到，且开/关的语义刚好相反，所以直接回群。
+    await _finish(f"已{'开启' if parsed else '关闭'}安静模式。管理指令回执将{'私聊发送' if parsed else '发在群里'}。")
 
 
-async def _handle_export_json(bot: Bot, event: GroupMessageEvent, arg_list: list):
-    from . import mc_status
+# ==============================================================================
+# 登录验证方式
+# ==============================================================================
+
+AUTH_USAGE = (
+    "用法：\n"
+    "/mcs auth — 查看本群所有服务器的登录验证方式\n"
+    "/mcs auth set <IP> <验证方式> — 指定某台服务器\n"
+    "/mcs auth clear <IP> — 改回自动探测\n"
+    "/mcs auth default <验证方式|clear> — 设置本群默认\n"
+    "/mcs auth detect on|off — 开关自动探测\n"
+    "验证方式可填：正版 / MUA / 外置 / 离线 / 混合"
+)
+
+
+def _auth_overview(group_id: int) -> str:
+    """把本群所有服务器的验证方式列成一段文本。"""
+    servers = get_all_servers_flat(group_id)
+    if not servers:
+        return "本群还没有添加任何服务器。"
+
+    group_default = get_group_default_auth_mode(group_id)
+    lines = []
+    for server in servers:
+        resolved = auth.resolve_auth(server, group_default)
+        address = server.get("display_name") or server.get("ip") if server.get("hide_ip") else server.get("ip")
+        marker = "✔" if resolved.confirmed else "·"
+        line = f"{marker} {address} → {resolved.style.label}"
+        if resolved.conflict:
+            line += f"（实测为 {auth.style_for(resolved.detected).label}，与配置不一致）"
+        lines.append(line)
+
+    header = [
+        "本群服务器登录验证方式：",
+        "  ✔ = 已由在线玩家样本实测确认    · = 按配置显示",
+    ]
+    if group_default:
+        header.append(f"  本群默认：{auth.style_for(group_default).label}")
+    header.append(f"  自动探测：{'开启' if get_auth_detect_enabled(group_id) else '关闭'}")
+    return "\n".join(header + [""] + lines)
+
+
+async def _handle_auth(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
+    args = arg_list[1:]
+
+    # 查看对所有人开放，修改才需要管理员。
+    if not args:
+        await _finish(_auth_overview(event.group_id) + "\n\n" + AUTH_USAGE)
+
+    action = args[0].strip().lower()
+
     if not await is_admin(bot, event):
-        await mc_status.finish("你没有执行该命令的权限")
-
-    group_data = export_group_data(event.group_id) or {}
-    try:
-        json_str = json.dumps(group_data, indent=2, ensure_ascii=False)
-        messages = [
-            {
-                "type": "node",
-                "data": {
-                    "name": "JSON导出",
-                    "uin": event.self_id,
-                    "content": f"当前群聊的原始JSON配置如下：\n{json_str}"
-                }
-            }
-        ]
-        await bot.call_api('send_private_forward_msg', user_id=event.user_id, messages=messages)
-
-    except Exception as e:
-        await mc_status.finish(f"发送JSON配置失败，请检查是否已添加机器人为好友或是否开启了临时会话权限。")
-
-    await mc_status.finish("已通过私信发送JSON配置。")
-
-
-async def handle_private_import(bot: Bot, event: PrivateMessageEvent, arg_list: list):
-    from . import mc_status
-    user_id = event.user_id
-    if user_id not in EDITING_USERS:
-        await mc_status.finish("无效的导入操作。请先在需要编辑的群聊中使用 /mcs edit 命令。")
-
-    if not arg_list or arg_list[0].lower() != 'import' or len(arg_list) != 2:
-        await mc_status.finish("私聊导入命令格式错误，请使用 /mcs import <压缩字符串>")
-
-    compressed_str = arg_list[1]
-    group_id = EDITING_USERS[user_id]
-
-    decompressed_data = decompress_config(compressed_str)
-    if decompressed_data is None:
-        await mc_status.finish("导入失败：无法解压或解析该字符串，请检查输入是否正确。")
-
-    if import_group_data(group_id, decompressed_data):
-        group_name = str(group_id)
-        try:
-            group_info = await bot.get_group_info(group_id=group_id)
-            group_name = group_info.get('group_name', group_name)
-        except Exception:
-            pass  # Bot might not be in group anymore, proceed with default group_id
-
-        del EDITING_USERS[user_id]  # Clear state after successful import
-        await mc_status.finish(f"群聊 [{group_name}] 的配置导入成功！")
-
-        try:
-            await bot.send_group_msg(
-                group_id=group_id,
-                message=f"本群的服务器配置已由用户 {event.sender.nickname} 更新。"
-            )
-        except Exception:
-            # Ignore if sending to group fails (e.g., bot kicked)
-            pass
-    else:
-        await mc_status.finish("导入失败：数据结构不符合要求。")
-
-
-async def _handle_help(bot: Bot, event: GroupMessageEvent, arg_list: list):
-    from . import mc_status
-    is_su_or_admin = await is_admin(bot, event)
-    # 对于普通用户
-    if not is_su_or_admin:
-        nodes = [{"type": "node", "data": {"name": "帮助", "uin": event.self_id, "content": USAGE_USER}}]
-        try:
-            await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
-        except Exception:
-            await mc_status.finish(USAGE_USER) # 回退
-        else:
-            await mc_status.finish()
-        return
-
-    # 对于管理员
-    try:
-        raw_sections = USAGE_ADMIN.split('---\n')
-        nodes = []
-        for section_content in raw_sections:
-            section_content = section_content.strip()
-            if not section_content:
-                continue
-
-            node = {"type": "node", "data": {"name": "管理员帮助", "uin": event.self_id, "content": section_content}}
-            nodes.append(node)
-
-        await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
-    except Exception:
-        await mc_status.finish(USAGE_ADMIN)
-    else:
-        await mc_status.finish()
-
-
-async def _handle_source(bot: Bot, event: GroupMessageEvent, arg_list: list):
-    from . import mc_status
-    if not await is_admin(bot, event):
-        await mc_status.finish("你没有执行该命令的权限")
-
-    source_name_map = {
-        "protocol": "本地协议直连",
-        "sjtu": "SJTU API",
-        "jsu": "JSU API",
-        "custom": "自定义后端 API",
-        "auto": "自动回退（先协议，后custom，再JSU，最后SJTU）",
-    }
-
-    def _format_source(source: str) -> str:
-        return f"{source_name_map.get(source, source)} ({source})"
-
-    if len(arg_list) == 1:
-        current_source, scope = get_effective_status_api_source(event.group_id)
-        scope_name = {
-            "group": "群级覆盖",
-            "global": "全局默认",
-        }.get(scope, scope)
-        await mc_status.finish(
-            f"当前生效状态查询源（{scope_name}）：{_format_source(current_source)}\n"
-            "可选值：protocol / sjtu / jsu / custom / auto\n"
-            "命令：\n"
-            "/mcs source set <source>\n"
-            "/mcs source clear\n"
-            "/mcs source global set <source>\n"
-            "/mcs source global clear\n"
-            "兼容旧用法：/mcs source <source>"
-        )
-
-    valid_sources = {"protocol", "sjtu", "jsu", "custom", "auto"}
-
-    if len(arg_list) == 2:
-        # 兼容旧语法：/mcs source <source>
-        shorthand_source = arg_list[1].strip().lower()
-        if shorthand_source not in valid_sources:
-            await mc_status.finish("命令格式错误，请使用 /mcs source <protocol|sjtu|jsu|custom|auto>")
-
-        changed = set_group_status_api_source(event.group_id, shorthand_source)
-        if changed:
-            await mc_status.finish(f"已设置本群状态查询源：{_format_source(shorthand_source)}")
-        await mc_status.finish(f"本群状态查询源未变化：{_format_source(shorthand_source)}")
-
-    action = arg_list[1].strip().lower()
+        await _finish("查看请直接发送 /mcs auth；修改验证方式需要群管理员权限。")
 
     if action == "set":
-        if len(arg_list) != 3:
-            await mc_status.finish("命令格式错误，请使用 /mcs source set <source>")
+        if len(args) != 3:
+            await _finish("用法：/mcs auth set <IP> <正版|MUA|外置|离线|混合>")
+        ip, raw_mode = args[1], args[2]
+        mode = auth.normalize_mode(raw_mode)
+        if mode is None:
+            await _finish(f"无法识别的验证方式：{raw_mode}\n可填：正版 / MUA / 外置 / 离线 / 混合")
+        if not mode:
+            await _finish("要改回自动探测请用：/mcs auth clear <IP>")
+        if not get_server_info(event.group_id, ip):
+            await _finish(f"本群没有找到服务器 {ip}。用 /mcs list 看看确切地址。")
 
-        new_source = arg_list[2].strip().lower()
-        if new_source not in valid_sources:
-            await mc_status.finish("无效的查询源，请使用：protocol / sjtu / jsu / custom / auto")
-
-        changed = set_group_status_api_source(event.group_id, new_source)
-        if changed:
-            await mc_status.finish(f"已设置本群状态查询源：{_format_source(new_source)}")
-        await mc_status.finish(f"本群状态查询源未变化：{_format_source(new_source)}")
-
-    if action == "clear":
-        if len(arg_list) != 2:
-            await mc_status.finish("命令格式错误，请使用 /mcs source clear")
-
-        if clear_group_status_api_source(event.group_id):
-            await mc_status.finish("已清空本群状态查询源覆盖配置，将回退到全局默认源。")
-        await mc_status.finish("本群状态查询源本就未设置覆盖（已使用全局默认或 protocol）。")
-
-    if action == "global":
-        if len(arg_list) == 4 and arg_list[2].strip().lower() == "set":
-            global_source = arg_list[3].strip().lower()
-            if global_source not in valid_sources:
-                await mc_status.finish("无效的查询源，请使用：protocol / sjtu / jsu / custom / auto")
-
-            changed = set_global_status_api_source(global_source)
-            if changed:
-                await mc_status.finish(f"已设置全局默认状态查询源：{_format_source(global_source)}")
-            await mc_status.finish(f"全局默认状态查询源未变化：{_format_source(global_source)}")
-
-        if len(arg_list) == 3 and arg_list[2].strip().lower() == "clear":
-            if clear_global_status_api_source():
-                await mc_status.finish("已清空全局默认状态查询源，恢复为 protocol。")
-            await mc_status.finish("全局默认状态查询源本就为 protocol。")
-
-        await mc_status.finish(
-            "命令格式错误，请使用：\n"
-            "/mcs source global set <source>\n"
-            "/mcs source global clear"
-        )
-
-    await mc_status.finish(
-        "命令格式错误，请使用：\n"
-        "/mcs source\n"
-        "/mcs source set <source>\n"
-        "/mcs source clear\n"
-        "/mcs source global set <source>\n"
-        "/mcs source global clear\n"
-        "兼容旧用法：/mcs source <source>"
-    )
-
-
-async def _handle_api(bot: Bot, event: GroupMessageEvent, arg_list: list):
-    from . import mc_status
-    if not await is_admin(bot, event):
-        await mc_status.finish("你没有执行该命令的权限")
-
-    if len(arg_list) == 1:
-        effective_url, scope = get_effective_status_api_url(event.group_id)
-        scope_name = {
-            "group": "群级覆盖",
-            "global": "全局默认",
-            "none": "未配置",
-        }.get(scope, scope)
-        if effective_url:
-            await mc_status.finish(
-                f"当前生效 API URL（{scope_name}）：{effective_url}\n"
-                "命令：\n"
-                "/mcs api set <url>\n"
-                "/mcs api clear\n"
-                "/mcs api global set <url>\n"
-                "/mcs api global clear"
-            )
-
-        await mc_status.finish(
-            "当前未配置自定义 API URL。\n"
-            "命令：\n"
-            "/mcs api set <url>\n"
-            "/mcs api global set <url>"
-        )
-
-    action = arg_list[1].strip().lower()
-
-    if action == "set":
-        if len(arg_list) != 3:
-            await mc_status.finish("命令格式错误，请使用 /mcs api set <url>")
-
-        new_url = arg_list[2].strip()
-        if not _is_valid_api_url(new_url):
-            await mc_status.finish("URL 无效，请使用 http(s):// 开头的完整地址。")
-
-        changed = set_group_status_api_url(event.group_id, new_url)
-        if changed:
-            await mc_status.finish(f"已设置本群自定义 API URL：{new_url}")
-        await mc_status.finish(f"本群自定义 API URL 未变化：{new_url}")
+        set_server_attribute(event.group_id, ip, "auth_mode", mode)
+        await _finish_admin(bot, event, f"已将 {ip} 的登录验证方式设为：{auth.style_for(mode).label}")
 
     if action == "clear":
-        if len(arg_list) != 2:
-            await mc_status.finish("命令格式错误，请使用 /mcs api clear")
+        if len(args) != 2:
+            await _finish("用法：/mcs auth clear <IP>")
+        ip = args[1]
+        if not get_server_info(event.group_id, ip):
+            await _finish(f"本群没有找到服务器 {ip}。")
+        clear_server_attribute(event.group_id, ip, "auth_mode")
+        await _finish_admin(bot, event, f"已清除 {ip} 的验证方式配置，将回到自动探测。")
 
-        if clear_group_status_api_url(event.group_id):
-            await mc_status.finish("已清空本群自定义 API URL，将回退到全局默认 URL（若存在）。")
-        await mc_status.finish("本群原本就未配置自定义 API URL。")
-
-    if action == "global":
-        if len(arg_list) == 4 and arg_list[2].strip().lower() == "set":
-            new_url = arg_list[3].strip()
-            if not _is_valid_api_url(new_url):
-                await mc_status.finish("URL 无效，请使用 http(s):// 开头的完整地址。")
-
-            changed = set_global_status_api_url(new_url)
-            if changed:
-                await mc_status.finish(f"已设置全局默认 API URL：{new_url}")
-            await mc_status.finish(f"全局默认 API URL 未变化：{new_url}")
-
-        if len(arg_list) == 3 and arg_list[2].strip().lower() == "clear":
-            if clear_global_status_api_url():
-                await mc_status.finish("已清空全局默认 API URL。")
-            await mc_status.finish("全局默认 API URL 原本就未配置。")
-
-        await mc_status.finish(
-            "命令格式错误，请使用：\n"
-            "/mcs api global set <url>\n"
-            "/mcs api global clear"
+    if action == "default":
+        if len(args) != 2:
+            await _finish("用法：/mcs auth default <正版|MUA|外置|离线|混合|clear>")
+        raw = args[1].strip().lower()
+        if raw == "clear":
+            set_group_default_auth_mode(event.group_id, "")
+            await _finish_admin(bot, event, "已清除本群默认验证方式。")
+        mode = auth.normalize_mode(raw)
+        if not mode:
+            await _finish(f"无法识别的验证方式：{args[1]}")
+        set_group_default_auth_mode(event.group_id, mode)
+        await _finish_admin(
+            bot, event,
+            f"已将本群默认验证方式设为：{auth.style_for(mode).label}\n"
+            "（只对没有单独配置的服务器生效）",
         )
 
-    await mc_status.finish(
-        "命令格式错误，请使用：\n"
-        "/mcs api\n"
-        "/mcs api set <url>\n"
-        "/mcs api clear\n"
-        "/mcs api global set <url>\n"
-        "/mcs api global clear"
-    )
+    if action == "detect":
+        if len(args) != 2:
+            await _finish("用法：/mcs auth detect on|off")
+        parsed = _parse_bool(args[1])
+        if parsed is None:
+            await _finish("用法：/mcs auth detect on|off")
+        set_auth_detect_enabled(event.group_id, parsed)
+        await _finish_admin(
+            bot, event,
+            f"已{'开启' if parsed else '关闭'}登录验证方式自动探测。\n"
+            + ("探测依据是在线玩家的 UUID，没有玩家在线时无法判断。" if parsed else "今后只按配置显示。"),
+        )
+
+    await _finish(f"未知参数：{args[0]}\n\n{AUTH_USAGE}")
 
 
-async def handle_query_all(bot: Bot, event: GroupMessageEvent,show_all_servers: bool):
-    from . import mc_status
-    """查询所有服务器状态"""
+# ==============================================================================
+# 查询
+# ==============================================================================
+
+async def handle_query_all(bot: Bot, event: GroupMessageEvent, show_all_servers: bool):
+    """查询本群所有服务器并出图。"""
+    matcher = _matcher()
+
+    servers = get_server_list(event.group_id)
+    if not servers:
+        await matcher.finish(
+            "本群还没有添加 Minecraft 服务器。\n"
+            "管理员可以用 /mcs add <IP> 添加，或用 /mcs edit 打开网页编辑器。"
+        )
+
     try:
-        servers = get_server_list(event.group_id)
-        if not servers:
-            await mc_status.finish("本群尚未添加Minecraft服务器")
-
-        await mc_status.send("正在查询所有服务器状态...")
+        source, _ = get_effective_status_api_source(event.group_id)
         server_data_list = await get_all_servers_status(event.group_id)
-        image_path = await render_status_image(server_data_list, event.group_id, show_all_servers)
-        reply_message = MessageSegment.image(file=f"file:///{image_path}")
-    except MatcherException:
-        raise
-    except Exception as e:
-        reply_message = f"查询所有服务器状态失败: {e}"
-        # raise
-    await mc_status.finish(reply_message)
+        image_path = await render_status_image(server_data_list, event.group_id, show_all_servers, source_label=source)
+    except Exception as exc:
+        logger.exception("[MCStatus] 查询群 {} 全部服务器失败", event.group_id)
+        await matcher.finish(f"查询失败：{type(exc).__name__}: {exc}\n管理员可用 /mcs diag 排查。")
+
+    await matcher.finish(MessageSegment.image(file=f"file:///{image_path}"))
+
+
+#: 一些明显不是服务器地址的输入，与其冷冰冰地报错不如接个梗。
+def _easter_egg_reply(ip: str) -> Optional[str]:
+    if ip in {"127.0.0.1", "localhost", "::1"}:
+        return random.choice([
+            "你搁这儿开单机呢？查询 127.0.0.1……找到了！在你电脑里！",
+            "查询 localhost……连接成功！……等等，我为什么要查我自己？Σ( ° △ °|||)",
+        ])
+    if ip in {"192.168.1.1", "192.168.0.1"}:
+        return "你查路由器干嘛！是不是想改 WiFi 密码不让我上了！(°òДó)ﾉ"
+    if "❤" in ip:
+        return "❤ 服务器？这怕不是运行在我的心巴上！"
+    if "114514" in ip:
+        return f"查询 {ip} 中……哼哼啊啊啊啊啊啊（查询失败）"
+    if ip == "404":
+        return "Server Not Found.（你看，404 自己都说找不到了）"
+    if re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", ip):
+        return random.choice([
+            f"「{ip}」……这个地址……我看不懂，但我大受震撼。",
+            f"正在连接 {ip}…… 失败。错误代码：256（数字太大，路由器聊爆了）",
+        ])
+    if re.search(r"[一-龥]{2,4}|[A-Za-z]{3,}", ip):
+        return random.choice([
+            f"「{ip}」大佬的服务器需要 VIP 通行证🎫",
+            f"正在连接 {ip} 的心跳服务器……信号强度：❤️❤️❤️",
+            f"你输入的是……人名？抱歉，本机器人没有「{ip}」的好友，无法查询。",
+        ])
+    return random.choice([
+        f"「{ip}」服务器状态：正在加载存在感……0%",
+        f"正在向 {ip} 发送脑电波……对方已读不回📵",
+        f"Pinging {ip}... Request timed out.（它好像……跑路了）",
+    ])
 
 
 async def handle_query_single(bot: Bot, event: GroupMessageEvent, ip: str):
-    from . import mc_status
-    """查询单个服务器状态"""
-
-    if ip == '127.0.0.1' or ip.lower() == 'localhost':
-        responses = [
-            "你搁这儿开单机呢？查询127.0.0.1...找到了！在你电脑里！",
-            "查询 `localhost`... 数据库连接成功！...等等，我为什么要查我自己？Σ( ° △ °|||)",
-        ]
-        await mc_status.finish(random.choice(responses))
-
-    if ip == '192.168.1.1' or ip == '192.168.0.1':
-        await mc_status.finish("你查路由器干嘛！是不是想改WiFi密码不让我上了！(°òДó)ﾉ")
+    """查询单个服务器。"""
+    matcher = _matcher()
 
     if not is_valid_server_address(ip):
-        # 假设 ip 是用户输入, is_valid_server_address(ip) 已返回 False
-
-        # --- 1. 特殊彩蛋区 (优先级最高) ---
-        if '❤' in ip:
-            await mc_status.finish("❤服务器？这怕不是运行在我的心巴上！")
-
-        if '114514' in ip:
-            await mc_status.finish(f"查询 {ip} 中...哼哼啊啊啊啊啊啊（查询失败）")
-
-        if ip == '404':
-            await mc_status.finish("Server Not Found. (你看，404自己都说找不到了)")
-
-        # --- 2. 格式分类区 ---
-
-        # 检查是否“看起来像IP，但其实无效” (例如: 123.456.789.0)
-        if re.match(r'^\d{1,3}(\.\d{1,3}){3}$', ip):
-            responses = [
-                f"「{ip}」...这个地址...我看不懂，但我大受震撼。",
-                f"你这IP地址是体育老师教的吗？（指 {ip}）",
-                f"正在连接 {ip}... 连接失败。错误代码：256 (数字太大，路由器聊爆了)",
-            ]
-            await mc_status.finish(random.choice(responses))
-
-        # 检查是否像人名或单词
-        if re.search(r'[\u4e00-\u9fa5]{2,4}|[A-Za-z]{3,}', ip):
-            name_responses = [
-                f"「{ip}」大佬的服务器需要VIP通行证🎫",
-                f"正在连接 {ip} 的心跳服务器...信号强度：❤️❤️❤️",
-                f"该服务器需要 {ip} 的指纹验证才能访问🖐️",
-                f"你输入的是...人名？抱歉，本机器人没有「{ip}」的好友，无法查询。",
-            ]
-            await mc_status.finish(random.choice(name_responses))
-
-        # --- 3. 通用兜底区 (适用于其他所有情况) ---
-        general_responses = [
-            f"「{ip}」服务器状态：正在加载存在感...0%",
-            f"警告：'{ip}' 触发路由器颜文字防御系统 (╯°□°)╯︵ ┻━┻",
-            f"正在向 {ip} 发送脑电波...对方已读不回📵",
-            f"该地址过于抽象，需要安装'理解补丁'才能访问🧩",
-            f"系统将 '{ip}' 自动翻译为：爱的告白服务器💌",
-            f"Pinging {ip}... Request timed out. (它好像...跑路了)",
-            f"「{ip}」？你这串神秘代码是不是克苏鲁的召唤咒语？SAN值狂掉...😨",
-        ]
-        await mc_status.finish(random.choice(general_responses))
+        await matcher.finish(_easter_egg_reply(ip))
 
     try:
-        await mc_status.send(f"正在查询服务器 {ip} 的状态...")
+        source, _ = get_effective_status_api_source(event.group_id)
+        live_status = await get_single_server_status(ip, group_id=event.group_id)
 
-        # 1. 获取实时服务器状态
-        live_status_data = await get_single_server_status(ip, group_id=event.group_id)
-
-        # 2. 获取本地存储的服务器配置信息
         saved_config = get_server_info(event.group_id, ip)
-
-        # 3. 合并信息
         if saved_config:
-            # 如果找到了本地配置，直接用它与实时状态合并
-            # 本地配置(saved_config)的值会覆盖实时状态(live_status_data)中的同名字段
-            final_server_data = {**live_status_data, **saved_config}
+            # 本地配置（标签、备注、验证方式）覆盖实时状态里的同名字段。
+            final_data = {**live_status, **{k: v for k, v in saved_config.items() if k != "children"}}
         else:
-            # 如果在本地配置中没找到该服务器，直接使用实时状态
-            final_server_data = live_status_data
+            final_data = dict(live_status)
+        final_data.pop("children", None)
 
-        # 4. 移除子服信息，确保只渲染查询的单个服务器
-        final_server_data.pop('children', None)
+        if get_auth_detect_enabled(event.group_id):
+            await auth.annotate_servers([final_data])
 
-        # 5. 使用处理后的数据生成图片
-        image_path = await render_status_image([final_server_data], event.group_id, True)
-        reply_message = MessageSegment.image(file=f"file:///{image_path}")
-    except MatcherException:
-        raise
-    except Exception as e:
-        reply_message = f"查询 {ip} 失败: {e}"
-    await mc_status.finish(reply_message)
+        image_path = await render_status_image([final_data], event.group_id, True, source_label=source)
+    except Exception as exc:
+        logger.exception("[MCStatus] 查询 {} 失败", ip)
+        await matcher.finish(f"查询 {ip} 失败：{type(exc).__name__}: {exc}")
+
+    await matcher.finish(MessageSegment.image(file=f"file:///{image_path}"))
 
 
 async def handle_list_simple(bot: Bot, event: GroupMessageEvent):
-    from . import mc_status
-    """处理 /mcs list 命令，递归显示树形服务器列表"""
+    """``/mcs list``：树形列出已添加的服务器。"""
+    matcher = _matcher()
     server_tree = get_server_list(event.group_id)
 
     if not server_tree:
-        await mc_status.finish("尚未添加任何服务器")
-        return
+        await matcher.finish("本群还没有添加任何服务器。\n管理员可用 /mcs add <IP> 添加。")
 
-    def _format_tree(nodes: list, level=0) -> list[str]:
+    group_default = get_group_default_auth_mode(event.group_id)
+
+    def format_tree(nodes: List[Dict[str, Any]], level: int = 0) -> List[str]:
         lines = []
-        for i, s in enumerate(nodes):
-            ip = s.get('ip', '未知服务器')
-            tag = s.get('tag', '')
-            comment = s.get('comment', '')
-            hide_ip = s.get('hide_ip', False)
-            display_name = s.get('display_name', '')
-            
-            # 根据 hide_ip 和 display_name 决定地址部分的显示内容
-            address_part = ""
-            if hide_ip:
-                address_part = display_name if display_name else "[IP已隐藏]"
-            else:
-                address_part = ip
-            
-            # 将注释作为独立的补充信息
-            comment_part = f" ({comment})" if comment else ""
-
-            prefix = f"[{tag}] " if tag else ""
-            indent = "  " * level
-            connector = "↳ " if level > 0 else ""
-            
-            lines.append(f"{indent}{connector}{prefix}{address_part}{comment_part}")
-            
-            if s.get('children'):
-                lines.extend(_format_tree(s['children'], level + 1))
+        for node in nodes:
+            address = node.get("display_name") or "[IP 已隐藏]" if node.get("hide_ip") else node.get("ip", "未知")
+            tag = f"[{node['tag']}] " if node.get("tag") else ""
+            comment = f"（{node['comment']}）" if node.get("comment") else ""
+            resolved = auth.resolve_auth(node, group_default)
+            badge = f" · {resolved.style.short_label}" if resolved.mode != auth.MODE_UNKNOWN else ""
+            prefix = "  " * level + ("↳ " if level else "")
+            lines.append(f"{prefix}{tag}{address}{comment}{badge}")
+            if node.get("children"):
+                lines.extend(format_tree(node["children"], level + 1))
         return lines
 
-    server_list_str = "\n".join(_format_tree(server_tree))
+    body = "已添加的服务器：\n" + "\n".join(format_tree(server_tree))
+    await send_text_sections(bot, event, [body], title="服务器列表")
+    await matcher.finish()
+
+
+async def _handle_list(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
+    if len(arg_list) > 1:
+        await _finish("用法：/mcs list（不接参数）\n想看验证方式请用 /mcs auth。")
+    await handle_list_simple(bot, event)
+
+
+@admin_only
+async def _handle_diag(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
+    """``/mcs diag``：配置概览 + 各数据源实测连通性。"""
+    matcher = _matcher()
+    group_id = event.group_id
+
+    source, source_scope = get_effective_status_api_source(group_id)
+    api_url, url_scope = get_effective_status_api_url(group_id)
+    servers = get_all_servers_flat(group_id)
+    cache = get_cache_stats()
+
+    lines = [
+        "【本群配置】",
+        f"服务器数量：{len(servers)}",
+        f"状态查询源：{SOURCE_LABELS.get(source, source)}（{source}，来自{SCOPE_NAMES.get(source_scope, source_scope)}）",
+        f"自定义后端：{api_url or '未配置'}（{SCOPE_NAMES.get(url_scope, url_scope)}）",
+        f"验证方式自动探测：{'开启' if get_auth_detect_enabled(group_id) else '关闭'}",
+        f"本群默认验证方式：{auth.style_for(get_group_default_auth_mode(group_id)).label if get_group_default_auth_mode(group_id) else '未设置'}",
+        f"安静模式：{'开启' if get_quiet_admin_replies(group_id) else '关闭'}",
+        f"图标缓存：{cache['valid_files']}/{cache['total_files']} 有效，共 {cache['total_size_mb']} MB",
+    ]
+
+    if servers:
+        probe_ip = servers[0].get("ip", "")
+        lines += ["", f"【连通性实测】目标：{probe_ip}"]
+        from .status_fetcher import _fetch_via_custom, _fetch_via_jsu, _fetch_via_protocol, _fetch_via_sjtu
+
+        probes = [("protocol", _fetch_via_protocol(probe_ip)),
+                  ("jsu", _fetch_via_jsu(probe_ip)),
+                  ("sjtu", _fetch_via_sjtu(probe_ip))]
+        if api_url:
+            probes.append(("custom", _fetch_via_custom(probe_ip, api_url)))
+
+        for name, coroutine in probes:
+            try:
+                result = await coroutine
+            except Exception as exc:
+                lines.append(f"  {name}: 异常 {type(exc).__name__}: {exc}")
+                continue
+            if result.get("online"):
+                lines.append(f"  {name}: ✔ 在线，{result.get('ping', 0)}ms")
+            else:
+                lines.append(f"  {name}: ✘ {str(result.get('error') or '未知错误')[:120]}")
+
+    await send_text_sections(bot, event, ["\n".join(lines)], title="MC 状态诊断")
+    await matcher.finish()
+
+
+# ==============================================================================
+# 配置导入导出
+# ==============================================================================
+
+@admin_only
+async def _handle_edit(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
+    """生成网页编辑器链接，私聊发给操作者。"""
+    matcher = _matcher()
+    user_id, group_id = event.user_id, event.group_id
+
+    group_data = export_group_data(group_id) or {}
+    compressed = compress_config(group_data)
+    if not compressed:
+        await matcher.finish("导出失败：压缩配置时出错，请联系维护者查看日志。")
+
+    export_url = f"{WEB_UI_BASE_URL}?data={compressed}"
+
+    sent = await notify_privately(
+        bot, user_id,
+        "点击下面的链接打开网页编辑器，改完之后按页面提示复制导入命令，"
+        f"再在这个私聊里发送即可。\n"
+        f"链接 {EDIT_SESSION_TTL // 60} 分钟内有效，且只接受一次导入。",
+    )
+    if not sent:
+        await matcher.finish(
+            "没能给你发私信。请先加机器人好友，或在群里点一下机器人头像发起临时会话，然后重试 /mcs edit。"
+        )
+
+    # 链接很长，用合并转发发送，避免被聊天框折行截断。
+    if not await send_private_forward(bot, user_id, [make_node(export_url, "网页编辑器链接", event.self_id)]):
+        await notify_privately(bot, user_id, export_url)
+
+    start_edit_session(user_id, group_id)
+    await _finish_admin(bot, event, "编辑链接已通过私信发送，请查收。")
+
+
+@admin_only
+async def _handle_export_json(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
+    """私聊导出原始 JSON，用于排查问题。"""
+    matcher = _matcher()
+    group_data = export_group_data(event.group_id) or {}
 
     try:
-        await bot.send_group_forward_msg(group_id=event.group_id, messages=[
-            {"type": "node", "data": {"name": "服务器列表", "uin": event.self_id, "content": f"已添加的服务器:\n{server_list_str}"}}
-        ])
-    except Exception:
-        await mc_status.finish(f"已添加的服务器:\n{server_list_str}")
-    else:
-        await mc_status.finish()
+        payload = json.dumps(group_data, indent=2, ensure_ascii=False)
+    except (TypeError, ValueError) as exc:
+        await matcher.finish(f"序列化配置失败：{exc}")
 
-SUBCOMMAND_HANDLERS = {
+    nodes = [make_node(f"群 {event.group_id} 的原始配置：\n{payload}", "JSON 导出", event.self_id)]
+    if not await send_private_forward(bot, event.user_id, nodes):
+        await matcher.finish("发送失败。请先加机器人好友，或开启临时会话后重试。")
+
+    await _finish_admin(bot, event, "已通过私信发送 JSON 配置。")
+
+
+async def handle_private_import(bot: Bot, event: PrivateMessageEvent, arg_list: List[str]):
+    """私聊里的 ``/mcs import <压缩字符串>``。"""
+    matcher = _matcher()
+    user_id = event.user_id
+
+    group_id = take_edit_session(user_id)
+    if group_id is None:
+        await matcher.finish(
+            "没有找到进行中的编辑会话。\n"
+            "请先在需要修改的群里发送 /mcs edit，拿到链接后再回来导入。"
+            f"（编辑会话 {EDIT_SESSION_TTL // 60} 分钟内有效）"
+        )
+
+    if len(arg_list) != 2:
+        # 会话已经被取出来了，格式不对就放回去，别让用户白跑一趟 /mcs edit。
+        start_edit_session(user_id, group_id)
+        await matcher.finish("格式不对。请发送：/mcs import <网页里复制的字符串>")
+
+    decompressed = decompress_config(arg_list[1])
+    if decompressed is None:
+        start_edit_session(user_id, group_id)
+        await matcher.finish("导入失败：无法解析这段字符串。请确认是从网页编辑器完整复制的。")
+
+    if not import_group_data(group_id, decompressed):
+        start_edit_session(user_id, group_id)
+        await matcher.finish("导入失败：数据结构不符合要求。")
+
+    group_name = str(group_id)
+    try:
+        info = await bot.get_group_info(group_id=group_id)
+        group_name = info.get("group_name", group_name) or group_name
+    except Exception:
+        pass  # 机器人可能已经不在这个群了，用群号兜底即可。
+
+    server_count = len(get_all_servers_flat(group_id))
+    await matcher.finish(f"群「{group_name}」的配置导入成功，共 {server_count} 台服务器。")
+
+
+# ==============================================================================
+# 帮助
+# ==============================================================================
+
+async def _handle_help(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
+    matcher = _matcher()
+    if not await is_admin(bot, event):
+        await send_text_sections(bot, event, [USAGE_USER], title="MC 状态 · 帮助")
+        await matcher.finish()
+
+    sections = [section.strip() for section in USAGE_ADMIN.split("---") if section.strip()]
+    await send_text_sections(bot, event, sections, title="MC 状态 · 管理员帮助")
+    await matcher.finish()
+
+
+SUBCOMMAND_HANDLERS: Dict[str, Callable] = {
     "add": _handle_add,
     "remove": _handle_remove,
     "rm": _handle_remove,
+    "del": _handle_remove,
     "footer": _handle_footer,
     "set": _handle_set,
     "clear": _handle_clear,
     "list": _handle_list,
+    "auth": _handle_auth,
     "edit": _handle_edit,
     "editor": _handle_edit,
     "export": _handle_edit,
     "export_json": _handle_export_json,
     "source": _handle_source,
     "api": _handle_api,
+    "quiet": _handle_quiet,
+    "diag": _handle_diag,
     "help": _handle_help,
 }
 
-
+__all__ = [
+    "SUBCOMMAND_HANDLERS", "handle_query_all", "handle_query_single",
+    "handle_list_simple", "handle_private_import", "EDITING_USERS",
+]

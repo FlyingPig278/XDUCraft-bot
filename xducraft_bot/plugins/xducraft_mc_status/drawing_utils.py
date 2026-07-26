@@ -1,9 +1,20 @@
+"""MOTD 富文本解析与绘制。
+
+Minecraft 的 MOTD 有三种写法要同时支持：legacy 的 ``§c`` 颜色码、
+1.16+ 的 ``§x§R§R§G§G§B§B`` / ``§#RRGGBB`` 十六进制色，以及聚合 API 常见的
+``<font color=...>`` HTML 片段。三者都会被解析成 ``(文本, 颜色)`` 分段，
+再由 Pillow 逐段绘制。
+"""
+
+from __future__ import annotations
+
 from html.parser import HTMLParser
-from typing import List, Tuple
+from math import ceil
+from typing import List, Optional, Sequence, Tuple
 
 from PIL import ImageColor, ImageDraw, ImageFont
 
-from xducraft_bot.plugins.xducraft_mc_status.constants import HTML_COLOR_CODES, MINECRAFT_COLOR_CODES
+from .constants import HTML_COLOR_CODES, MINECRAFT_COLOR_CODES
 
 
 Color = Tuple[int, int, int, int]
@@ -167,7 +178,9 @@ def parse_minecraft_formatting(
     default_color: Color = (255, 255, 255, 255),
     *,
     is_html: bool = False,
-    line_separator: str = " | ",
+    # 多行 MOTD 压成一行时的分隔符。像素字体里的 "|" 是一根齐高的粗竖条，
+    # 看起来像分栏线而不是分隔符，中点更轻。
+    line_separator: str = " · ",
 ) -> List[ColoredSegment]:
     """把 Minecraft legacy/HTML 文本解析成可供 Pillow 绘制的彩色分段。"""
     normalized_default = _as_rgba(default_color)
@@ -185,21 +198,83 @@ def parse_minecraft_formatting(
     return segments
 
 
-def _segments_length(segments: List[ColoredSegment], font: ImageFont.FreeTypeFont) -> float:
+def measure_segments(segments: Sequence[ColoredSegment], font: ImageFont.FreeTypeFont) -> float:
+    """分段文本的总像素宽度。"""
     return sum(font.getlength(segment_text) for segment_text, _ in segments)
 
 
-def _draw_segments(
+_segments_length = measure_segments  # 兼容旧名字
+
+
+def truncate_segments(
+    segments: Sequence[ColoredSegment],
+    font: ImageFont.FreeTypeFont,
+    max_width: float,
+    ellipsis: str = "…",
+) -> List[ColoredSegment]:
+    """按**像素宽度**截断分段文本，保留每段自己的颜色。
+
+    旧实现的做法是先按像素判断超长、再按字符数 ``text[:40]`` 截断——中英文
+    混排时字符数和像素宽度完全不成比例，宽的会溢出到右侧信息列上，窄的又白白
+    浪费空间。这里逐字符累加实际宽度，超了就停，并保证省略号也放得下。
+    """
+    if max_width <= 0:
+        return []
+    if measure_segments(segments, font) <= max_width:
+        return list(segments)
+
+    ellipsis_width = font.getlength(ellipsis)
+    budget = max_width - ellipsis_width
+    if budget <= 0:
+        return [(ellipsis, segments[0][1] if segments else (255, 255, 255, 255))]
+
+    truncated: List[ColoredSegment] = []
+    used = 0.0
+    last_color: Color = (255, 255, 255, 255)
+
+    for segment_text, color in segments:
+        last_color = color
+        segment_width = font.getlength(segment_text)
+        if used + segment_width <= budget:
+            truncated.append((segment_text, color))
+            used += segment_width
+            continue
+
+        kept = []
+        for character in segment_text:
+            character_width = font.getlength(character)
+            if used + character_width > budget:
+                break
+            kept.append(character)
+            used += character_width
+        if kept:
+            truncated.append(("".join(kept), color))
+        break
+
+    truncated.append((ellipsis, last_color))
+    return truncated
+
+
+def truncate_text(text: str, font: ImageFont.FreeTypeFont, max_width: float, ellipsis: str = "…") -> str:
+    """按像素宽度截断纯文本。"""
+    if font.getlength(text) <= max_width:
+        return text
+    segments = truncate_segments([(text, (255, 255, 255, 255))], font, max_width, ellipsis)
+    return "".join(segment_text for segment_text, _ in segments)
+
+
+def draw_segments(
     draw: ImageDraw.ImageDraw,
-    segments: List[ColoredSegment],
+    segments: Sequence[ColoredSegment],
     position: Tuple[float, float],
     font: ImageFont.FreeTypeFont,
-    anchor: str,
-) -> None:
+    anchor: str = "lm",
+) -> float:
+    """逐段绘制彩色文本，返回绘制的总宽度。"""
     x, y = position
     horizontal_anchor = anchor[0] if anchor and anchor[0] in "lmr" else "l"
     vertical_anchor = anchor[1:] if anchor and len(anchor) > 1 else "a"
-    total_length = sum(draw.textlength(segment_text, font=font) for segment_text, _ in segments)
+    total_length = measure_segments(segments, font)
 
     if horizontal_anchor == "r":
         x -= total_length
@@ -209,7 +284,11 @@ def _draw_segments(
     segment_anchor = f"l{vertical_anchor}"
     for segment_text, color in segments:
         draw.text((x, y), segment_text, fill=color, font=font, anchor=segment_anchor)
-        x += draw.textlength(segment_text, font=font)
+        x += font.getlength(segment_text)
+    return total_length
+
+
+_draw_segments = draw_segments  # 兼容旧名字
 
 
 def draw_colored_title(
@@ -219,9 +298,13 @@ def draw_colored_title(
     font: ImageFont.FreeTypeFont,
     default_color: Color = (255, 255, 255, 255),
     anchor: str = "lm",
-) -> None:
+    max_width: Optional[float] = None,
+) -> float:
+    """绘制含 ``§`` 颜色码的文本。``max_width`` 非空时按像素截断。"""
     segments = parse_minecraft_formatting(text, default_color)
-    _draw_segments(draw, segments, position, font, anchor)
+    if max_width is not None:
+        segments = truncate_segments(segments, font, max_width)
+    return draw_segments(draw, segments, position, font, anchor)
 
 
 def draw_colored_title_html(
@@ -231,18 +314,78 @@ def draw_colored_title_html(
     font: ImageFont.FreeTypeFont,
     default_color: Color = (255, 255, 255, 255),
     anchor: str = "lm",
-) -> None:
+    max_width: Optional[float] = None,
+) -> float:
+    """绘制含 ``<font color=...>`` 的文本。``max_width`` 非空时按像素截断。"""
     segments = parse_minecraft_formatting(text, default_color, is_html=True)
-    _draw_segments(draw, segments, position, font, anchor)
+    if max_width is not None:
+        segments = truncate_segments(segments, font, max_width)
+    return draw_segments(draw, segments, position, font, anchor)
 
 
-def calculate_clean_length(text: str, font: ImageFont.FreeTypeFont, is_html: bool) -> int:
-    """计算去除 Minecraft/HTML 格式标记后的实际像素宽度。"""
-    segments = parse_minecraft_formatting(text, is_html=is_html)
-    return int(_segments_length(segments, font))
+def calculate_clean_length(text: str, font: ImageFont.FreeTypeFont, is_html: bool = False) -> int:
+    """去掉格式标记后的实际像素宽度。"""
+    return int(measure_segments(parse_minecraft_formatting(text, is_html=is_html), font))
 
 
-def _calculate_minecraft_length(text_with_mc_codes: str, font: ImageFont.FreeTypeFont) -> int:
-    """兼容旧调用：计算只包含 Minecraft § 码的字符串宽度。"""
-    segments = parse_minecraft_formatting(text_with_mc_codes)
-    return int(_segments_length(segments, font))
+def text_size(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont) -> Tuple[int, int]:
+    """文本的 (宽, 高)，高度取字体的实际墨水高度。"""
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return int(ceil(bbox[2] - bbox[0])), int(ceil(bbox[3] - bbox[1]))
+
+
+def draw_pill(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    position: Tuple[float, float],
+    font: ImageFont.FreeTypeFont,
+    background: Color,
+    foreground: Color,
+    *,
+    padding_x: int = 10,
+    padding_y: int = 5,
+    radius: int = 8,
+    anchor: str = "lt",
+    fixed_height: Optional[int] = None,
+) -> Tuple[int, int]:
+    """绘制一个圆角胶囊标签（Tag、验证方式徽章都用它）。
+
+    Args:
+        position: 依 ``anchor`` 解释。``lt`` = 左上角，``lm`` = 左侧垂直居中。
+        fixed_height: 指定后忽略文字高度，保证同一行的多个胶囊等高。
+
+    Returns:
+        ``(宽, 高)``，方便调用方继续往右排版。
+    """
+    text_width, text_height = text_size(draw, text, font)
+    width = text_width + 2 * padding_x
+    height = fixed_height if fixed_height is not None else text_height + 2 * padding_y
+
+    x, y = position
+    if anchor[0] == "r":
+        x -= width
+    elif anchor[0] == "m":
+        x -= width / 2
+    if len(anchor) > 1 and anchor[1] == "m":
+        y -= height / 2
+    elif len(anchor) > 1 and anchor[1] == "b":
+        y -= height
+
+    draw.rounded_rectangle((x, y, x + width, y + height), radius=radius, fill=background)
+    draw.text((x + width / 2, y + height / 2), text, font=font, fill=foreground, anchor="mm")
+    return int(width), int(height)
+
+
+def with_alpha(color: Color, alpha: int) -> Color:
+    """替换颜色的 alpha 通道。"""
+    red, green, blue = color[0], color[1], color[2]
+    return red, green, blue, max(0, min(255, int(alpha)))
+
+
+def blend(foreground: Color, background: Color, ratio: float) -> Color:
+    """按比例混合两个颜色，``ratio`` 为 0 时得到 ``background``。"""
+    ratio = max(0.0, min(1.0, ratio))
+    return tuple(  # type: ignore[return-value]
+        int(round(background[index] + (foreground[index] - background[index]) * ratio))
+        for index in range(4)
+    )

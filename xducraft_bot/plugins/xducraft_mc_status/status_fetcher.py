@@ -1,622 +1,521 @@
+"""从各个数据源获取 Minecraft 服务器状态。
+
+四个数据源：
+
+- ``protocol``：本机直连，走 Java 版状态协议。信息最全（含玩家样本 UUID，
+  验证方式探测就靠它），但要求机器人所在网络能连上服务器。
+- ``jsu`` / ``sjtu``：公共聚合 API，机器人连不上服务器时的兜底。
+- ``custom``：自建后端（见 ``scripts/mc_status_backend``）。
+- ``auto``：按 protocol → custom → jsu → sjtu 依次回退，任一在线即返回。
+
+**所有数据源的返回值都会过一遍 :func:`sanitize_status`。**
+外部 API 返回什么类型完全不由我们决定——``players`` 可能是 ``null``、``ping``
+可能是字符串、``sample`` 里可能没有 ``name``。以前这些脏数据会一路流到 Pillow
+绘图函数里，然后整条指令以 ``TypeError`` 结束、用户只看到一句“查询失败”。
+现在在入口就统一成确定的结构。
+"""
+
+from __future__ import annotations
+
 import asyncio
-import json
-import struct
-import time
-from contextlib import suppress
-from html import escape
-from typing import List, Dict, Any, Tuple
-from urllib.parse import urlparse
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
-from mcstatus import JavaServer
+from nonebot.log import logger
 
-from . import data_manager
+from xducraft_bot.shared import mc_protocol
+from xducraft_bot.shared.json_store import as_bool
+
+from . import auth_mode, data_manager
 from .constants import DEFAULT_SERVER_PRIORITY
 
-
-DEFAULT_SERVER_PORT = 25565
+DEFAULT_SERVER_PORT = mc_protocol.DEFAULT_SERVER_PORT
 STATUS_QUERY_TIMEOUT = 3.0
 SJTU_STATUS_API_URL = "https://mc.sjtu.cn/custom/serverlist/"
 JSU_STATUS_API_URL = "https://api.jsumc.fun/ping"
 
+#: 玩家样本最多渲染这么多个，防止某些服务器塞几百个假名字把图撑爆。
+MAX_RENDERED_SAMPLE = 32
+#: 单条文本字段的长度上限，挡住超长 MOTD / 版本号。
+MAX_TEXT_FIELD = 512
 
-def _is_tls_verification_error(error: Exception) -> bool:
-    """判断异常是否由 TLS 证书校验失败引起。"""
-    error_text = str(error).lower()
-    keywords = [
-        "certificate verify failed",
-        "certificateverifyfailed",
-        "self signed certificate",
-        "unable to get local issuer certificate",
-        "ssl: cert",
-    ]
-    return any(keyword in error_text for keyword in keywords)
-
-
-async def _request_custom_status(ip: str, api_url: str, verify_tls: bool) -> Dict[str, Any]:
-    """请求自定义 API，并补齐标准字段。"""
-    hostname, port = _parse_server_address(ip)
-
-    async with httpx.AsyncClient(timeout=STATUS_QUERY_TIMEOUT, verify=verify_tls) as client:
-        response = await client.get(api_url, params={"query": ip})
-        response.raise_for_status()
-        data = response.json()
-
-    if not isinstance(data, dict):
-        raise ValueError("自定义 API 返回格式异常")
-
-    data["original_query"] = ip
-    data["ip"] = ip
-    data.setdefault("hostname", hostname)
-    data.setdefault("port", port)
-    return data
+_TLS_ERROR_KEYWORDS = (
+    "certificate verify failed",
+    "certificateverifyfailed",
+    "self signed certificate",
+    "unable to get local issuer certificate",
+    "ssl: cert",
+)
 
 
-def _encode_varint(value: int) -> bytes:
-    """编码 Minecraft 协议使用的 VarInt。"""
-    encoded = bytearray()
-    if value < 0:
-        value = (1 << 32) + value
+# ==============================================================================
+# 归一化
+# ==============================================================================
 
-    while True:
-        current = value & 0x7F
-        value >>= 7
-        if value:
-            current |= 0x80
-        encoded.append(current)
-        if not value:
-            break
-
-    return bytes(encoded)
+def _clamp_text(value: Any, limit: int = MAX_TEXT_FIELD) -> str:
+    text = str(value if value is not None else "")
+    return text[:limit]
 
 
-async def _read_varint(reader: asyncio.StreamReader) -> int:
-    """读取 Minecraft 协议中的 VarInt。"""
-    num_read = 0
-    result = 0
+def _coerce_int(value: Any, default: int = 0, *, minimum: int = 0, maximum: int = 10 ** 9) -> int:
+    """把任意值转成合理范围内的 int。
 
-    while True:
-        current = (await reader.readexactly(1))[0]
-        result |= (current & 0x7F) << (7 * num_read)
-        num_read += 1
+    外部 API 见过的实际返回：``"12"``、``12.0``、``null``、``-1``、``1e9``。
+    """
+    try:
+        if isinstance(value, bool):
+            raise TypeError
+        number = int(float(value))
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, number))
 
-        if num_read > 5:
-            raise ValueError("VarInt 过长")
-        if (current & 0x80) == 0:
-            break
 
-    if result & (1 << 31):
-        result -= 1 << 32
+def _sanitize_players(raw: Any) -> Dict[str, Any]:
+    """把 players 归一化成 ``{"online": int, "max": int, "sample": [...]}``。"""
+    source = raw if isinstance(raw, dict) else {}
+    sample = mc_protocol.normalize_player_sample(source.get("sample"), limit=MAX_RENDERED_SAMPLE)
+    return {
+        "online": _coerce_int(source.get("online"), 0),
+        "max": _coerce_int(source.get("max"), 0),
+        "sample": [
+            {"name": _clamp_text(entry.get("name"), 64), **({"id": entry["id"]} if entry.get("id") else {})}
+            for entry in sample
+        ],
+    }
+
+
+def _sanitize_version(raw: Any) -> str:
+    """版本号可能是 str、``{"name": ...}``，也可能是 None。"""
+    if isinstance(raw, dict):
+        return _clamp_text(raw.get("name", "N/A"), 128)
+    if raw is None:
+        return "N/A"
+    return _clamp_text(raw, 128)
+
+
+def _sanitize_description(raw: Any) -> Any:
+    """description 保持 dict / str 两种渲染器认识的形态。"""
+    def clamp_normalized(value: Dict[str, Any]) -> Optional[Dict[str, str]]:
+        result: Dict[str, str] = {}
+        if value.get("html"):
+            result["html"] = _clamp_text(value["html"], MAX_TEXT_FIELD * 4)
+        if value.get("text"):
+            result["text"] = _clamp_text(value["text"], MAX_TEXT_FIELD)
+        return result or None
+
+    if isinstance(raw, dict):
+        result = clamp_normalized(raw)
+        # API 直接回了一个文本组件而不是我们的 {html,text} 结构。
+        if not result:
+            normalized = mc_protocol.normalize_description(raw)
+            return clamp_normalized(normalized)
+        return result
+    if isinstance(raw, list):
+        return clamp_normalized(mc_protocol.normalize_description(raw))
+    if isinstance(raw, str):
+        return _clamp_text(raw, MAX_TEXT_FIELD)
+    return None
+
+
+def sanitize_status(raw: Any, *, ip: str) -> Dict[str, Any]:
+    """把任意数据源的返回值收敛成渲染器可以无条件信任的结构。"""
+    source = raw if isinstance(raw, dict) else {}
+    hostname, port = mc_protocol.parse_server_address(ip)
+
+    result: Dict[str, Any] = {
+        "online": as_bool(source.get("online"), False),
+        "ip": ip,
+        "original_query": _clamp_text(source.get("original_query") or ip, 256),
+        "hostname": _clamp_text(source.get("hostname") or hostname, 256),
+        "port": _coerce_int(source.get("port"), port, minimum=0, maximum=65535),
+    }
+
+    if source.get("error"):
+        result["error"] = _clamp_text(source["error"], MAX_TEXT_FIELD)
+
+    if not result["online"]:
+        return result
+
+    result["ping"] = _coerce_int(source.get("ping"), 0, maximum=600_000)
+    result["version"] = _sanitize_version(source.get("version"))
+    result["players"] = _sanitize_players(source.get("players"))
+
+    description = _sanitize_description(source.get("description"))
+    if description:
+        result["description"] = description
+
+    for optional_key in ("favicon", "protocol", "tls_verify_bypassed", "enforces_secure_chat"):
+        if source.get(optional_key) is not None:
+            result[optional_key] = source[optional_key]
+
+    if source.get("source"):
+        result["source"] = _clamp_text(source["source"], 32)
+
     return result
 
 
-async def _fetch_raw_status_payload(
-    connect_host: str,
-    connect_port: int,
-    handshake_host: str,
-    handshake_port: int,
-) -> tuple[dict[str, Any], int]:
-    """直接请求 Java 版状态协议，返回原始 JSON 以及延迟。"""
-    started_at = time.perf_counter()
-    connection = asyncio.open_connection(connect_host, connect_port)
-    reader, writer = await asyncio.wait_for(connection, timeout=STATUS_QUERY_TIMEOUT)
-
-    try:
-        host_bytes = handshake_host.encode("utf-8")
-        handshake_packet = (
-            _encode_varint(0) +
-            _encode_varint(-1) +
-            _encode_varint(len(host_bytes)) + host_bytes +
-            struct.pack(">H", handshake_port) +
-            _encode_varint(1)
-        )
-        writer.write(_encode_varint(len(handshake_packet)) + handshake_packet)
-
-        request_packet = _encode_varint(0)
-        writer.write(_encode_varint(len(request_packet)) + request_packet)
-        await asyncio.wait_for(writer.drain(), timeout=STATUS_QUERY_TIMEOUT)
-
-        await asyncio.wait_for(_read_varint(reader), timeout=STATUS_QUERY_TIMEOUT)
-        packet_id = await asyncio.wait_for(_read_varint(reader), timeout=STATUS_QUERY_TIMEOUT)
-        if packet_id != 0:
-            raise ValueError(f"意外的状态包 ID: {packet_id}")
-
-        payload_length = await asyncio.wait_for(_read_varint(reader), timeout=STATUS_QUERY_TIMEOUT)
-        payload = await asyncio.wait_for(reader.readexactly(payload_length), timeout=STATUS_QUERY_TIMEOUT)
-        latency = int(round((time.perf_counter() - started_at) * 1000))
-        return json.loads(payload.decode("utf-8")), latency
-    finally:
-        writer.close()
-        with suppress(Exception):
-            await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
-
-
-def _parse_server_address(address: str) -> tuple[str, int]:
-    """解析服务器地址，并在缺失端口时回退到 Java 版默认端口。"""
-    parsed = urlparse(f"//{address}")
-    hostname = parsed.hostname or address
-    port = parsed.port or DEFAULT_SERVER_PORT
-    return hostname, port
-
-
-def _component_to_plain_text(component: Any) -> str:
-    """将 Minecraft 文本组件递归转换为纯文本。"""
-    if component is None:
-        return ""
-
-    if isinstance(component, str):
-        return component
-
-    if isinstance(component, list):
-        return "".join(_component_to_plain_text(item) for item in component)
-
-    if isinstance(component, dict):
-        text = str(component.get("text", ""))
-        extra = _component_to_plain_text(component.get("extra", []))
-        return text + extra
-
-    return str(component)
-
-
-def _component_to_html(component: Any, inherited_color: str | None = None) -> str:
-    """将 Minecraft 文本组件递归转换为现有渲染器可识别的 HTML/font 片段。"""
-    if component is None:
-        return ""
-
-    if isinstance(component, str):
-        return escape(component, quote=True).replace("\n", "<br>")
-
-    if isinstance(component, list):
-        return "".join(_component_to_html(item, inherited_color) for item in component)
-
-    if isinstance(component, dict):
-        current_color = component.get("color") or inherited_color
-        text = escape(str(component.get("text", "")), quote=True).replace("\n", "<br>")
-        if current_color and text:
-            text = f'<font color="{escape(str(current_color), quote=True)}">{text}</font>'
-        extra = _component_to_html(component.get("extra", []), current_color)
-        return text + extra
-
-    return escape(str(component), quote=True).replace("\n", "<br>")
-
-
-def _normalize_description(raw_description: Any) -> Dict[str, str]:
-    """将 mcstatus 返回的 description 适配为旧渲染器依赖的结构。"""
-    text = _component_to_plain_text(raw_description)
-    html = _component_to_html(raw_description)
-
-    normalized: Dict[str, str] = {}
-    if html:
-        normalized["html"] = html
-    if text:
-        normalized["text"] = text
-    return normalized
-
-
-def _normalize_player_sample(sample: Any) -> List[Dict[str, str]]:
-    """统一玩家示例列表的结构，兼容 dict 与对象两种返回形态。"""
-    if not sample:
-        return []
-
-    normalized_sample: List[Dict[str, str]] = []
-    for player in sample:
-        if isinstance(player, dict):
-            player_name = player.get("name")
-            player_id = player.get("id")
-        else:
-            player_name = getattr(player, "name", None)
-            player_id = getattr(player, "id", None)
-
-        if not player_name:
-            continue
-
-        normalized_player = {"name": str(player_name)}
-        if player_id is not None:
-            normalized_player["id"] = str(player_id)
-        normalized_sample.append(normalized_player)
-
-    return normalized_sample
-
-
-async def _get_single_server_status_via_protocol(ip: str) -> Dict[str, Any]:
-    """通过 Java 版状态协议直接获取单个 Minecraft 服务器的状态。"""
-    hostname, port = _parse_server_address(ip)
-    fallback_response = {
+def _offline_result(ip: str, error: str, source: str) -> Dict[str, Any]:
+    hostname, port = mc_protocol.parse_server_address(ip)
+    return {
         "online": False,
         "hostname": hostname,
         "port": port,
         "original_query": ip,
         "ip": ip,
+        "error": _clamp_text(error, MAX_TEXT_FIELD),
+        "source": source,
     }
 
+
+# ==============================================================================
+# 各数据源
+# ==============================================================================
+
+async def _fetch_via_protocol(ip: str) -> Dict[str, Any]:
+    """本机直连。"""
     try:
-        connection_candidates: list[tuple[str, int]] = []
-
-        try:
-            server = await JavaServer.async_lookup(ip, timeout=STATUS_QUERY_TIMEOUT)
-            connection_candidates.append((server.address.host, server.address.port))
-        except Exception:
-            pass
-
-        direct_target = (hostname, port)
-        if direct_target not in connection_candidates:
-            connection_candidates.append(direct_target)
-
-        last_error: Exception | None = None
-        attempt_errors: list[str] = []
-        raw_status: dict[str, Any] | None = None
-        latency: int | None = None
-        resolved_host_for_output = hostname
-        resolved_port_for_output = port
-
-        for connect_host, connect_port in connection_candidates:
-            try:
-                raw_status, latency = await _fetch_raw_status_payload(
-                    connect_host=connect_host,
-                    connect_port=connect_port,
-                    handshake_host=hostname,
-                    handshake_port=port,
-                )
-                resolved_host_for_output = connect_host
-                resolved_port_for_output = connect_port
-                break
-            except Exception as connect_error:
-                last_error = connect_error
-                attempt_errors.append(
-                    f"{connect_host}:{connect_port} -> {type(connect_error).__name__}: {connect_error}"
-                )
-
-        if raw_status is None or latency is None:
-            if attempt_errors:
-                raise RuntimeError("; ".join(attempt_errors))
-            if last_error is not None:
-                raise last_error
-            raise RuntimeError("状态查询失败")
-
-        players = raw_status.get("players", {}) if isinstance(raw_status.get("players"), dict) else {}
-        version = raw_status.get("version", {})
-        raw_description = raw_status.get("description")
-
-        response_data: Dict[str, Any] = {
-            **fallback_response,
-            "online": True,
-            "hostname": resolved_host_for_output,
-            "port": resolved_port_for_output,
-            "ping": latency,
-            "version": version.get("name", "N/A") if isinstance(version, dict) else str(version),
-            "protocol": version.get("protocol") if isinstance(version, dict) else None,
-            "players": {
-                "online": players.get("online", 0),
-                "max": players.get("max", 0),
-                "sample": _normalize_player_sample(players.get("sample")),
-            },
-        }
-
-        if raw_description is not None:
-            response_data["description_raw"] = raw_description
-            normalized_description = _normalize_description(raw_description)
-            if normalized_description:
-                response_data["description"] = normalized_description
-
-        favicon = raw_status.get("favicon")
-        if favicon:
-            response_data["favicon"] = favicon
-
-        return response_data
-    except Exception as e:
-        fallback_response["error"] = str(e)
-        return fallback_response
+        raw = await mc_protocol.query_status(ip, timeout=STATUS_QUERY_TIMEOUT)
+    except Exception as exc:  # query_status 自己不抛，这里只是最后一道保险
+        return _offline_result(ip, str(exc), "protocol")
+    raw["source"] = "protocol"
+    return sanitize_status(raw, ip=ip)
 
 
-async def _get_single_server_status_via_sjtu(ip: str) -> Dict[str, Any]:
-    """通过 SJTU 聚合 API 获取单个 Minecraft 服务器状态。"""
-    hostname, port = _parse_server_address(ip)
-    fallback_response = {
-        "online": False,
-        "hostname": hostname,
-        "port": port,
-        "original_query": ip,
-        "ip": ip,
-    }
-
-    async with httpx.AsyncClient(timeout=STATUS_QUERY_TIMEOUT) as client:
-        try:
+async def _fetch_via_sjtu(ip: str) -> Dict[str, Any]:
+    """SJTU 聚合 API。返回结构本身就接近我们的格式。"""
+    try:
+        async with httpx.AsyncClient(timeout=STATUS_QUERY_TIMEOUT) as client:
             response = await client.get(SJTU_STATUS_API_URL, params={"query": ip})
             response.raise_for_status()
             data = response.json()
-
-            if not isinstance(data, dict):
-                raise ValueError("SJTU API 返回格式异常")
-
-            data["original_query"] = ip
-            data["ip"] = ip
-            data.setdefault("hostname", hostname)
-            data.setdefault("port", port)
-            return data
-        except Exception as e:
-            fallback_response["error"] = str(e)
-            return fallback_response
+        if not isinstance(data, dict):
+            raise ValueError("SJTU API 返回格式异常")
+        data["source"] = "sjtu"
+        return sanitize_status(data, ip=ip)
+    except Exception as exc:
+        return _offline_result(ip, str(exc), "sjtu")
 
 
-async def _get_single_server_status_via_jsu(ip: str) -> Dict[str, Any]:
-    """通过 JSU API 获取单个 Minecraft 服务器状态。"""
-    hostname, port = _parse_server_address(ip)
-    fallback_response = {
-        "online": False,
-        "hostname": hostname,
-        "port": port,
-        "original_query": ip,
-        "ip": ip,
-    }
-
-    async with httpx.AsyncClient(timeout=STATUS_QUERY_TIMEOUT) as client:
-        try:
+async def _fetch_via_jsu(ip: str) -> Dict[str, Any]:
+    """JSU API。数据包在 ``info`` 里，需要自己拆一层。"""
+    try:
+        async with httpx.AsyncClient(timeout=STATUS_QUERY_TIMEOUT) as client:
             response = await client.get(JSU_STATUS_API_URL, params={"server": ip})
             response.raise_for_status()
             data = response.json()
 
-            if not isinstance(data, dict):
-                raise ValueError("JSU API 返回格式异常")
+        if not isinstance(data, dict):
+            raise ValueError("JSU API 返回格式异常")
+        info = data.get("info")
+        if not isinstance(info, dict):
+            raise ValueError("JSU API 缺少 info 字段")
 
-            info = data.get("info")
-            if not isinstance(info, dict):
-                raise ValueError("JSU API 缺少 info 字段")
+        target = str(data.get("target", "") or "").strip()
+        hostname, port = mc_protocol.parse_server_address(target or ip)
 
-            target = str(data.get("target", "") or "").strip()
-            target_hostname = hostname
-            target_port = port
-            if target:
-                target_hostname, target_port = _parse_server_address(target)
-
-            version = info.get("version", {}) if isinstance(info.get("version"), dict) else {}
-            players = info.get("players", {}) if isinstance(info.get("players"), dict) else {}
-            raw_description = info.get("description")
-
-            response_data: Dict[str, Any] = {
-                **fallback_response,
-                "online": True,
-                "hostname": target_hostname,
-                "port": target_port,
-                "ping": int(data.get("latency", 0) or 0),
-                "version": version.get("name", "N/A") if isinstance(version, dict) else str(version),
-                "protocol": version.get("protocol") if isinstance(version, dict) else None,
-                "players": {
-                    "online": players.get("online", 0),
-                    "max": players.get("max", 0),
-                    "sample": _normalize_player_sample(players.get("sample")),
-                },
-            }
-
-            if raw_description is not None:
-                response_data["description_raw"] = raw_description
-                normalized_description = _normalize_description(raw_description)
-                if normalized_description:
-                    response_data["description"] = normalized_description
-
-            favicon = info.get("favicon")
-            if favicon:
-                response_data["favicon"] = favicon
-
-            return response_data
-        except Exception as e:
-            fallback_response["error"] = str(e)
-            return fallback_response
+        merged = {
+            "online": True,
+            "hostname": hostname,
+            "port": port,
+            "original_query": ip,
+            "ip": ip,
+            "ping": data.get("latency", 0),
+            "version": info.get("version"),
+            "players": info.get("players"),
+            "description": info.get("description"),
+            "favicon": info.get("favicon"),
+            "source": "jsu",
+        }
+        version = info.get("version")
+        if isinstance(version, dict):
+            merged["protocol"] = version.get("protocol")
+        return sanitize_status(merged, ip=ip)
+    except Exception as exc:
+        return _offline_result(ip, str(exc), "jsu")
 
 
-async def _get_single_server_status_via_custom(ip: str, api_url: str) -> Dict[str, Any]:
-    """通过自定义后端 API 获取单个 Minecraft 服务器状态。"""
-    hostname, port = _parse_server_address(ip)
-    fallback_response = {
-        "online": False,
-        "hostname": hostname,
-        "port": port,
-        "original_query": ip,
-        "ip": ip,
-    }
+def _is_tls_verification_error(error: Exception) -> bool:
+    text = str(error).lower()
+    return any(keyword in text for keyword in _TLS_ERROR_KEYWORDS)
 
-    normalized_api_url = str(api_url).strip()
-    if not normalized_api_url:
-        fallback_response["error"] = "未配置自定义 API URL"
-        return fallback_response
+
+async def _request_custom(ip: str, api_url: str, verify_tls: bool) -> Dict[str, Any]:
+    async with httpx.AsyncClient(timeout=STATUS_QUERY_TIMEOUT, verify=verify_tls) as client:
+        response = await client.get(api_url, params={"query": ip})
+        response.raise_for_status()
+        data = response.json()
+    if not isinstance(data, dict):
+        raise ValueError("自定义 API 返回格式异常")
+    return data
+
+
+async def _fetch_via_custom(ip: str, api_url: str) -> Dict[str, Any]:
+    """自建后端。自签证书时会降级重试一次，并在结果里标注。"""
+    normalized_url = str(api_url or "").strip()
+    if not normalized_url:
+        return _offline_result(ip, "未配置自定义 API URL", "custom")
 
     try:
-        return await _request_custom_status(ip, normalized_api_url, verify_tls=True)
+        data = await _request_custom(ip, normalized_url, verify_tls=True)
     except Exception as first_error:
-        if _is_tls_verification_error(first_error):
-            try:
-                data = await _request_custom_status(ip, normalized_api_url, verify_tls=False)
-                data["tls_verify_bypassed"] = True
-                return data
-            except Exception as second_error:
-                fallback_response["error"] = (
-                    f"TLS 校验失败且重试未通过: verify=true -> {first_error}; verify=false -> {second_error}"
-                )
-                return fallback_response
+        if not _is_tls_verification_error(first_error):
+            return _offline_result(ip, str(first_error), "custom")
+        try:
+            data = await _request_custom(ip, normalized_url, verify_tls=False)
+            data["tls_verify_bypassed"] = True
+        except Exception as second_error:
+            return _offline_result(
+                ip,
+                f"TLS 校验失败且降级重试未通过: verify=true -> {first_error}; verify=false -> {second_error}",
+                "custom",
+            )
 
-        fallback_response["error"] = str(first_error)
-        return fallback_response
+    data["source"] = "custom"
+    return sanitize_status(data, ip=ip)
 
 
-def _is_successful_online_result(result: Dict[str, Any]) -> bool:
-    """判断某次查询结果是否成功在线。"""
+# ==============================================================================
+# 调度
+# ==============================================================================
+
+def _is_online(result: Dict[str, Any]) -> bool:
     return bool(result.get("online"))
 
 
-async def get_single_server_status(ip: str, group_id: int | None = None) -> Dict[str, Any]:
-    """根据群配置的数据源获取单个 Minecraft 服务器状态。"""
-    api_source = "protocol"
+async def get_single_server_status(ip: str, group_id: Optional[int] = None) -> Dict[str, Any]:
+    """按群配置的数据源查询单台服务器。"""
+    api_source = data_manager.DEFAULT_API_SOURCE
     custom_api_url = ""
     if group_id is not None:
         api_source = data_manager.get_status_api_source(group_id)
         custom_api_url, _ = data_manager.get_effective_status_api_url(group_id)
 
     if api_source == "custom":
-        return await _get_single_server_status_via_custom(ip, custom_api_url)
-
+        return await _fetch_via_custom(ip, custom_api_url)
     if api_source == "jsu":
-        return await _get_single_server_status_via_jsu(ip)
-
+        return await _fetch_via_jsu(ip)
     if api_source == "sjtu":
-        return await _get_single_server_status_via_sjtu(ip)
+        return await _fetch_via_sjtu(ip)
+    if api_source == "protocol":
+        return await _fetch_via_protocol(ip)
 
-    protocol_result = await _get_single_server_status_via_protocol(ip)
-    if api_source == "auto":
-        if _is_successful_online_result(protocol_result):
-            return protocol_result
+    return await _fetch_with_fallback(ip, custom_api_url)
 
-        custom_result: Dict[str, Any] | None = None
-        if custom_api_url:
-            custom_result = await _get_single_server_status_via_custom(ip, custom_api_url)
-            if _is_successful_online_result(custom_result):
-                return custom_result
 
-        jsu_result = await _get_single_server_status_via_jsu(ip)
-        if _is_successful_online_result(jsu_result):
-            return jsu_result
+async def _fetch_with_fallback(ip: str, custom_api_url: str) -> Dict[str, Any]:
+    """``auto``：依次尝试各数据源，第一个在线的即返回。
 
-        sjtu_result = await _get_single_server_status_via_sjtu(ip)
-        if _is_successful_online_result(sjtu_result):
-            return sjtu_result
+    全部失败时返回 protocol 的结果，但 ``error`` 里会汇总每个源的失败原因，
+    方便管理员用 ``/mcs diag`` 定位是网络不通还是服务器真的挂了。
+    """
+    attempts: List[Tuple[str, Dict[str, Any]]] = []
 
-        protocol_error = protocol_result.get("error")
-        custom_error = custom_result.get("error") if custom_result is not None else "未配置或未启用"
-        jsu_error = jsu_result.get("error")
-        sjtu_error = sjtu_result.get("error")
-        if protocol_error or custom_error or jsu_error or sjtu_error:
-            protocol_result["error"] = (
-                f"protocol: {protocol_error or '无错误信息'}; "
-                f"custom: {custom_error or '无错误信息'}; "
-                f"jsu: {jsu_error or '无错误信息'}; "
-                f"sjtu: {sjtu_error or '无错误信息'}"
-            )
+    protocol_result = await _fetch_via_protocol(ip)
+    if _is_online(protocol_result):
         return protocol_result
+    attempts.append(("protocol", protocol_result))
 
+    if custom_api_url:
+        custom_result = await _fetch_via_custom(ip, custom_api_url)
+        if _is_online(custom_result):
+            return custom_result
+        attempts.append(("custom", custom_result))
+
+    jsu_result = await _fetch_via_jsu(ip)
+    if _is_online(jsu_result):
+        return jsu_result
+    attempts.append(("jsu", jsu_result))
+
+    sjtu_result = await _fetch_via_sjtu(ip)
+    if _is_online(sjtu_result):
+        return sjtu_result
+    attempts.append(("sjtu", sjtu_result))
+
+    summary = "; ".join(
+        f"{name}: {result.get('error') or '无错误信息'}" for name, result in attempts
+    )
+    protocol_result["error"] = _clamp_text(summary, MAX_TEXT_FIELD * 2)
+    protocol_result["source"] = "auto"
     return protocol_result
 
 
 def _merge_results_into_tree(
     server_nodes: List[Dict[str, Any]],
-    status_map: Dict[str, Dict[str, Any]]
+    status_map: Dict[str, Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """
-    递归地遍历服务器树，并将状态数据注入其中。
-    """
-    enriched_tree = []
-    for node in server_nodes:
-        ip = node['ip']
-        status_data = status_map.get(ip, {"online": False, "original_query": ip, "error": "未找到状态"})
+    """把状态数据合并回服务器树（不改动入参）。
 
-        # 正确处理多线服务器非常重要。
-        # 状态API解析的是单个IP，但我们想显示用户原始的查询地址。
-        # 原始树节点 (`node`) 持有用户配置的元数据 (tag, comment等)。
-        # 状态数据 (`status_data`) 持有实时的查询结果。
-        # 我们合并它们，优先使用用户配置的元数据。
-        enriched_node = {
-            **status_data,  # 实时状态 (在线情况, 玩家, motd等)
-            **node,         # 用户配置 (ip, comment, tag等会覆盖状态中的同名字段)
+    合并方向很关键：**用户配置覆盖实时状态**。多线服务器的状态是按解析后的
+    单个 IP 查的，但展示时要用用户填的原始地址和标签。
+    """
+    enriched: List[Dict[str, Any]] = []
+    for node in server_nodes:
+        ip = node.get("ip", "")
+        status = status_map.get(ip) or {
+            "online": False,
+            "original_query": ip,
+            "error": "未找到状态",
         }
 
-        if 'children' in node and node['children']:
-            enriched_node['children'] = _merge_results_into_tree(node['children'], status_map)
-
-        enriched_tree.append(enriched_node)
-    return enriched_tree
+        merged = {**status, **{key: value for key, value in node.items() if key != "children"}}
+        children = node.get("children") or []
+        if children:
+            merged["children"] = _merge_results_into_tree(children, status_map)
+        enriched.append(merged)
+    return enriched
 
 
 async def get_all_servers_status(group_id: int) -> List[Dict[str, Any]]:
-    """
-    获取一个群组所有服务器的状态，并返回一个数据丰富的树形结构。
-    """
-    # 1. 获取原始的服务器树形结构
+    """查询一个群的全部服务器，返回带状态的树。"""
     server_tree = data_manager.get_server_list(group_id)
     if not server_tree:
         return []
 
-    # 2. 扁平化树以获取所有用于API调用的唯一IP
-    flat_server_list = data_manager.get_all_servers_flat(group_id)
-    if not flat_server_list:
+    flat_servers = data_manager.get_all_servers_flat(group_id)
+    if not flat_servers:
         return []
 
-    # 3. 并发获取所有服务器的状态
-    tasks = [get_single_server_status(server['ip'], group_id=group_id) for server in flat_server_list]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # 同一个 IP 可能在树里出现多次，去重避免重复查询。
+    unique_ips = list(dict.fromkeys(server.get("ip", "") for server in flat_servers if server.get("ip")))
 
-    # 4. 创建一个从IP到状态结果的映射，便于查找
+    results = await asyncio.gather(
+        *(get_single_server_status(ip, group_id=group_id) for ip in unique_ips),
+        return_exceptions=True,
+    )
+
     status_map: Dict[str, Dict[str, Any]] = {}
-    for res in results:
-        if not isinstance(res, Exception) and 'original_query' in res:
-            status_map[res['original_query']] = res
+    for ip, result in zip(unique_ips, results):
+        if isinstance(result, Exception):
+            logger.warning("[MCStatus] 查询 {} 抛出异常: {}", ip, result)
+            status_map[ip] = _offline_result(ip, f"{type(result).__name__}: {result}", "unknown")
+        else:
+            status_map[ip] = result
 
-    # 5. 递归地将状态结果合并回原始的树形结构中
     merged_tree = _merge_results_into_tree(server_tree, status_map)
+
+    if data_manager.get_auth_detect_enabled(group_id):
+        # 探测失败/超时都不影响出图，annotate_servers 内部已经吞掉了所有异常。
+        await auth_mode.annotate_servers(merged_tree)
 
     return merged_tree
 
 
+# ==============================================================================
+# 展示前处理
+# ==============================================================================
+
+ANONYMOUS_PLAYER_UUID = "00000000-0000-0000-0000-000000000000"
+
+
 def preprocess_server_data(server_data_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """递归地处理树，修正玩家数量和处理匿名玩家。"""
-    processed_list = []
-    for res in server_data_list:
-        if res.get('online') and res.get('players', {}).get('sample'):
-            valid_players = [
-                p for p in res['players']['sample']
-                if p.get('id') != '00000000-0000-0000-0000-000000000000'
+    """去掉匿名占位玩家。返回新结构，不修改入参。"""
+    processed: List[Dict[str, Any]] = []
+    for node in server_data_list:
+        if not isinstance(node, dict):
+            continue
+        current = dict(node)
+
+        players = current.get("players")
+        if current.get("online") and isinstance(players, dict) and players.get("sample"):
+            filtered = [
+                player for player in players["sample"]
+                if isinstance(player, dict) and player.get("id") != ANONYMOUS_PLAYER_UUID
             ]
-            res['players']['sample'] = valid_players
+            current["players"] = {**players, "sample": filtered}
 
-        if 'children' in res and res['children']:
-            res['children'] = preprocess_server_data(res['children'])
+        children = current.get("children")
+        if children:
+            current["children"] = preprocess_server_data(children)
 
-        processed_list.append(res)
-    return processed_list
+        processed.append(current)
+    return processed
 
 
 def get_server_display_key(server_info: Dict[str, Any]) -> Tuple:
-    """
-    生成一个用于在同一层级对服务器进行排序的元组键。
-    优先级是主要的排序键。
-    """
-    return (
-        server_info.get('priority', DEFAULT_SERVER_PRIORITY),
-        server_info.get('ip', '')  # 后备，用于稳定排序
-    )
+    """同层排序键。priority 越小越靠前。"""
+    try:
+        priority = int(server_info.get("priority", DEFAULT_SERVER_PRIORITY))
+    except (TypeError, ValueError):
+        priority = DEFAULT_SERVER_PRIORITY
+    return (priority,)
 
 
 def prepare_data_for_display(
     server_tree: List[Dict[str, Any]],
-    show_all_servers: bool
+    show_all_servers: bool,
 ) -> List[Dict[str, Any]]:
-    """
-    递归地过滤和排序服务器树，用于最终渲染。
-    """
-    display_tree = []
+    """过滤 + 排序，产出最终要画的树。不修改入参。"""
+    display_tree: List[Dict[str, Any]] = []
     for node in server_tree:
-        # 如果一个服务器被标记为忽略，则跳过它和它的整个分支。
-        if node.get('ignore_in_list', False):
+        if not isinstance(node, dict) or node.get("ignore_in_list"):
             continue
 
-        # 首先，递归地处理子节点
-        if 'children' in node and node['children']:
-            node['children'] = prepare_data_for_display(node['children'], show_all_servers)
+        current = dict(node)
+        children = current.get("children")
+        if children:
+            current["children"] = prepare_data_for_display(children, show_all_servers)
 
-        # 然后，根据在线状态决定当前节点是否应被包含
-        is_online = node.get('online', False)
-        has_visible_children = bool(node.get('children'))
+        is_online = bool(current.get("online"))
+        has_visible_children = bool(current.get("children"))
 
         if show_all_servers or is_online or has_visible_children:
-            display_tree.append(node)
+            display_tree.append(current)
 
-    # 对当前层级的节点进行排序
-    # display_tree.sort(key=get_server_display_key)
+    # 稳定排序：所有 priority 相同时完全保持 Web UI 里拖拽出来的顺序，
+    # 只有显式设过 priority 的服务器才会被提前。
+    display_tree.sort(key=get_server_display_key)
     return display_tree
 
 
-def get_active_server_count(display_data: list[dict[str, Any]]) -> int:
-    """在显示树中递归地计算拥有活跃玩家列表的服务器数量。"""
-    count = 0
-    for server_data in display_data:
-        if server_data.get('online') and server_data.get('players', {}).get('online') != 0 and server_data.get('players', {}).get('sample'):
-            count += 1
-        if 'children' in server_data and server_data['children']:
-            count += get_active_server_count(server_data['children'])
-    return count
+def _iter_nodes(nodes: List[Dict[str, Any]]):
+    for node in nodes:
+        yield node
+        children = node.get("children")
+        if children:
+            yield from _iter_nodes(children)
+
+
+def has_player_list(server_data: Dict[str, Any]) -> bool:
+    """该服务器是否要额外画一行“正在游玩”。"""
+    if not server_data.get("online"):
+        return False
+    players = server_data.get("players")
+    if not isinstance(players, dict):
+        return False
+    return bool(players.get("online")) and bool(players.get("sample"))
+
+
+def get_active_server_count(display_data: List[Dict[str, Any]]) -> int:
+    """有活跃玩家列表的服务器数量。"""
+    return sum(1 for node in _iter_nodes(display_data) if has_player_list(node))
+
+
+def summarize(display_data: List[Dict[str, Any]]) -> Dict[str, int]:
+    """整棵树的汇总数据，用于图片顶部的概览条。"""
+    total = online = players_online = players_max = 0
+    for node in _iter_nodes(display_data):
+        total += 1
+        if not node.get("online"):
+            continue
+        online += 1
+        players = node.get("players")
+        if isinstance(players, dict):
+            players_online += _coerce_int(players.get("online"), 0)
+            players_max += _coerce_int(players.get("max"), 0)
+
+    return {
+        "total": total,
+        "online": online,
+        "offline": total - online,
+        "players_online": players_online,
+        "players_max": players_max,
+    }
+
+
+__all__ = [
+    "STATUS_QUERY_TIMEOUT", "SJTU_STATUS_API_URL", "JSU_STATUS_API_URL",
+    "sanitize_status", "get_single_server_status", "get_all_servers_status",
+    "preprocess_server_data", "prepare_data_for_display", "get_server_display_key",
+    "get_active_server_count", "has_player_list", "summarize",
+]

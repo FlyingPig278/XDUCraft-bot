@@ -1,144 +1,187 @@
+"""``/mcs edit`` 用的配置压缩 / 解压。
+
+配置要塞进一条 QQ 消息里的 URL，而 QQ 对**可点击**链接的长度有上限，超了就
+变成不可点的纯文本。所以这里不是随便 base64 一下，而是：
+
+1. 把服务器树转成**位置编码的紧凑数组**（省掉所有 JSON 键名）；
+2. 空值一律写成 ``0``（比 ``""`` 短，且 zlib 对重复的 0 压得更狠）；
+3. zlib level 9 + URL-safe base64，去掉 ``=`` 填充。
+
+紧凑数组的下标是**和 Vue 前端共享的协议**（见 mcs-editor 的 ``src/App.vue``），
+新增字段只能往**后面追加**，并且两端都必须用 ``len(item) > 下标`` 做兼容判断：
+
+- 老前端读新数据：多出来的尾部元素被忽略，功能不变；
+- 新后端读老数据：下标越界，回退到默认值。
+
+绝对不要在中间插入下标，那会让所有旧链接错位。
+"""
+
+from __future__ import annotations
+
+import base64
 import json
 import zlib
-import base64
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional
 
-# --- 紧凑数组索引常量 (与 App.vue 保持一致) ---
+from nonebot.log import logger
+
+from .auth_mode import code_to_mode, mode_to_code
+
+# --- 紧凑数组下标（与 mcs-editor/src/App.vue 保持一致）---
 S_IP = 0
 S_COMMENT = 1
 S_TAG = 2
 S_TAG_COLOR = 3
 S_IGNORE = 4
-S_HIDE_IP = 5      # 新增
-S_DISPLAY_NAME = 6 # 新增
-S_CHILDREN = 7     # 原来的 S_CHILDREN 索引后移
+S_HIDE_IP = 5
+S_DISPLAY_NAME = 6
+S_CHILDREN = 7
+S_AUTH_MODE = 8  # 新增：登录验证方式，整数编码，缺省 0 = 未配置
+
+#: 顶层结构下标：[footer, show_offline_by_default, servers]
+T_FOOTER = 0
+T_SHOW_OFFLINE = 1
+T_SERVERS = 2
+
+#: 解压时的防御上限，挡住恶意构造的“压缩炸弹”。
+MAX_INFLATED_BYTES = 2 * 1024 * 1024
+MAX_TREE_DEPTH = 12
 
 
-def _build_tree(servers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """将扁平的服务器列表转换为嵌套的树形结构。"""
-    server_map = {s['ip']: {**s, 'children': []} for s in servers}
-    tree = []
-    for server in server_map.values():
-        if server.get('parent_ip'):
-            parent = server_map.get(server['parent_ip'])
-            if parent:
-                parent['children'].append(server)
-            else:
-                tree.append(server)  # 孤儿节点，视为根节点
-        else:
-            tree.append(server)
-    return tree
+def _item_get(item: List[Any], index: int, default: Any = None) -> Any:
+    """按下标安全取值，越界返回默认值（这就是向后兼容的关键）。"""
+    if not isinstance(item, list) or len(item) <= index:
+        return default
+    return item[index]
 
 
-def _flatten_tree(servers_tree: List[Dict[str, Any]], parent_ip: str = "") -> List[Dict[str, Any]]:
-    """将嵌套的服务器树转换回扁平列表。"""
-    flat_list = []
-    for server in servers_tree:
-        server['parent_ip'] = parent_ip
-        children = server.pop('children', [])
-        # 机器人数据模型不需要这些UI特定的字段
-        server.pop('tag_color_with_hash', None)
-        server.pop('selectedPreset', None)
-        flat_list.append(server)
-        if children:
-            flat_list.extend(_flatten_tree(children, server['ip']))
-    return flat_list
-
-
-def _json_to_compact_array(servers: List[Dict[str, Any]]) -> List[Any]:
-    """递归地将服务器树转换为紧凑数组格式。"""
-    if not servers:
+def _json_to_compact_array(servers: Any, _depth: int = 0) -> List[Any]:
+    """服务器树 -> 紧凑数组。空值统一写 0 以压缩体积。"""
+    if not isinstance(servers, list) or _depth > MAX_TREE_DEPTH:
         return []
-    return [
-        [
-            s.get('ip'),
-            s.get('comment') or 0,
-            s.get('tag') or 0,
-            s.get('tag_color') or 0,
-            1 if s.get('ignore_in_list') else 0,
-            1 if s.get('hide_ip') else 0,         # 新增
-            s.get('display_name') or 0,           # 新增
-            _json_to_compact_array(s.get('children', [])) or 0
-        ]
-        for s in servers
-    ]
+
+    compact: List[Any] = []
+    for server in servers:
+        if not isinstance(server, dict):
+            continue
+        compact.append([
+            server.get("ip") or "",
+            server.get("comment") or 0,
+            server.get("tag") or 0,
+            server.get("tag_color") or 0,
+            1 if server.get("ignore_in_list") else 0,
+            1 if server.get("hide_ip") else 0,
+            server.get("display_name") or 0,
+            _json_to_compact_array(server.get("children"), _depth + 1) or 0,
+            mode_to_code(server.get("auth_mode")),
+        ])
+    return compact
 
 
-def _compact_array_to_json(compact_data: List[Any]) -> List[Dict[str, Any]]:
-    """递归地将紧凑数组格式转换回服务器树。"""
-    if not compact_data:
+def _compact_array_to_json(compact_data: Any, _depth: int = 0) -> List[Dict[str, Any]]:
+    """紧凑数组 -> 服务器树。"""
+    if not isinstance(compact_data, list) or _depth > MAX_TREE_DEPTH:
         return []
-    servers = []
+
+    servers: List[Dict[str, Any]] = []
     for item in compact_data:
-        children_data = item[S_CHILDREN] if len(item) > S_CHILDREN else [] # 兼容旧格式，没有hide_ip/display_name时
-        children = _compact_array_to_json(children_data) if isinstance(children_data, list) else []
+        if not isinstance(item, list) or not item:
+            continue
 
-        server = {
-            'ip': item[S_IP],
-            'comment': item[S_COMMENT] or "",
-            'tag': item[S_TAG] or "",
-            'tag_color': item[S_TAG_COLOR] or "",
-            'ignore_in_list': item[S_IGNORE] == 1,
-            'hide_ip': item[S_HIDE_IP] == 1 if len(item) > S_HIDE_IP else False,          # 新增
-            'display_name': item[S_DISPLAY_NAME] or "" if len(item) > S_DISPLAY_NAME else "", # 新增
-            'children': children
-        }
-        servers.append(server)
+        ip = _item_get(item, S_IP, "")
+        if not ip:
+            continue
+
+        children_raw = _item_get(item, S_CHILDREN, [])
+        servers.append({
+            "ip": str(ip),
+            "comment": str(_item_get(item, S_COMMENT, "") or ""),
+            "tag": str(_item_get(item, S_TAG, "") or ""),
+            "tag_color": str(_item_get(item, S_TAG_COLOR, "") or ""),
+            "ignore_in_list": _item_get(item, S_IGNORE, 0) == 1,
+            "hide_ip": _item_get(item, S_HIDE_IP, 0) == 1,
+            "display_name": str(_item_get(item, S_DISPLAY_NAME, "") or ""),
+            "auth_mode": code_to_mode(_item_get(item, S_AUTH_MODE, 0)),
+            "children": _compact_array_to_json(children_raw, _depth + 1)
+            if isinstance(children_raw, list) else [],
+        })
     return servers
 
 
-def _to_url_safe_base64(b64_bytes: bytes) -> str:
-    """将标准的Base64转换为URL安全的Base64。"""
-    return b64_bytes.replace(b'+', b'-').replace(b'/', b'_').rstrip(b'=').decode('ascii')
+def _to_url_safe_base64(raw: bytes) -> str:
+    return base64.b64encode(raw).replace(b"+", b"-").replace(b"/", b"_").rstrip(b"=").decode("ascii")
 
 
-def _from_url_safe_base64(url_safe_b64_str: str) -> bytes:
-    """将URL安全的Base64转换回标准的Base64。"""
-    b64_str = url_safe_b64_str.replace('-', '+').replace('_', '/')
-    padding = -len(b64_str) % 4
-    if padding:
-        b64_str += '=' * padding
-    return b64_str.encode('ascii')
+def _from_url_safe_base64(text: str) -> bytes:
+    normalized = str(text).strip().replace("-", "+").replace("_", "/")
+    padding = -len(normalized) % 4
+    return (normalized + "=" * padding).encode("ascii")
 
 
 def compress_config(group_data: Dict[str, Any]) -> str:
-    """
-    将一个群组的配置字典压缩成URL安全的字符串。
-    """
+    """把群配置压成 URL 安全的短字符串；失败返回空串。"""
     try:
-        # 此设置在机器人端未使用，硬编码为0以兼容旧版
-        show_offline_by_default = 0
-        server_tree = group_data.get('servers', []) # 数据已经是树形结构，直接使用
-        compact_servers = _json_to_compact_array(server_tree)
         compact_structure = [
-            group_data.get('footer') or 0,
-            show_offline_by_default,
-            compact_servers
+            group_data.get("footer") or 0,
+            1 if group_data.get("show_offline_by_default") else 0,
+            _json_to_compact_array(group_data.get("servers")),
         ]
-        json_string = json.dumps(compact_structure, separators=(',', ':'))
-        compressed = zlib.compress(json_string.encode('utf-8'), level=9)
-        base64_encoded = base64.b64encode(compressed)
-        return _to_url_safe_base64(base64_encoded)
-    except Exception as e:
-        print(f"压缩失败: {e}")
+        payload = json.dumps(compact_structure, separators=(",", ":"), ensure_ascii=False)
+        compressed = zlib.compress(payload.encode("utf-8"), level=9)
+        return _to_url_safe_base64(compressed)
+    except Exception as exc:
+        logger.error("[ConfigCoder] 压缩配置失败: {}", exc)
         return ""
 
 
-def decompress_config(encoded_string: str) -> Dict[str, Any] | None:
+def decompress_config(encoded_string: str) -> Optional[Dict[str, Any]]:
+    """把压缩字符串还原成群配置；任何异常都返回 None。
+
+    注意返回值里**只有** payload 真正携带的键。``import_group_data`` 会据此
+    保留未携带的群级设置（查询源、API URL 等），不会把它们清空。
     """
-    将一个URL安全的字符串解压回群组的配置字典。
-    """
-    try:
-        base64_bytes = _from_url_safe_base64(encoded_string)
-        binary_string = base64.b64decode(base64_bytes)
-        inflated = zlib.decompress(binary_string).decode('utf-8')
-        compact_structure = json.loads(inflated)
-        server_tree = _compact_array_to_json(compact_structure[2])
-        return {
-            'footer': compact_structure[0] or "",
-            'show_offline_by_default': compact_structure[1] == 1,
-            'servers': server_tree
-        }
-    except Exception as e:
-        print(f"解压失败: {e}")
+    if not str(encoded_string or "").strip():
         return None
+
+    try:
+        binary = base64.b64decode(_from_url_safe_base64(encoded_string), validate=False)
+    except Exception as exc:
+        logger.info("[ConfigCoder] base64 解码失败: {}", exc)
+        return None
+
+    try:
+        decompressor = zlib.decompressobj()
+        inflated = decompressor.decompress(binary, MAX_INFLATED_BYTES)
+        if decompressor.unconsumed_tail:
+            logger.warning("[ConfigCoder] 解压结果超过 {} 字节上限，拒绝导入。", MAX_INFLATED_BYTES)
+            return None
+        if not decompressor.eof or decompressor.unused_data:
+            logger.info("[ConfigCoder] 压缩数据不完整或包含多余尾部，拒绝导入。")
+            return None
+        payload = inflated.decode("utf-8")
+    except Exception as exc:
+        logger.info("[ConfigCoder] zlib 解压失败: {}", exc)
+        return None
+
+    try:
+        structure = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        logger.info("[ConfigCoder] 解压后不是合法 JSON: {}", exc)
+        return None
+
+    if not isinstance(structure, list) or len(structure) <= T_SERVERS:
+        logger.info("[ConfigCoder] 紧凑结构格式不正确。")
+        return None
+
+    return {
+        "footer": str(structure[T_FOOTER] or ""),
+        "show_offline_by_default": structure[T_SHOW_OFFLINE] == 1,
+        "servers": _compact_array_to_json(structure[T_SERVERS]),
+    }
+
+
+__all__ = [
+    "compress_config", "decompress_config",
+    "S_IP", "S_COMMENT", "S_TAG", "S_TAG_COLOR", "S_IGNORE",
+    "S_HIDE_IP", "S_DISPLAY_NAME", "S_CHILDREN", "S_AUTH_MODE",
+]

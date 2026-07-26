@@ -1,158 +1,213 @@
 # -*- coding: utf-8 -*-
 
-"""
-项目常量配置文件
-该文件集中管理了生成服务器状态图片所需的所有硬编码值，
-包括文件路径、颜色代码、布局尺寸和绘图偏移量等。
-通过在此处修改值，可以轻松地调整最终图片的视觉样式。
+"""状态图片的全部视觉常量。
+
+改这里就能调整最终图片的样式，不需要动绘图逻辑。
+
+布局采用**卡片式**：每台服务器是一张圆角卡片，卡片内部的坐标都是相对卡片
+左上角的偏移量，这样调整卡片高度时不用逐个改绝对坐标。
 """
 
 import os
 
 # ==============================================================================
-# 1. 核心路径设置 (Core Paths)
+# 1. 核心路径
 # ==============================================================================
 
-# 获取当前文件所在的目录路径
 _current_dir = os.path.dirname(__file__)
 
-# 字体资源文件所在的文件夹路径
-FONTS_PATH = os.path.join(_current_dir, 'resources', 'fonts')
-
-# 在线服务器的默认图标所在路径，用于没有 favicon 时回退显示
-DEFAULT_SERVER_ICON_PATH = os.path.join(_current_dir, 'resources', 'images', 'default_server_icon.png')
-
-# 离线服务器的默认图标所在路径，用于没有 favicon 时回退显示
-OFFLINE_SERVER_ICON_PATH = os.path.join(_current_dir, 'resources', 'images', 'offline_server_icon.png')
-
-# 生成的服务器状态图片最终保存的文件夹路径
-SAVE_IMG_DIR = os.path.join(_current_dir, 'data', 'images')
+FONTS_PATH = os.path.join(_current_dir, "resources", "fonts")
+DEFAULT_SERVER_ICON_PATH = os.path.join(_current_dir, "resources", "images", "default_server_icon.png")
+OFFLINE_SERVER_ICON_PATH = os.path.join(_current_dir, "resources", "images", "offline_server_icon.png")
+SAVE_IMG_DIR = os.path.join(_current_dir, "data", "images")
 
 # ==============================================================================
-# 2. 颜色定义 (Color Definitions)
+# 2. 配色
 # ==============================================================================
 
-# --- 基础UI颜色 ---
-# 使用 RGBA 格式 (Red, Green, Blue, Alpha)，取值范围 0-255
-CANVAS_BACKGROUND_COLOR = (46, 33, 23, 255)  # 整个图片画布最底层的背景色
-MAIN_CONTENT_BACKGROUND_COLOR = (15, 11, 7, 255)  # 中间服务器列表区域的深色背景
-PRIMARY_TEXT_COLOR = (255, 255, 255, 255)  # 主要文本颜色，如顶部大标题
-SECONDARY_TEXT_COLOR = (192, 192, 192, 255)  # 次要文本颜色，如 IP、玩家数、版本号等
-CREDIT_TEXT_COLOR = (200, 200, 200, 255)  # 图片底部 "Powered by" 文字的颜色
-PING_COLOR_GREEN = (0, 255, 33, 255)  # Ping 值较低（<100ms）时显示的绿色
-PING_COLOR_RED = (255, 85, 85, 255)  # Ping 值较高或服务器离线时显示的红色
+# --- 画布 ---
+CANVAS_BACKGROUND_COLOR = (28, 23, 18, 255)      # 最底层背景
+HEADER_TOP_COLOR = (58, 42, 29, 255)             # 顶部标题栏渐变起点
+HEADER_BOTTOM_COLOR = (36, 28, 21, 255)          # 顶部标题栏渐变终点
+MAIN_CONTENT_BACKGROUND_COLOR = (20, 16, 12, 255)  # 列表区底色
 
-# --- 组件特定颜色 ---
-TAG_DEFAULT_BACKGROUND = '#282828'  # 服务器 Tag 的默认背景色（十六进制字符串）
-TAG_TEXT_COLOR = (255, 255, 255, 255)  # Tag 默认文字色（深色背景）
-TAG_TEXT_BRIGHTNESS_THRESHOLD = 186  # 感知亮度 >= 186 时视为浅色背景，切换为深色文字以提升可读性
-CONNECTOR_LINE_COLOR = (150, 150, 150, 255)  # 连接主服和子服的线条颜色
+# --- 卡片 ---
+CARD_BACKGROUND_COLOR = (33, 27, 21, 255)          # 在线服务器卡片
+CARD_BACKGROUND_OFFLINE_COLOR = (26, 23, 21, 255)  # 离线服务器卡片（更暗更灰）
+CARD_BORDER_COLOR = (56, 46, 35, 255)
+CARD_BORDER_OFFLINE_COLOR = (44, 39, 35, 255)
+CARD_RADIUS = 10
+#: 卡片左侧的状态条：一眼区分在线/离线
+CARD_ACCENT_WIDTH = 5
+CARD_ACCENT_ONLINE_COLOR = (76, 200, 96, 255)
+CARD_ACCENT_OFFLINE_COLOR = (128, 92, 84, 255)
 
-# --- MOTD 颜色代码映射 ---
-# 用于解析 Minecraft MOTD 中的颜色代码
+# --- 文字 ---
+PRIMARY_TEXT_COLOR = (255, 255, 255, 255)
+SECONDARY_TEXT_COLOR = (176, 168, 156, 255)   # 比旧值稍暖，深底上对比度更好
+MUTED_TEXT_COLOR = (128, 120, 110, 255)
+OFFLINE_TEXT_COLOR = (140, 128, 120, 255)
+CREDIT_TEXT_COLOR = (120, 112, 102, 255)
+HEADER_SUBTITLE_COLOR = (196, 176, 148, 255)
+
+# --- 状态色 ---
+PING_COLOR_GREEN = (86, 211, 100, 255)    # < 100ms
+PING_COLOR_YELLOW = (232, 190, 74, 255)   # 100 ~ 200ms
+PING_COLOR_RED = (240, 104, 96, 255)      # >= 200ms 或离线
+PING_THRESHOLD_GOOD = 100
+PING_THRESHOLD_FAIR = 200
+
+PLAYER_ONLINE_DOT_COLOR = (86, 211, 100, 255)
+
+# --- 组件 ---
+TAG_DEFAULT_BACKGROUND = "#3A3A3A"
+TAG_TEXT_COLOR = (255, 255, 255, 255)
+TAG_TEXT_BRIGHTNESS_THRESHOLD = 186  # 感知亮度 >= 此值视为浅底，改用深色文字
+CONNECTOR_LINE_COLOR = (92, 78, 62, 255)
+
+# --- MOTD 颜色代码 ---
 MINECRAFT_COLOR_CODES = {
-    '0': (0, 0, 0, 255), '1': (0, 0, 170, 255), '2': (0, 170, 0, 255), '3': (0, 170, 170, 255),
-    '4': (170, 0, 0, 255), '5': (170, 0, 170, 255), '6': (255, 170, 0, 255), '7': (170, 170, 170, 255),
-    '8': (85, 85, 85, 255), '9': (85, 85, 255, 255), 'a': (85, 255, 85, 255), 'b': (85, 255, 255, 255),
-    'c': (255, 85, 85, 255), 'd': (255, 85, 255, 255), 'e': (255, 255, 85, 255), 'f': (255, 255, 255, 255),
-    'r': (255, 255, 255, 255),  # 'r' (reset) 通常重置为白色
+    "0": (0, 0, 0, 255), "1": (0, 0, 170, 255), "2": (0, 170, 0, 255), "3": (0, 170, 170, 255),
+    "4": (170, 0, 0, 255), "5": (170, 0, 170, 255), "6": (255, 170, 0, 255), "7": (170, 170, 170, 255),
+    "8": (85, 85, 85, 255), "9": (85, 85, 255, 255), "a": (85, 255, 85, 255), "b": (85, 255, 255, 255),
+    "c": (255, 85, 85, 255), "d": (255, 85, 255, 255), "e": (255, 255, 85, 255), "f": (255, 255, 255, 255),
+    "r": (255, 255, 255, 255),
 }
 
 HTML_COLOR_CODES = {
-    'black': (0, 0, 0, 255), 'dark_blue': (0, 0, 170, 255), 'dark_green': (0, 170, 0, 255),
-    'dark_aqua': (0, 170, 170, 255),
-    'dark_red': (170, 0, 0, 255), 'dark_purple': (170, 0, 170, 255), 'gold': (255, 170, 0, 255),
-    'gray': (170, 170, 170, 255),
-    'dark_gray': (85, 85, 85, 255), 'blue': (85, 85, 255, 255), 'green': (85, 255, 85, 255),
-    'aqua': (85, 255, 255, 255),
-    'red': (255, 85, 85, 255), 'light_purple': (255, 85, 255, 255), 'yellow': (255, 255, 85, 255),
-    'white': (255, 255, 255, 255),
+    "black": (0, 0, 0, 255), "dark_blue": (0, 0, 170, 255), "dark_green": (0, 170, 0, 255),
+    "dark_aqua": (0, 170, 170, 255), "dark_red": (170, 0, 0, 255), "dark_purple": (170, 0, 170, 255),
+    "gold": (255, 170, 0, 255), "gray": (170, 170, 170, 255), "dark_gray": (85, 85, 85, 255),
+    "blue": (85, 85, 255, 255), "green": (85, 255, 85, 255), "aqua": (85, 255, 255, 255),
+    "red": (255, 85, 85, 255), "light_purple": (255, 85, 255, 255), "yellow": (255, 255, 85, 255),
+    "white": (255, 255, 255, 255),
 }
 
 # ==============================================================================
-# 3. 布局与尺寸 (Layout & Dimensions)
+# 3. 布局
 # ==============================================================================
 
-# --- 画布与主结构 ---
-IMAGE_WIDTH = 1140  # 图片的总宽度（单位：像素）
-LAYOUT_BASE_PADDING = 60  # 内容区域距离图片左右边缘的基础内边距
-LAYOUT_TITLE_AREA_HEIGHT = 120  # 顶部标题区域的高度
-LAYOUT_FOOTER_AREA_HEIGHT = 60  # 底部页脚文本区域的高度
-LAYOUT_CREDIT_AREA_HEIGHT = 60  # 最底部 "Powered by" 区域的高度
+IMAGE_WIDTH = 1200
+LAYOUT_BASE_PADDING = 48          # 卡片距画布左右边缘
+LAYOUT_TITLE_AREA_HEIGHT = 150    # 顶部标题+概览栏
+LAYOUT_LEGEND_AREA_HEIGHT = 62    # 验证方式图例栏（无徽章时不占高度）
+LAYOUT_FOOTER_AREA_HEIGHT = 62    # 自定义页脚
+LAYOUT_CREDIT_AREA_HEIGHT = 56    # 底部署名
 
-# --- 服务器列表布局 ---
-SERVER_ROW_HEIGHT = 140  # 每个服务器信息行的基础高度（不包含展开的玩家列表）
-PLAYER_LIST_OFFSET = 35  # 当服务器有在线玩家列表时，为其额外增加的垂直高度
-OFFSET_SERVER_LIST_START_Y = 30  # 服务器列表距离顶部标题区域下方的额外间距
-CHILD_INDENT_PX = 100  # 子服务器相对于主服务器的水平缩进距离
+OFFSET_SERVER_LIST_START_Y = 22   # 列表区顶部留白
 
-# --- 服务器行内部元素布局 ---
-LAYOUT_SERVER_ICON_SIZE = 80  # 服务器图标的尺寸（宽度和高度）
-ICON_TEXT_SPACING = 20  # 服务器图标与其右侧文本（Tag/MOTD）之间的水平间距
+# --- 卡片 ---
+CARD_HEIGHT = 128                 # 基础卡片高度
+CARD_GAP = 12                     # 卡片之间的垂直间距
+PLAYER_ROW_EXTRA_HEIGHT = 36      # 有“正在游玩”一行时额外增加的高度
+CHILD_INDENT_PX = 88              # 子服务器的水平缩进
 
-# --- 文本垂直偏移量 (相对于每行的顶部 `current_y`) ---
-OFFSET_IP_Y = 52  # IP/域名文本的垂直偏移
-OFFSET_PLAYER_COUNT_Y = 32  # 在线玩家数文本的垂直偏移（右对齐）
-OFFSET_VERSION_Y = 64  # 版本信息文本的垂直偏移（右对齐）
-OFFSET_PLAYER_LIST_Y = 96  # 在线玩家列表文本的垂直偏移
+#: 兼容旧调用：一整行（卡片 + 间距）占用的高度。
+SERVER_ROW_HEIGHT = CARD_HEIGHT + CARD_GAP
+PLAYER_LIST_OFFSET = PLAYER_ROW_EXTRA_HEIGHT
 
-# --- 组件特定布局 ---
-PLAYER_LIST_DOT_SPACING = 8  # 在线玩家列表前的绿色圆点与文字之间的间距
-TAG_PADDING_X = 12  # Tag 背景框内部的水平内边距（左右各加 12px）
-TAG_PADDING_Y = 6  # Tag 背景框内部的垂直内边距（上下各加 6px）
-CONNECTOR_LINE_THICKNESS = 2  # 主服与子服之间连接线的粗细
+# --- 卡片内部（相对卡片左上角）---
+CARD_PADDING_X = 18
+LAYOUT_SERVER_ICON_SIZE = 76
+CARD_ICON_OFFSET_Y = 26
+ICON_TEXT_SPACING = 20
+#: 图标右侧的文本起始 x
+CARD_TEXT_OFFSET_X = CARD_PADDING_X + LAYOUT_SERVER_ICON_SIZE + ICON_TEXT_SPACING
+
+OFFSET_MOTD_CENTER_Y = 46         # 第一行：Tag + MOTD
+OFFSET_IP_CENTER_Y = 90           # 第二行：IP + 验证方式徽章
+OFFSET_PLAYER_LIST_CENTER_Y = 146  # 展开的“正在游玩”行
+
+#: 右侧信息列（右对齐，相对卡片右边缘）
+OFFSET_PING_CENTER_Y = 38
+OFFSET_PLAYER_COUNT_CENTER_Y = 70
+OFFSET_VERSION_CENTER_Y = 100
+#: 右侧信息列预留的宽度，MOTD 截断时要避开。
+#: 版本号（"Requires MC 1.8 / 1.21" 这类）是这一列里最长的，按它来定。
+RIGHT_COLUMN_RESERVED_WIDTH = 230
+
+# --- Tag 徽标 ---
+TAG_PADDING_X = 12
+TAG_PADDING_Y = 6
+TAG_RADIUS = 4
+
+# --- 验证方式徽章 ---
+AUTH_BADGE_PADDING_X = 10
+AUTH_BADGE_PADDING_Y = 5
+AUTH_BADGE_RADIUS = 9
+AUTH_BADGE_SPACING = 14           # 与左侧 IP 文本的间距
+#: 未确认（仅按配置显示）的徽章降低不透明度，和实测确认的区分开
+AUTH_BADGE_UNCONFIRMED_ALPHA = 150
+
+# --- 其他 ---
+PLAYER_LIST_DOT_SPACING = 8
+CONNECTOR_LINE_THICKNESS = 2
 
 # ==============================================================================
-# 4. 逻辑与数据默认值 (Logic & Data Defaults)
+# 4. 逻辑默认值
 # ==============================================================================
 
-# 服务器默认排序优先级，数值越小越靠前
 DEFAULT_SERVER_PRIORITY = 100
 
-# 前端Web UI的基础URL，用于生成快捷导入链接
+#: Web 编辑器地址，``/mcs edit`` 会拼上压缩后的配置生成链接。
 WEB_UI_BASE_URL = "https://edit.flyingpig278.com/"
 
+#: 生成的图片保留时长（秒）。超过就清掉，避免 data/images 无限增长。
+RENDERED_IMAGE_TTL = 10 * 60
+
 # ==============================================================================
-# 5. 帮助文本 (Usage)
+# 5. 帮助文本
 # ==============================================================================
 
-USAGE_USER= """命令：
-/mcs : 查询群聊所有在线服务器状态
-/mcs <IP> : 查询单个服务器状态
-/mcs all : 查询所有已添加服务器状态
-/mcs list : 查看已添加的服务器列表
-/mcs help : 查看帮助信息"""
-USAGE_ADMIN= """【Web编辑器 (推荐)】
-推荐使用Web编辑器进行编辑
-/mcs edit (export, editor): 生成配置链接并在Web UI中编辑
-/mcs import <压缩字符串>: 从Web UI或备份中导入配置
+USAGE_USER = """【查询】
+/mcs — 查询本群在线服务器
+/mcs all — 连同离线服务器一起显示
+/mcs <IP> — 查询单个服务器
+/mcs list — 查看已添加的服务器列表
+/mcs auth — 查看各服务器的登录验证方式
+/mcs help — 显示本帮助"""
+
+USAGE_ADMIN = """【Web 编辑器（推荐）】
+/mcs edit — 生成配置链接，在网页里拖拽编辑
+  编辑完成后按页面提示，私聊机器人发送导入命令
 ---
-【查询命令】
-/mcs: 查询群聊所有在线服务器状态
-/mcs <IP>: 查询单个服务器状态
-/mcs all: 查询所有已添加服务器状态
-/mcs list: 查看已添加的服务器列表
+【查询】
+/mcs — 查询本群在线服务器
+/mcs all — 连同离线服务器一起显示
+/mcs <IP> — 查询单个服务器
+/mcs list — 查看服务器列表
+/mcs auth — 查看各服务器的登录验证方式
 ---
-【快捷命令】
-/mcs add <IP>: 添加服务器
-/mcs remove <IP>: 移除服务器
-/mcs source: 查看当前生效状态查询源（群级/全局）
-/mcs source set <protocol|sjtu|jsu|custom|auto>: 设置本群状态查询源
-/mcs source clear: 清空本群状态查询源覆盖
-/mcs source global set <protocol|sjtu|jsu|custom|auto>: 设置全局默认状态查询源
-/mcs source global clear: 清空全局默认状态查询源（恢复 protocol）
-/mcs api: 查看当前生效的自定义 API URL
-/mcs api set <url>: 设置本群自定义 API URL
-/mcs api clear: 清空本群自定义 API URL
-/mcs api global set <url>: 设置全局默认 API URL
-/mcs api global clear: 清空全局默认 API URL
+【服务器增删】
+/mcs add <IP> — 添加服务器
+/mcs remove <IP> — 移除服务器
 ---
-【高级/调试命令】
-/mcs set <IP> <attr> <value>: 设置服务器属性 (支持: tag, tag_color, comment, priority, ignore_in_list, hide_ip, display_name)
-/mcs clear <IP> <attr>: 清空/重置服务器属性 (支持: tag, tag_color, comment, priority, ignore_in_list, hide_ip, display_name)
-/mcs footer <文本>: 设置页脚文本
-/mcs footer clear: 清除页脚文本
-/mcs export_json: 导出原始JSON配置 (用于排查)
+【登录验证方式】
+/mcs auth — 查看本群所有服务器的验证方式
+/mcs auth set <IP> <验证方式> — 指定某台服务器的验证方式
+/mcs auth clear <IP> — 改回自动探测
+/mcs auth default <验证方式|clear> — 设置本群默认验证方式
+/mcs auth detect on|off — 开关自动探测
+  验证方式可填：正版 / MUA / 外置 / 离线 / 混合
 ---
-【帮助】
-/mcs help: 查看本帮助信息"""
+【数据源】
+/mcs source — 查看当前生效的查询源
+/mcs source set <protocol|sjtu|jsu|custom|auto> — 设置本群查询源
+/mcs source clear — 清除本群覆盖，回退全局
+/mcs source global set|clear <...> — 设置/清除全局默认
+/mcs api set|clear <url> — 配置自定义后端地址
+/mcs api global set|clear <url> — 配置全局默认后端地址
+---
+【显示与开关】
+/mcs set <IP> <属性> <值> — tag / tag_color / comment / display_name /
+  auth_mode / hide_ip / ignore_in_list / priority
+/mcs clear <IP> <属性> — 重置某个属性
+/mcs footer <文本> — 设置图片页脚
+/mcs footer clear — 清除页脚
+/mcs quiet on|off — 管理指令回执是否走私聊（默认开，避免群里刷屏）
+---
+【排查】
+/mcs diag — 查看本群配置与各数据源连通性
+/mcs export_json — 私聊导出原始 JSON 配置
+---
+/mcs help — 显示本帮助"""

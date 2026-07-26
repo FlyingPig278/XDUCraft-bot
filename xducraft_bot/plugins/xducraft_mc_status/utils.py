@@ -1,25 +1,23 @@
+"""地址校验等小工具。
+
+``is_admin`` 现在住在 :mod:`xducraft_bot.shared.permissions`——词云、猪猪图、
+happy_bot 三个插件曾经为了一个权限函数 import 整个 MC 状态插件，那是明显的
+分层错误。这里保留一个再导出，老的 import 路径继续可用。
+"""
+
+from __future__ import annotations
+
 import ipaddress
 import re
 from urllib.parse import urlparse
 
-from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
-from nonebot.permission import SUPERUSER
+from xducraft_bot.shared.permissions import can_manage, is_admin, is_superuser  # noqa: F401
 
-# 屏蔽危险网站
+#: 明确不允许查询的域名后缀。
 BLACKLISTED_PATTERNS = [
-    'gov.cn',
-    'mil.cn',
+    "gov.cn",
+    "mil.cn",
 ]
-
-async def is_admin(bot: Bot, event: GroupMessageEvent) -> bool:
-    """检查用户是否是群管理员、群主或超级用户。"""
-    # 检查是否是超级用户
-    if await SUPERUSER(bot, event):
-        return True
-    # 检查是否是群管理员或群主
-    if isinstance(event, GroupMessageEvent):
-        return event.sender.role in ["admin", "owner"]
-    return False
 
 
 def is_valid_server_address(address: str) -> bool:
@@ -84,7 +82,21 @@ def is_valid_server_address(address: str) -> bool:
 
 
 def is_valid_hex_color(color_str: str) -> bool:
-    """
-    检查字符串是否是有效的6位十六进制颜色代码（不区分大小写）。
-    """
-    return bool(re.fullmatch(r'^[0-9a-fA-F]{6}$', color_str.strip()))
+    """是否是合法的 6 位十六进制颜色（不区分大小写，可带 ``#``）。"""
+    return bool(re.fullmatch(r"[0-9a-fA-F]{6}", str(color_str or "").strip().lstrip("#")))
+
+
+def is_valid_api_url(url: str) -> bool:
+    """是否是可用作自定义后端的 http(s) 地址。"""
+    try:
+        parsed = urlparse(str(url or "").strip())
+    except ValueError:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+__all__ = [
+    "is_admin", "is_superuser", "can_manage",
+    "is_valid_server_address", "is_valid_hex_color", "is_valid_api_url",
+    "BLACKLISTED_PATTERNS",
+]

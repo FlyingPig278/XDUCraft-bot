@@ -1,74 +1,79 @@
+"""XDUCraft Minecraft 服务器状态查询。
+
+``/mcs`` 的统一入口。真正的子命令实现都在 :mod:`.handlers`。
+"""
+
+from __future__ import annotations
+
 from nonebot import on_command
-from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, PrivateMessageEvent, Message, MessageEvent
+from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageEvent, PrivateMessageEvent
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 
-# 从 handlers 导入子命令处理逻辑
-from .handlers import SUBCOMMAND_HANDLERS, handle_query_all, handle_query_single, handle_private_import
-# 从 data_manager 导入需要在主命令中直接使用的函数
-from .data_manager import get_show_offline_by_default
+from xducraft_bot.shared import feature_gate
 
-# --- 唯一的命令匹配器 ---
-mc_status = on_command("mcs", aliases={"mcstatus", "服务器", "状态"}, block=True, priority=4)
+from .data_manager import get_show_offline_by_default
+from .handlers import SUBCOMMAND_HANDLERS, handle_private_import, handle_query_all, handle_query_single
 
 __plugin_meta__ = PluginMetadata(
     name="XDUCraft_mc_status",
-    description="为XDUCraft提供服务器状态查询功能",
-    usage="""【用户命令】
-/mcs: 查询服务器状态
-/mcs <IP>: 查询单个服务器
-/mcs all: 查询所有服务器
-/mcs list: 查看服务器列表
-
-【管理员命令】
-/mcs edit: (私聊)获取配置链接以在Web UI中编辑
-/mcs add <IP>: 快速添加服务器
-/mcs remove <IP>: 快速移除服务器
-/mcs source ... : 配置状态查询源（群级/全局）
-/mcs api ... : 配置自定义状态 API 链接
-...更多命令请使用 /mcs help 查看""",
+    description="Minecraft 服务器状态查询，支持多线服务器树、MOTD 彩色渲染与登录验证方式展示",
+    usage="/mcs 查询状态 · /mcs help 查看完整帮助",
 )
 
+FEATURE_KEY = "mc_status"
 
-# --- 命令统一入口 ---
+feature_gate.register(feature_gate.Feature(
+    key=FEATURE_KEY,
+    name="MC 服务器状态",
+    description="/mcs 查询 Minecraft 服务器状态",
+    # 指令驱动，不会主动发言，所以默认开启；管理员仍可按群关掉。
+    default_enabled=True,
+    passive=False,
+))
+
+mc_status = on_command("mcs", aliases={"mcstatus", "服务器", "状态"}, block=True, priority=4)
+
+
 @mc_status.handle()
 async def handle_entry(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
-    """
-    命令统一分发器
-    根据消息类型（私聊/群聊）分发到不同的处理器
-    """
+    """按消息来源分发到私聊 / 群聊处理器。"""
     arg_list = args.extract_plain_text().strip().split()
 
-    # --- 私聊消息处理 ---
     if isinstance(event, PrivateMessageEvent):
-        if arg_list and arg_list[0].lower() == 'import':
-            # 调用在 handlers.py 中定义的私聊导入处理器
+        if arg_list and arg_list[0].lower() == "import":
             await handle_private_import(bot, event, arg_list)
-        else:
-            await mc_status.finish("私聊中仅支持 'import' 操作。")
+        await mc_status.finish(
+            "私聊里只支持导入配置。\n请先在群里发送 /mcs edit 拿到编辑链接，改完再回来发送导入命令。"
+        )
 
-    # --- 群聊消息处理 ---
-    elif isinstance(event, GroupMessageEvent):
-        if not arg_list:
-            show_all = get_show_offline_by_default(event.group_id)
-            await handle_query_all(bot, event, show_all)
-            return
+    if not isinstance(event, GroupMessageEvent):
+        return
 
-        subcommand = arg_list[0].lower()
+    # 功能隔离：没启用的群里一声不吭地退出，不做任何回复。
+    if not feature_gate.is_enabled(FEATURE_KEY, event.group_id):
+        return
 
-        if subcommand == 'import':
-            await mc_status.finish("配置导入功能已移至私聊，请先使用 /mcs edit 获取链接，然后在私聊中根据提示操作。")
-            return
+    if not arg_list:
+        await handle_query_all(bot, event, get_show_offline_by_default(event.group_id))
 
-        if subcommand in SUBCOMMAND_HANDLERS:
-            # 调用在 handlers.py 中定义的子命令处理器
-            await SUBCOMMAND_HANDLERS[subcommand](bot, event, arg_list)
-        elif subcommand == "all" and len(arg_list) == 1:
-            await handle_query_all(bot, event, True)
-        elif len(arg_list) == 1:
-            # 如果不是任何已知的子命令，则视为查询单个服务器
-            await handle_query_single(bot, event, arg_list[0])
-        else:
-            # 未知命令格式
-            await mc_status.finish("未知命令，使用 /mcs help 查看帮助")
-        
+    subcommand = arg_list[0].lower()
+
+    if subcommand == "import":
+        await mc_status.finish(
+            "配置导入已移到私聊进行。\n请先在本群发送 /mcs edit，然后按私信里的提示操作。"
+        )
+
+    if subcommand in SUBCOMMAND_HANDLERS:
+        await SUBCOMMAND_HANDLERS[subcommand](bot, event, arg_list)
+
+    if subcommand == "all" and len(arg_list) == 1:
+        await handle_query_all(bot, event, True)
+
+    if len(arg_list) == 1:
+        # 不是已知子命令，那就当成要查的服务器地址。
+        await handle_query_single(bot, event, arg_list[0])
+
+    await mc_status.finish(
+        f"不认识的命令：{' '.join(arg_list[:2])}\n发送 /mcs help 查看可用命令。"
+    )
