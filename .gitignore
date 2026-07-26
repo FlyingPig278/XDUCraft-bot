@@ -60,6 +60,7 @@ dist/
 *.egg-info/
 node_modules/
 /output/
+/.playwright-cli/
 
 # mcs-editor 使用自己的 Git 仓库管理
 /mcs-editor/
