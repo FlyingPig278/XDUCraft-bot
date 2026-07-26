@@ -29,6 +29,9 @@
 # VS Code
 .vscode/
 
+# Claude Code 本机权限配置
+.claude/settings.local.json
+
 # 操作系统文件
 .DS_Store
 Thumbs.db
