@@ -4,7 +4,9 @@
 # 实际运行时的环境配置文件，通常包含 QQ 号或密钥等
 .env
 .env.*
+!.env.example
 !.env.prod.example
+!**/.env.example
 
 # 插件运行时产生的数据，如缓存、图片输出、数据库文件
 **/data/*
@@ -19,6 +21,11 @@
 # ------------------------------------
 # 虚拟环境目录
 .venv/
+*.py[cod]
+*$py.class
+.ruff_cache/
+.mypy_cache/
+.pyright/
 
 # ------------------------------------
 # IDE/编辑器/操作系统生成的文件
@@ -35,12 +42,27 @@
 # 操作系统文件
 .DS_Store
 Thumbs.db
+Desktop.ini
 
 # ------------------------------------
 # 测试和构建缓存
 # ------------------------------------
 .pytest_cache/
 __pycache__/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# 构建与本地工具输出
+build/
+dist/
+*.egg-info/
+node_modules/
+/output/
+
+# mcs-editor 使用自己的 Git 仓库管理
+/mcs-editor/
 
 **/App.vue
 
