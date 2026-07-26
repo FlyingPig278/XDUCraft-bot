@@ -85,7 +85,7 @@ A Minecraft server status query plugin for NoneBot, specially designed for XDUCr
 ### 🐷 猪猪图插件（xducraft_pig_bot）
 
 - 自动推送：可按群开关，每 6 小时随机推送 1 张猪猪图。
-- 手动查询：`/pig [关键词]`，匹配到多张时随机返回 1 张。
+- 手动查询：`/pig [关键词]`；不带关键词时随机返回 1 张，匹配多张时以合并转发返回。
 - 管理命令（群管理/群主/SUPERUSER）：
   - `/pig auto on|off`：开关自动推送
   - `/pig query on|off`：开关手动查询
@@ -102,11 +102,46 @@ A Minecraft server status query plugin for NoneBot, specially designed for XDUCr
   - `/wc on`：开启本群词云记录与自动推送
   - `/wc off`：关闭本群词云记录与自动推送
   - `/wc status`：查看本群状态
-  - `/wc gen [today|yesterday|YYYY-MM-DD|YYYY-MM]`：手动生成并发送词云（默认 today）
+  - `/wc gen [today|yesterday|YYYY-MM-DD|YYYY-MM|all]`：手动生成并发送词云（默认 today）
 
 词云插件支持 `retention_days` 配置项（默认 1095 天），可按需长期保留聊天记录。
 
 配置示例：`xducraft_bot/plugins/xducraft_wordcloud/data/wordcloud_config.json.example`。
+
+### 🎛️ 统一功能开关（xducraft_features）
+
+- `/功能`：查看本群所有插件的启用状态。
+- `/功能 on <功能名>`、`/功能 off <功能名>`：群管理员统一开关功能。
+- `/功能 reset <功能名>`：清除使用共享存储的群级覆盖，回到默认值。
+- 被动响应或主动推送类功能默认关闭；MC 更新推送仍仅允许 SUPERUSER 修改。
+
+猪猪图查询/推送、词云、MC 更新、MC 状态、表情回应、关键词回复和反撤回均已接入此面板。
+
+### 🧩 关键词回复（xducraft_keyword）
+
+- 默认关闭，管理员使用 `/关键词 on` 或 `/功能 on 关键词回复` 开启。
+- `/关键词 add <关键词> <回复>`：添加本群规则，回复支持文字、图片和表情。
+- `/关键词 del|show <关键词>`：删除或查看规则。
+- `/关键词 mode <关键词> <包含|完全|开头|正则>`：调整匹配方式。
+- `/关键词 cooldown <秒>`：设置本群默认冷却时间，避免重复触发刷屏。
+- `/关键词 global ...`：SUPERUSER 管理所有已启用群共享的全局规则。
+
+### 🕵️ 反撤回（xducraft_anti_recall）
+
+- 默认关闭，只缓存明确开启的群；群内不会公开播报撤回内容。
+- 群管理员使用 `/反撤回 on|off|status|clear` 管理本群。
+- 群成员私聊机器人发送 `/撤回 [群号|条数]` 查询；机器人会再次校验查询者的群成员身份。
+- 支持文字、图片/表情和合并转发，撤回媒体会在链接失效前保存到本地。
+
+### ⛏️ MC 服务器状态（xducraft_mc_status）
+
+- `/mcs`、`/mcs all`、`/mcs <地址>`：查询本群服务器或指定服务器。
+- `/mcs auth`：查看正版、MUA、第三方外置、离线或混合登录方式；管理员可显式配置，也可基于在线玩家样本自动探测。
+- `/mcs source`、`/mcs api`：按群或全局选择本地协议、公共 API 或自建后端。
+- `/mcs edit`：私聊获取网页编辑链接；编辑会话 30 分钟过期且只允许导入一次。
+- `/mcs diag`：查看配置、缓存和各状态源连通性。
+
+自建查询后端见 `scripts/mc_status_backend/README.md`。
 
 ### ❓ 常见问题 (FAQ)
 
