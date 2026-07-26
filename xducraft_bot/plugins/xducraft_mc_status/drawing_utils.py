@@ -22,6 +22,9 @@ ColoredSegment = Tuple[str, Color]
 LEGACY_COLOR_CODES = frozenset("0123456789abcdef")
 LEGACY_FORMAT_CODES = frozenset("klmno")
 LEGACY_HEX_DIGITS = frozenset("0123456789abcdef")
+# 多行 MOTD 压成一行时使用的逻辑分隔符。绘制时会把它替换为几何方块，
+# 不读取字体文件里的对应字形，避免 Minecraft AE 的符号映射影响外观。
+MOTD_LINE_SEPARATOR_MARK = "■"
 
 
 def _as_rgba(color) -> Color:
@@ -178,9 +181,7 @@ def parse_minecraft_formatting(
     default_color: Color = (255, 255, 255, 255),
     *,
     is_html: bool = False,
-    # 多行 MOTD 压成一行时的分隔符。Minecraft AE 的 U+00B7 字形映射异常，
-    # 会被画成类似字母 ``u`` 的形状；U+2022 在这套字体里显示为正常圆点。
-    line_separator: str = " • ",
+    line_separator: str = f" {MOTD_LINE_SEPARATOR_MARK} ",
 ) -> List[ColoredSegment]:
     """把 Minecraft legacy/HTML 文本解析成可供 Pillow 绘制的彩色分段。"""
     normalized_default = _as_rgba(default_color)
@@ -198,9 +199,27 @@ def parse_minecraft_formatting(
     return segments
 
 
+def _square_separator_size(font: ImageFont.FreeTypeFont) -> int:
+    """方块边长随字号缩放，但完全不采用字体内的方块字形。"""
+    font_size = int(getattr(font, "size", 18) or 18)
+    return max(4, round(font_size * 0.24))
+
+
+def _formatted_text_length(text: str, font: ImageFont.FreeTypeFont) -> float:
+    """测量带逻辑方块分隔符的文本，保证宽度和实际绘制一致。"""
+    if MOTD_LINE_SEPARATOR_MARK not in text:
+        return font.getlength(text)
+
+    parts = text.split(MOTD_LINE_SEPARATOR_MARK)
+    return (
+        sum(font.getlength(part) for part in parts)
+        + (len(parts) - 1) * _square_separator_size(font)
+    )
+
+
 def measure_segments(segments: Sequence[ColoredSegment], font: ImageFont.FreeTypeFont) -> float:
     """分段文本的总像素宽度。"""
-    return sum(font.getlength(segment_text) for segment_text, _ in segments)
+    return sum(_formatted_text_length(segment_text, font) for segment_text, _ in segments)
 
 
 _segments_length = measure_segments  # 兼容旧名字
@@ -234,7 +253,7 @@ def truncate_segments(
 
     for segment_text, color in segments:
         last_color = color
-        segment_width = font.getlength(segment_text)
+        segment_width = _formatted_text_length(segment_text, font)
         if used + segment_width <= budget:
             truncated.append((segment_text, color))
             used += segment_width
@@ -242,7 +261,11 @@ def truncate_segments(
 
         kept = []
         for character in segment_text:
-            character_width = font.getlength(character)
+            character_width = (
+                _square_separator_size(font)
+                if character == MOTD_LINE_SEPARATOR_MARK
+                else font.getlength(character)
+            )
             if used + character_width > budget:
                 break
             kept.append(character)
@@ -283,8 +306,33 @@ def draw_segments(
 
     segment_anchor = f"l{vertical_anchor}"
     for segment_text, color in segments:
-        draw.text((x, y), segment_text, fill=color, font=font, anchor=segment_anchor)
-        x += font.getlength(segment_text)
+        if MOTD_LINE_SEPARATOR_MARK not in segment_text:
+            draw.text((x, y), segment_text, fill=color, font=font, anchor=segment_anchor)
+            x += font.getlength(segment_text)
+            continue
+
+        parts = segment_text.split(MOTD_LINE_SEPARATOR_MARK)
+        for index, part in enumerate(parts):
+            if part:
+                draw.text((x, y), part, fill=color, font=font, anchor=segment_anchor)
+                x += font.getlength(part)
+            if index == len(parts) - 1:
+                continue
+
+            square_size = _square_separator_size(font)
+            # 用同一字体的可见字高确定垂直中心，但方块本身由 Pillow 直接画。
+            reference_box = draw.textbbox((x, y), "M", font=font, anchor=segment_anchor)
+            center_y = (reference_box[1] + reference_box[3]) / 2
+            draw.rectangle(
+                (
+                    round(x),
+                    round(center_y - square_size / 2),
+                    round(x + square_size - 1),
+                    round(center_y + square_size / 2 - 1),
+                ),
+                fill=color,
+            )
+            x += square_size
     return total_length
 
 

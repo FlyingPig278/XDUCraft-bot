@@ -224,8 +224,8 @@ def _draw_footer_and_credit(
 ) -> None:
     if footer_text and footer_top is not None:
         draw.text((LAYOUT_BASE_PADDING, footer_top + LAYOUT_FOOTER_AREA_HEIGHT // 2),
-                  truncate_text(footer_text, FONT_ZH_SUMMARY, IMAGE_WIDTH - 2 * LAYOUT_BASE_PADDING),
-                  fill=SECONDARY_TEXT_COLOR, font=FONT_ZH_SUMMARY, anchor="lm")
+                  truncate_text(footer_text, FONT_MC_MEDIUM, IMAGE_WIDTH - 2 * LAYOUT_BASE_PADDING),
+                  fill=SECONDARY_TEXT_COLOR, font=FONT_MC_MEDIUM, anchor="lm")
 
     draw.text((IMAGE_WIDTH // 2, image_height - LAYOUT_CREDIT_AREA_HEIGHT // 2), CREDIT_TEXT,
               fill=CREDIT_TEXT_COLOR, font=FONT_ZH_CREDIT, anchor="mm")
@@ -388,7 +388,7 @@ def _draw_motd(draw: ImageDraw.ImageDraw, card: CardLayout, tag_width: int) -> N
                   fill=OFFLINE_TEXT_COLOR, font=FONT_MC_MOTD, anchor="lm")
         return
 
-    # 多行 MOTD 已经在解析阶段被压成一行（用圆点分隔），这里只需按像素截断。
+    # 多行 MOTD 已经在解析阶段被压成一行（用几何方块分隔），这里只需按像素截断。
     segments, _ = _motd_segments(server_data)
     segments = truncate_segments(segments, FONT_MC_MOTD, max_width)
     draw_segments(draw, segments, (start_x, center_y), FONT_MC_MOTD, anchor="lm")
