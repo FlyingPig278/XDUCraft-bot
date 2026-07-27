@@ -113,6 +113,8 @@ A Minecraft server status query plugin for NoneBot, specially designed for XDUCr
 - `/功能`：查看本群所有插件的启用状态。
 - `/功能 on <功能名>`、`/功能 off <功能名>`：群管理员统一开关功能。
 - `/功能 reset <功能名>`：清除使用共享存储的群级覆盖，回到默认值。
+- 私聊机器人发送 `/功能 <群号>` 查看指定群，或发送
+  `/功能 <群号> on|off|reset <功能名>` 进行管理；机器人会重新校验群主或管理员身份。
 - 被动响应或主动推送类功能默认关闭；MC 更新推送仍仅允许 SUPERUSER 修改。
 
 猪猪图查询/推送、词云、MC 更新、MC 状态、表情回应、关键词回复和反撤回均已接入此面板。

@@ -48,4 +48,32 @@ async def can_manage(bot: Bot, event: Union[MessageEvent, GroupMessageEvent]) ->
     return await is_admin(bot, event)
 
 
-__all__ = ["is_admin", "is_superuser", "can_manage", "ADMIN_ROLES"]
+async def can_manage_group(bot: Bot, event: MessageEvent, group_id: int) -> bool:
+    """能否管理指定群，供私聊中的群级管理命令使用。
+
+    群聊事件沿用消息携带的群角色；私聊事件必须再向 OneBot 查询目标群中的
+    成员资料，不能仅凭用户提供的群号决定权限。SUPERUSER 不受群角色限制。
+    """
+    if await is_superuser(bot, event):
+        return True
+
+    if isinstance(event, GroupMessageEvent):
+        if int(event.group_id) != int(group_id):
+            return False
+        sender = getattr(event, "sender", None)
+        role = getattr(sender, "role", None) if sender is not None else None
+        return role in ADMIN_ROLES
+
+    try:
+        member = await bot.get_group_member_info(
+            group_id=int(group_id),
+            user_id=int(event.user_id),
+            no_cache=False,
+        )
+    except Exception:
+        return False
+
+    return str(member.get("role", "")).lower() in ADMIN_ROLES
+
+
+__all__ = ["is_admin", "is_superuser", "can_manage", "can_manage_group", "ADMIN_ROLES"]
