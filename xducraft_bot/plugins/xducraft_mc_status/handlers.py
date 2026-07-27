@@ -419,8 +419,7 @@ AUTH_USAGE = (
     "/mcs auth clear <IP> — 清除单服配置并回退本群默认值\n"
     "/mcs auth default <验证方式|clear> — 设置本群默认\n"
     "/mcs auth detect on|off — 开关尽力而为的自动探测（默认关）\n"
-    "验证方式可填：正版 / MUA / XDU / 外置 / 离线 / 混合\n"
-    "提示：MUA 是包含 XDU 的联合认证；标记为 MUA 的服务器可直接使用 XDU 账号登录。"
+    "验证方式可填：正版 / MUA / XDU / 外置 / 离线 / 混合"
 )
 
 
