@@ -546,6 +546,8 @@ async def handle_query_all(bot: Bot, event: GroupMessageEvent, show_all_servers:
             "管理员可以用 /mcs add <IP> 添加，或用 /mcs edit 打开网页编辑器。"
         )
 
+    await matcher.send("正在查询所有服务器状态...")
+
     try:
         source, _ = get_effective_status_api_source(event.group_id)
         server_data_list = await get_all_servers_status(event.group_id)
