@@ -674,6 +674,12 @@ def _tag_layout(
     return label, background, width
 
 
+def _tag_left(card: CardLayout, width: float) -> float:
+    """短 Tag 居中于图标；居中会越过卡片左边时平滑钳制到左边缘。"""
+    icon_center = card.icon_left + t.ICON_SIZE / 2
+    return max(card.box_left, icon_center - width / 2)
+
+
 def _player_names(node: Dict[str, Any]) -> List[str]:
     players = node.get("players") if isinstance(node.get("players"), dict) else {}
     return [
@@ -729,7 +735,8 @@ def _draw_meta_row(
     """底部只保留地址与受它约束的玩家名单。"""
     center_y = card.top + ROW_META_Y
     tag_layout = _tag_layout(canvas, card)
-    tag_right = card.box_left + (tag_layout[2] if tag_layout else 0)
+    tag_left = _tag_left(card, tag_layout[2]) if tag_layout else card.box_left
+    tag_right = tag_left + (tag_layout[2] if tag_layout else 0)
     content_left = max(
         card.body_left,
         tag_right + (t.TAG_ADDRESS_GAP if tag_layout else 0),
@@ -766,12 +773,12 @@ def _draw_tag_glints(canvas: Canvas, box: Tuple[float, float, float, float]) -> 
 def _draw_tag_overlay(
     canvas: Canvas, card: CardLayout,
 ) -> Optional[Tuple[float, float, float, float]]:
-    """Tag 左下角与卡片左下区域重合；允许覆盖图标脚部。"""
+    """Tag 位于卡片底部：短标签居中于图标，长标签钳制到卡片左边。"""
     layout = _tag_layout(canvas, card)
     if layout is None:
         return None
     label, background, width = layout
-    left = card.box_left
+    left = _tag_left(card, width)
     top = card.bottom - t.TAG_CHIP_HEIGHT
     box = (left, top, left + width, card.bottom)
     canvas.soft_shadow(
@@ -866,7 +873,10 @@ def _draw_spine(canvas: Canvas, card: CardLayout) -> None:
         t.SPINE_COLOR,
     )
     for child in card.children:
-        canvas.dotted_hline(child.icon_center_y, trunk_x, child.left, t.SPINE_COLOR)
+        canvas.dotted_hline_gradient(
+            child.icon_center_y, trunk_x, child.left,
+            t.SPINE_COLOR, t.SPINE_TAIL_COLOR,
+        )
 
 
 def _draw_card(

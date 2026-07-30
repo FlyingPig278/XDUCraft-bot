@@ -298,6 +298,24 @@ class Canvas:
             self.rect((cursor, y, min(cursor + t.SPINE_DOT, x1), y + t.SPINE_DOT), fill=color)
             cursor += step
 
+    def dotted_hline_gradient(
+        self, y: float, x0: float, x1: float, start_color: Color, end_color: Color,
+    ) -> None:
+        """点阵横线从起点颜色逐点淡到终点颜色。"""
+        step = t.SPINE_DOT + t.SPINE_GAP
+        span = max(t.SPINE_DOT, x1 - x0)
+        start, end = as_rgba(start_color), as_rgba(end_color)
+        cursor = x0
+        while cursor < x1:
+            dot_end = min(cursor + t.SPINE_DOT, x1)
+            ratio = 1.0 if cursor + step >= x1 else min(1.0, (dot_end - x0) / span)
+            color = tuple(
+                int(round(start[channel] + (end[channel] - start[channel]) * ratio))
+                for channel in range(4)
+            )
+            self.rect((cursor, y, dot_end, y + t.SPINE_DOT), fill=color)
+            cursor += step
+
     def paste(self, sprite: Image.Image, x: float, y: float) -> None:
         self.image.paste(sprite, (t.px(x), t.px(y)), sprite)
 

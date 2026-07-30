@@ -152,7 +152,7 @@ A Minecraft server status query plugin for NoneBot, specially designed for XDUCr
 方块材质背景、Minecraft 像素字体和直角边框。背景只保留淡淡的纹理；釉面陶瓦会按 Minecraft 的 2×2 旋转方式组成重复图案。
 
 卡片显示两行 MOTD、地址和状态；空 MOTD 或默认的 `A Minecraft Server` 会改用配置备注。
-Tag 位于左下角，长 Tag 会自动让开地址。玩家名单只使用地址剩余空间，过长时截断。
+Tag 位于左下角：短标签与服务器图标水平居中，过长时自动贴齐卡片左边并让开地址。玩家名单只使用地址剩余空间，过长时截断。
 顶部显示服务器与玩家在线概览，人数最多且至少 5 人的服务器会显示火焰标记。
 验证方式通过右侧边条，以及版本号后的粗体彩色短名表示。
 

@@ -649,17 +649,30 @@ def test_auth_legend_uses_note_borderless_swatches_and_tinted_underlines():
     assert [segment.color for segment in segments] == [auth.style_for(mode).color for mode in modes]
 
 
-def test_parent_child_connectors_use_stronger_color():
+def test_parent_child_connectors_use_stronger_fading_color():
     child = {"children": []}
     parent = {"children": [child]}
     cards, _ = ir.build_layout([parent], 0)
     canvas = raster.Canvas(t.CANVAS_WIDTH, 200)
-    colors = []
-    canvas.dotted_vline = lambda *args: colors.append(args[-1])  # type: ignore[assignment]
-    canvas.dotted_hline = lambda *args: colors.append(args[-1])  # type: ignore[assignment]
+    trunks = []
+    tails = []
+    canvas.dotted_vline = lambda *args: trunks.append(args[-1])  # type: ignore[assignment]
+    canvas.dotted_hline_gradient = lambda y, x0, x1, start, end: tails.append((start, end))  # type: ignore[assignment]
     ir._draw_spine(canvas, cards[0])
-    assert colors and all(color == t.SPINE_COLOR for color in colors)
-    assert t.SPINE_COLOR[3] > t.RULE[3]
+    assert trunks == [t.SPINE_COLOR]
+    assert tails == [(t.SPINE_COLOR, t.SPINE_TAIL_COLOR)]
+    assert t.SPINE_COLOR[3] > t.RULE[3] > t.SPINE_TAIL_COLOR[3]
+
+
+def test_dotted_horizontal_gradient_fades_each_successive_dot():
+    canvas = raster.Canvas(100, 20)
+    fills = []
+    canvas.rect = lambda box, **kwargs: fills.append(kwargs["fill"])  # type: ignore[assignment]
+    canvas.dotted_hline_gradient(10, 5, 45, t.SPINE_COLOR, t.SPINE_TAIL_COLOR)
+    alphas = [fill[3] for fill in fills]
+    assert len(alphas) > 2
+    assert alphas == sorted(alphas, reverse=True)
+    assert alphas[-1] == t.SPINE_TAIL_COLOR[3]
 
 
 def test_latency_is_one_compact_right_aligned_text_run():
@@ -778,7 +791,7 @@ def test_tagged_and_tagless_cards_always_use_fixed_gap():
     assert t.CARD_GAP > 4
 
 
-def test_tag_overlay_shares_card_bottom_left_anchor():
+def test_short_tag_centers_horizontally_on_server_icon():
     node = {"tag": "生存", "tag_color": "3181D0", "children": []}
     card = ir.CardLayout(node=node, level=0, top=100)
     canvas = raster.Canvas(t.CANVAS_WIDTH, 200)
@@ -789,7 +802,9 @@ def test_tag_overlay_shares_card_bottom_left_anchor():
     box = ir._draw_tag_overlay(canvas, card)
 
     assert box is not None
-    assert box[0] == card.box_left
+    icon_center = card.icon_left + t.ICON_SIZE / 2
+    assert (box[0] + box[2]) / 2 == icon_center
+    assert box[0] > card.box_left
     assert box[1] == card.bottom - t.TAG_CHIP_HEIGHT
     assert box[3] == card.bottom
     assert texts[0][2] == "lm"
@@ -843,11 +858,12 @@ def test_long_tag_pushes_address_right_of_tag_edge():
     ir._draw_meta_row(canvas, card, "an-extremely-long-address-" * 20, resolved=None)
     layout = ir._tag_layout(canvas, card)
     assert layout is not None
-    expected_left = max(card.body_left, card.box_left + layout[2] + t.TAG_ADDRESS_GAP)
+    tag_left = ir._tag_left(card, layout[2])
+    assert tag_left == card.box_left
+    expected_left = max(card.body_left, tag_left + layout[2] + t.TAG_ADDRESS_GAP)
     assert expected_left > card.body_left
     assert text_calls[0][1][0] == expected_left
-
-    assert expected_left - (card.box_left + layout[2]) == t.TAG_ADDRESS_GAP
+    assert expected_left - (tag_left + layout[2]) == t.TAG_ADDRESS_GAP
     assert len(text_calls) == 1, "地址优先时玩家列表必须主动让位"
 
 

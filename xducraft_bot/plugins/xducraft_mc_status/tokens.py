@@ -175,7 +175,7 @@ FIRE_ICON_RISE = 2
 
 #: 右边条承载验证方式颜色。
 AUTH_STRIPE_WIDTH = 4
-#: Tag 叠在卡片左下角，允许覆盖图标脚部；长 Tag 会把地址起点向右推。
+#: Tag 叠在卡片底部；短标签居中于图标，过长时钳制到卡片左边并推开地址。
 TAG_CHIP_PADDING_X = 8
 TAG_CHIP_HEIGHT = 20
 TAG_CHIP_MAX_WIDTH = 240
@@ -196,11 +196,12 @@ PLAYER_LIST_DOT = 4
 PLAYER_LIST_DOT_GAP = 6
 #: 子服务器缩进 = 4 个方块单位。
 CHILD_INDENT = BLOCK * 4
-#: 父子连线用 2×2 的像素点阵画，不用实线——直线在像素语境里太“矢量”了。
+#: 父子连线用 2×2 的像素点阵画，不用实线。
 SPINE_DOT = 2
 SPINE_GAP = 2
-#: 父子点阵连线比一般分隔线更清楚，方便在窄屏上追踪层级。
 SPINE_COLOR = (255, 255, 255, 115)
+#: 横向分支靠近子卡片时几乎透明。
+SPINE_TAIL_COLOR = (255, 255, 255, 12)
 __all__ = [
     "CANVAS_WIDTH", "CANVAS_MIN_HEIGHT", "SCALE", "px",
     "SCRIM", "SCRIM_TARGET_LUMINANCE", "SCRIM_MAX_ALPHA", "SURFACE", "SURFACE_IDLE", "BAND", "RULE", "RULE_DARK", "CHIP", "RULE_WIDTH",
@@ -222,5 +223,5 @@ __all__ = [
     "TAG_SHADOW_OFFSET", "TAG_SHADOW_BLUR", "TAG_SHADOW_COLOR",
     "TAG_GLINT_LENGTH", "TAG_GLINT_WIDTH", "TAG_GLINT_COLOR",
     "PLAYER_LIST_GAP", "PLAYER_LIST_DOT", "PLAYER_LIST_DOT_GAP",
-    "CHILD_INDENT", "SPINE_DOT", "SPINE_GAP", "SPINE_COLOR",
+    "CHILD_INDENT", "SPINE_DOT", "SPINE_GAP", "SPINE_COLOR", "SPINE_TAIL_COLOR",
 ]
