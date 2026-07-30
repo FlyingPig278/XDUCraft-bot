@@ -163,17 +163,17 @@ CARD_COL_GAP = 12
 ICON_SIZE = CARD_HEIGHT - 2 * CARD_PAD
 MOTD_LINES = 2
 RAIL_WIDTH = 156
-#: 最繁忙服务器的人数行左侧火焰。8 逻辑像素在默认 2x 输出时正好使用原始 16px 贴图。
-FIRE_ICON_SIZE = 8
+#: 最繁忙服务器的人数行左侧火焰；与 12px 玩家计数字号一致。
+FIRE_ICON_SIZE = TYPE_DATA
 FIRE_ICON_GAP = 4
 
 #: 左边条：承载验证方式颜色，是这套设计里唯一的彩色竖条。
 AUTH_STRIPE_WIDTH = 4
-#: Tag 移到右上角，整个胶片以延迟文本左边为右对齐锚点。
+#: Tag 作为卡片左上方的外置页签，底边与卡片顶边重合。高度从 24 缩到 20，
+#: 减少上下留白；宽度仍按文本自适应并设上限。
 TAG_CHIP_PADDING_X = 8
-TAG_CHIP_HEIGHT = 24
+TAG_CHIP_HEIGHT = 20
 TAG_CHIP_MAX_WIDTH = 96
-TAG_STATUS_GAP = 8
 
 #: 子服务器缩进 = 4 个方块单位。
 CHILD_INDENT = BLOCK * 4
@@ -198,6 +198,6 @@ __all__ = [
     "CARD_HEIGHT", "CARD_GAP", "CARD_PAD", "CARD_COL_GAP",
     "ICON_SIZE", "MOTD_LINES", "RAIL_WIDTH", "FIRE_ICON_SIZE", "FIRE_ICON_GAP",
     "AUTH_STRIPE_WIDTH",
-    "TAG_CHIP_PADDING_X", "TAG_CHIP_HEIGHT", "TAG_CHIP_MAX_WIDTH", "TAG_STATUS_GAP",
+    "TAG_CHIP_PADDING_X", "TAG_CHIP_HEIGHT", "TAG_CHIP_MAX_WIDTH",
     "CHILD_INDENT", "SPINE_DOT", "SPINE_GAP",
 ]

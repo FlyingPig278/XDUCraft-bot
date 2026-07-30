@@ -72,11 +72,10 @@ LATENCY_SIGNAL_GAP = 4
 LATENCY_UNIT_GAP = 2
 
 # 信号条。
-BAR_WIDTH = 3
+BAR_WIDTH = 2
 BAR_GAP = 2
-BAR_STEP = 2
-BAR_BASE = 3
-
+BAR_STEP = 1.5
+BAR_BASE = 2
 
 @dataclass(frozen=True)
 class HeaderMetrics:
@@ -136,6 +135,14 @@ class CardLayout:
         return self.top + self.height
 
     @property
+    def has_tag(self) -> bool:
+        return bool(str(self.node.get("tag") or "").strip())
+
+    @property
+    def tag_top(self) -> float:
+        return self.top - (t.TAG_CHIP_HEIGHT if self.has_tag else 0)
+
+    @property
     def icon_left(self) -> float:
         return self.box_left + t.CARD_PAD
 
@@ -168,15 +175,19 @@ class CardLayout:
         return max(0.0, self.body_right - self.body_left)
 
 
+def _card_tag_height(node: Dict[str, Any]) -> float:
+    return t.TAG_CHIP_HEIGHT if str(node.get("tag") or "").strip() else 0
+
+
 def build_layout(
     nodes: List[Dict[str, Any]], start_y: float, level: int = 0,
 ) -> Tuple[List[CardLayout], float]:
-    """按深度优先顺序排版；无论玩家列表是否存在，所有行都固定高。"""
+    """排版服务器行，并把外置 Tag 高度计入相邻卡片之间的流式间距。"""
     cards: List[CardLayout] = []
     cursor = start_y
     for node in nodes:
-        card = CardLayout(node=node, level=level, top=cursor)
-        cursor += t.CARD_HEIGHT + t.CARD_GAP
+        card = CardLayout(node=node, level=level, top=cursor + _card_tag_height(node))
+        cursor = card.bottom + t.CARD_GAP
         children = node.get("children") or []
         if children:
             card.children, cursor = build_layout(children, cursor, level + 1)
@@ -314,20 +325,23 @@ HEADER_STATUS_DOT_GAP = 6
 def _draw_header_statuses(
     canvas: Canvas, stats: Dict[str, int], right: float, center_y: float,
 ) -> float:
-    """右对齐的纯文字概览；每项用一个绿色像素点引导，不再套胶片。"""
+    """右对齐纯文字概览；有在线项用绿点，计数为零时对应点变红。"""
     items = (
-        f"{stats['online']}/{stats['total']}服务器在线",
-        f"{stats['players_online']}人在线",
+        (f"{stats['online']}/{stats['total']}服务器在线", stats["online"] > 0),
+        (f"{stats['players_online']}人在线", stats["players_online"] > 0),
     )
-    widths = [HEADER_STATUS_DOT + HEADER_STATUS_DOT_GAP + canvas.measure(text, CHIP) for text in items]
+    widths = [
+        HEADER_STATUS_DOT + HEADER_STATUS_DOT_GAP + canvas.measure(text, CHIP)
+        for text, _ in items
+    ]
     total = sum(widths) + t.HEADER_STATUS_GAP
     cursor = right - total
     start = cursor
-    for index, (text, width) in enumerate(zip(items, widths)):
+    for index, ((text, active), width) in enumerate(zip(items, widths)):
         dot_y = center_y - HEADER_STATUS_DOT / 2
         canvas.rect(
             (cursor, dot_y, cursor + HEADER_STATUS_DOT, dot_y + HEADER_STATUS_DOT),
-            fill=t.STATE_EXCELLENT,
+            fill=t.STATE_EXCELLENT if active else t.STATE_POOR,
         )
         canvas.text(
             text, (cursor + HEADER_STATUS_DOT + HEADER_STATUS_DOT_GAP, center_y),
@@ -414,7 +428,7 @@ def _draw_band(
             canvas.fit_text(footer_text.strip(), SUBTITLE, t.CANVAS_WIDTH - 2 * t.PAGE_PADDING_X),
             (t.PAGE_PADDING_X, cursor + t.BAND_NOTICE_HEIGHT / 2),
             SUBTITLE,
-            t.INK_STRONG,
+            t.INK,
             "lm",
         )
         cursor += t.BAND_NOTICE_HEIGHT + (t.BAND_LINE_GAP if credit_row else 0)
@@ -637,10 +651,10 @@ def _draw_meta_row(
         )
 
 
-def _draw_tag_right(
-    canvas: Canvas, card: CardLayout, right: float, center_y: float,
+def _draw_tag_tab(
+    canvas: Canvas, card: CardLayout,
 ) -> Optional[Tuple[float, float, float, float]]:
-    """把 Tag 胶片的右边缘锚在延迟文本左侧。"""
+    """Tag 作为卡片外的左对齐页签；底边与服务器行顶边重合。"""
     tag = str(card.node.get("tag") or "").strip()
     if not tag:
         return None
@@ -651,15 +665,12 @@ def _draw_tag_right(
         t.TAG_CHIP_MAX_WIDTH,
         canvas.measure(label, CHIP) + 2 * t.TAG_CHIP_PADDING_X,
     )
-    left = right - width
-    box = (
-        left, center_y - t.TAG_CHIP_HEIGHT / 2,
-        right, center_y + t.TAG_CHIP_HEIGHT / 2,
-    )
+    left = card.box_left
+    box = (left, card.tag_top, left + width, card.top)
     canvas.rect(box, fill=background, outline=t.RULE, width=1)
     canvas.text(
-        label, (right - t.TAG_CHIP_PADDING_X, center_y), CHIP,
-        ink_for_background(background), "rm",
+        label, (left + t.TAG_CHIP_PADDING_X, card.tag_top + t.TAG_CHIP_HEIGHT / 2),
+        CHIP, ink_for_background(background), "lm",
     )
     return box
 
@@ -668,7 +679,8 @@ def _draw_signal(canvas: Canvas, right: float, center_y: float, tier: str) -> fl
     active = TIER_BARS[tier]
     color = TIER_COLORS[tier]
     width = t.SIGNAL_BARS * BAR_WIDTH + (t.SIGNAL_BARS - 1) * BAR_GAP
-    bottom = center_y + (BAR_BASE + t.SIGNAL_BARS * BAR_STEP) / 2
+    max_height = BAR_BASE + (t.SIGNAL_BARS - 1) * BAR_STEP
+    bottom = center_y + max_height / 2
     left = right - width
     for index in range(t.SIGNAL_BARS):
         height = BAR_BASE + index * BAR_STEP
@@ -681,7 +693,7 @@ def _draw_signal(canvas: Canvas, right: float, center_y: float, tier: str) -> fl
 
 
 def _draw_rail(canvas: Canvas, card: CardLayout, show_fire: bool = False) -> None:
-    """右侧状态栈；Tag 右对齐到延迟文字左侧。"""
+    """服务器行右侧的延迟、人数和版本状态栈。"""
     node = card.node
     online = bool(node.get("online"))
     ping = int(node.get("ping") or 0) if online else None
@@ -692,18 +704,13 @@ def _draw_rail(canvas: Canvas, card: CardLayout, show_fire: bool = False) -> Non
     bars = _draw_signal(canvas, right, ping_y, tier)
     unit_right = right - bars - LATENCY_SIGNAL_GAP
     if not online:
-        label = "离线"
-        latency_left = unit_right - canvas.measure(label, DATA)
-        _draw_tag_right(canvas, card, latency_left - t.TAG_STATUS_GAP, ping_y)
-        canvas.text(label, (unit_right, ping_y), DATA, t.STATE_POOR, "rm")
+        canvas.text("离线", (unit_right, ping_y), DATA, t.STATE_POOR, "rm")
         return
 
     color = TIER_COLORS[tier]
     unit_width = canvas.measure("ms", DATA)
     number = str(ping)
     number_right = unit_right - unit_width - LATENCY_UNIT_GAP
-    latency_left = number_right - canvas.measure(number, DATA)
-    _draw_tag_right(canvas, card, latency_left - t.TAG_STATUS_GAP, ping_y)
     canvas.text("ms", (unit_right, ping_y), DATA, color, "rm")
     canvas.text(number, (number_right, ping_y), DATA, color, "rm")
 
@@ -745,6 +752,7 @@ def _draw_card(
     online = bool(card.node.get("online"))
     resolved = _resolve_rendered_auth(card.node, group_default)
     address = get_server_display_address(card.node, pixel_font=True)
+    _draw_tag_tab(canvas, card)
     _draw_card_shell(canvas, card, resolved, online)
     _draw_icon(canvas, icons.get(id(card.node)), card, online)
     _draw_motd_rows(canvas, card)

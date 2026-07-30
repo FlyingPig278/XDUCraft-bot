@@ -274,6 +274,17 @@ def test_band_disappears_only_when_nothing_is_left_in_it():
     assert not ir.band_is_visible(cfg.RenderSettings(credit="", show_generated_at=False))
 
 
+def test_footer_announcement_uses_opaque_ink():
+    settings = cfg.RenderSettings(credit="", show_generated_at=False)
+    canvas = raster.Canvas(t.CANVAS_WIDTH, 100)
+    calls = []
+    canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: (  # type: ignore[assignment]
+        calls.append((text, fill)) or 0.0
+    )
+    ir._draw_band(canvas, 100, "服务器公告", settings)
+    assert calls == [("服务器公告", t.INK)]
+
+
 def test_texture_selection_honours_every_mode():
     available = raster.list_textures()
     assert available, "预览与出图都依赖 resources/textures 里的方块材质"
@@ -568,28 +579,37 @@ def test_server_icon_draws_without_an_inner_border():
     ir._draw_icon(canvas, icon, card, online=True)
 
 
-def test_tag_right_aligns_immediately_before_latency():
-    node = {
-        "online": True, "ping": 42, "version": "1.21.1", "tag": "生存",
-        "tag_color": "3181D0", "players": {"online": 3, "max": 20}, "children": [],
-    }
-    card = ir.CardLayout(node=node, level=0, top=0)
-    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT)
-    boxes = []
+def test_tagged_and_tagless_cards_use_gap_from_next_visible_top():
+    nodes = [
+        {"tag": "A", "children": []},
+        {"tag": "", "children": []},
+        {"tag": "B", "children": []},
+    ]
+    cards, _ = ir.build_layout(nodes, 100)
+
+    assert cards[0].tag_top == 100
+    assert cards[0].top == 100 + t.TAG_CHIP_HEIGHT
+    assert cards[1].top - cards[0].bottom == t.CARD_GAP
+    assert cards[2].tag_top - cards[1].bottom == t.CARD_GAP
+    assert cards[2].top == cards[2].tag_top + t.TAG_CHIP_HEIGHT
+
+
+def test_tag_tab_is_left_aligned_above_server_row():
+    node = {"tag": "生存", "tag_color": "3181D0", "children": []}
+    card = ir.CardLayout(node=node, level=0, top=100)
+    canvas = raster.Canvas(t.CANVAS_WIDTH, 200)
     texts = []
-    canvas.rect = lambda box, **kwargs: boxes.append((box, kwargs.get("fill")))  # type: ignore[assignment]
     canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: (  # type: ignore[assignment]
         texts.append((text, xy, anchor)) or canvas.measure(text, font)
     )
-    canvas.segments = lambda *args, **kwargs: 0.0  # type: ignore[assignment]
-    ir._draw_rail(canvas, card)
+    box = ir._draw_tag_tab(canvas, card)
 
-    background = ir._tag_background("3181D0")
-    tag_box = next(box for box, fill in boxes if fill == background)
-    number_right = next(xy[0] for text, xy, _ in texts if text == "42")
-    latency_left = number_right - canvas.measure("42", fonts.DATA)
-    assert tag_box[2] == latency_left - t.TAG_STATUS_GAP
-    assert next(anchor for text, _, anchor in texts if text == "生存") == "rm"
+    assert box is not None
+    assert box[0] == card.box_left
+    assert box[1] == card.tag_top
+    assert box[3] == card.top
+    assert box[3] - box[1] == t.TAG_CHIP_HEIGHT < 24
+    assert texts[0][2] == "lm"
 
 
 def test_header_statuses_are_plain_text_with_green_dots():
@@ -606,6 +626,26 @@ def test_header_statuses_are_plain_text_with_green_dots():
     assert texts == ["3/5服务器在线", "12人在线"]
     dots = [box for box, fill, outline in boxes if fill == t.STATE_EXCELLENT and outline is None]
     assert len(dots) == 2
+
+
+def test_header_status_dot_turns_red_for_each_zero_counter():
+    canvas = raster.Canvas(t.CANVAS_WIDTH, 80)
+    fills = []
+    canvas.rect = lambda box, **kwargs: fills.append(kwargs.get("fill"))  # type: ignore[assignment]
+    canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: canvas.measure(text, font)  # type: ignore[assignment]
+    ir._draw_header_statuses(
+        canvas, {"online": 0, "total": 5, "players_online": 0}, 800, 30,
+    )
+    assert fills == [t.STATE_POOR, t.STATE_POOR]
+
+
+def test_signal_bars_are_shorter_than_latency_text():
+    canvas = raster.Canvas(100, 40)
+    boxes = []
+    canvas.rect = lambda box, **kwargs: boxes.append(box)  # type: ignore[assignment]
+    ir._draw_signal(canvas, 90, 20, "excellent")
+    heights = [bottom - top for _, top, _, bottom in boxes]
+    assert max(heights) < t.TYPE_DATA
 
 
 def test_auth_method_is_underlined_colored_text_not_a_badge():
@@ -759,3 +799,4 @@ def test_fire_icon_sits_immediately_left_of_player_counter():
     assert box[3] - box[1] == t.FIRE_ICON_SIZE
     assert (box[1] + box[3]) / 2 == center_y
     assert pasted[0][0].size == (t.px(t.FIRE_ICON_SIZE), t.px(t.FIRE_ICON_SIZE))
+    assert t.FIRE_ICON_SIZE == t.TYPE_DATA

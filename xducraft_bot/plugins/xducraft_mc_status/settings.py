@@ -36,7 +36,7 @@ PER_GROUP_TEXTURE = ""
 DEFAULT_BRAND = "XDUCRAFT"
 DEFAULT_TITLE = "Minecraft 服务器状态"
 #: 支持 ``§`` 颜色码，和参考项目的 ``DEFAULT_COPYRIGHT_TEXT`` 一样。
-DEFAULT_CREDIT = "Powered by §7FlyingPig278, LITTLE-UNIkeEN, KrLite"
+DEFAULT_CREDIT = "Powered by §7FlyingPig278, LITTLE-UNIkeEN, and KrLite"
 
 
 class Config(BaseModel):
