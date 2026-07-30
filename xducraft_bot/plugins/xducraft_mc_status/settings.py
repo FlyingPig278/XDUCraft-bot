@@ -37,7 +37,7 @@ DEFAULT_BRAND = "XDUCRAFT"
 DEFAULT_TITLE = "Minecraft 服务器状态"
 #: 支持 ``§`` 颜色码，和参考项目的 ``DEFAULT_COPYRIGHT_TEXT`` 一样。
 DEFAULT_CREDIT = "Powered by §7FlyingPig278, LITTLE-UNIkeEN, and KrLite"
-DEFAULT_CANVAS_WIDTH = 768
+DEFAULT_CANVAS_WIDTH = 640
 
 
 class Config(BaseModel):
@@ -83,9 +83,9 @@ class RenderSettings:
 
 
 def normalize_width(value: int) -> int:
-    """画布宽度，和参考项目一样夹在 640–1600 之间。"""
+    """画布宽度夹在 480–1600；默认 640，兼顾移动端与横向信息。"""
     try:
-        return max(640, min(1600, int(value)))
+        return max(480, min(1600, int(value)))
     except (TypeError, ValueError):
         return DEFAULT_CANVAS_WIDTH
 

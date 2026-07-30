@@ -160,13 +160,15 @@ CARD_COL_GAP = 12
 ICON_SIZE = CARD_HEIGHT - 2 * CARD_PAD
 MOTD_LINES = 2
 RAIL_WIDTH = 156
+#: 上下边框渐变的最深端仍保持明显透明，不与右侧实色验证条争抢视觉重心。
+CARD_GRADIENT_ALPHA = 105
 #: 最繁忙服务器的人数行左侧火焰；与 12px 玩家计数字号一致。
 FIRE_ICON_SIZE = TYPE_DATA
 FIRE_ICON_GAP = 4
 #: 视觉基线校正：火焰比按中心对齐上移 2px，底部与计数字形更齐。
 FIRE_ICON_RISE = 2
 
-#: 左边条：承载验证方式颜色，是这套设计里唯一的彩色竖条。
+#: 右边条承载验证方式颜色。
 AUTH_STRIPE_WIDTH = 4
 #: Tag 叠在卡片左下角，允许覆盖图标脚部；长 Tag 会把地址起点向右推。
 TAG_CHIP_PADDING_X = 8
@@ -188,6 +190,8 @@ CHILD_INDENT = BLOCK * 4
 #: 父子连线用 2×2 的像素点阵画，不用实线——直线在像素语境里太“矢量”了。
 SPINE_DOT = 2
 SPINE_GAP = 2
+#: 父子点阵连线比一般分隔线更清楚，方便在窄屏上追踪层级。
+SPINE_COLOR = (255, 255, 255, 115)
 
 __all__ = [
     "CANVAS_WIDTH", "CANVAS_MIN_HEIGHT", "SCALE", "px",
@@ -203,10 +207,11 @@ __all__ = [
     "LEGEND_HEIGHT", "LEGEND_SWATCH", "LEGEND_GAP",
     "BAND_PADDING_Y", "BAND_NOTICE_HEIGHT", "BAND_CREDIT_HEIGHT", "BAND_LINE_GAP",
     "BAND_VIGNETTE", "BAND_BOTTOM",
-    "CARD_HEIGHT", "CARD_GAP", "CARD_PAD", "CARD_COL_GAP",
+    "CARD_HEIGHT", "CARD_GAP", "CARD_PAD", "CARD_COL_GAP", "CARD_GRADIENT_ALPHA",
     "ICON_SIZE", "MOTD_LINES", "RAIL_WIDTH", "FIRE_ICON_SIZE", "FIRE_ICON_GAP", "FIRE_ICON_RISE",
     "AUTH_STRIPE_WIDTH",
     "TAG_CHIP_PADDING_X", "TAG_CHIP_HEIGHT", "TAG_CHIP_MAX_WIDTH", "TAG_ADDRESS_GAP",
     "TAG_SHADOW_OFFSET", "TAG_SHADOW_BLUR", "TAG_SHADOW_COLOR",
     "PLAYER_LIST_GAP", "PLAYER_LIST_DOT", "PLAYER_LIST_DOT_GAP",
+    "CHILD_INDENT", "SPINE_DOT", "SPINE_GAP", "SPINE_COLOR",
 ]

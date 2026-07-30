@@ -501,8 +501,9 @@ def _draw_card_shell(
         fill=t.SURFACE if online else t.SURFACE_IDLE,
     )
     if online:
-        color = _auth_color(resolved)
-        transparent = (*as_rgba(color)[:3], 0)
+        base_color = as_rgba(_auth_color(resolved))
+        color = (*base_color[:3], min(base_color[3], t.CARD_GRADIENT_ALPHA))
+        transparent = (*base_color[:3], 0)
         canvas.horizontal_gradient(
             (card.box_left, card.top, card.box_right, card.top + t.RULE_WIDTH),
             transparent, color,
@@ -826,10 +827,10 @@ def _draw_spine(canvas: Canvas, card: CardLayout) -> None:
         trunk_x,
         card.bottom + t.CARD_GAP,
         last_child.icon_center_y,
-        t.RULE,
+        t.SPINE_COLOR,
     )
     for child in card.children:
-        canvas.dotted_hline(child.icon_center_y, trunk_x, child.left, t.RULE)
+        canvas.dotted_hline(child.icon_center_y, trunk_x, child.left, t.SPINE_COLOR)
 
 
 def _draw_card(

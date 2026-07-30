@@ -238,11 +238,11 @@ def test_scale_only_accepts_grid_safe_values():
 
 
 def test_width_is_clamped_to_a_sane_range():
-    assert cfg.normalize_width(100) == 640
+    assert cfg.normalize_width(100) == 480
     assert cfg.normalize_width(99999) == 1600
     assert cfg.normalize_width(854) == 854
-    assert cfg.RenderSettings().width == 768
-    assert cfg.normalize_width("invalid") == 768
+    assert cfg.RenderSettings().width == 640
+    assert cfg.normalize_width("invalid") == 640
 
 
 def test_min_height_zero_collapses_to_content():
@@ -595,7 +595,8 @@ def test_online_server_uses_auth_colored_top_and_bottom_gradients():
     assert len(gradients) == 2
     assert gradients[0][0] == (card.box_left, card.top, card.box_right, card.top + t.RULE_WIDTH)
     assert gradients[1][0] == (card.box_left, card.bottom - t.RULE_WIDTH, card.box_right, card.bottom)
-    assert all(start[3] == 0 and end == resolved.style.color for _, start, end in gradients)
+    assert all(start[3] == 0 and end[:3] == resolved.style.color[:3]
+               and end[3] == t.CARD_GRADIENT_ALPHA for _, start, end in gradients)
 
 
 def test_offline_server_has_no_gradient_border():
@@ -605,6 +606,19 @@ def test_offline_server_has_no_gradient_border():
     canvas.horizontal_gradient = lambda *args: gradients.append(args)  # type: ignore[assignment]
     ir._draw_card_shell(canvas, card, resolved=None, online=False)
     assert gradients == []
+
+
+def test_parent_child_connectors_use_stronger_color():
+    child = {"children": []}
+    parent = {"children": [child]}
+    cards, _ = ir.build_layout([parent], 0)
+    canvas = raster.Canvas(t.CANVAS_WIDTH, 200)
+    colors = []
+    canvas.dotted_vline = lambda *args: colors.append(args[-1])  # type: ignore[assignment]
+    canvas.dotted_hline = lambda *args: colors.append(args[-1])  # type: ignore[assignment]
+    ir._draw_spine(canvas, cards[0])
+    assert colors and all(color == t.SPINE_COLOR for color in colors)
+    assert t.SPINE_COLOR[3] > t.RULE[3]
 
 
 def test_latency_is_one_compact_right_aligned_text_run():
