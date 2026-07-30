@@ -313,7 +313,7 @@ def _parse_priority(value: str) -> Optional[int]:
 
 
 SETTABLE_ATTRIBUTES: Dict[str, Tuple[str, Callable[[str], Any]]] = {
-    "tag": ("标签文字", lambda value: value),
+    "tag": ("标签文字（建议少于 5 个汉字或不超过 10 个英文字母）", lambda value: value),
     "tag_color": ("标签底色，6 位十六进制如 3498DB", _parse_tag_color),
     "comment": ("服务器名称/备注", lambda value: value),
     "display_name": ("图片中的线路名称/连接提示（设置后自动隐藏查询地址）", lambda value: value),

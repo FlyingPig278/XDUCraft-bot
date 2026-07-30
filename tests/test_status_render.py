@@ -579,7 +579,7 @@ def test_server_icon_draws_without_an_inner_border():
     ir._draw_icon(canvas, icon, card, online=True)
 
 
-def test_tagged_and_tagless_cards_use_gap_from_next_visible_top():
+def test_tagged_and_tagless_cards_always_use_fixed_gap():
     nodes = [
         {"tag": "A", "children": []},
         {"tag": "", "children": []},
@@ -587,14 +587,15 @@ def test_tagged_and_tagless_cards_use_gap_from_next_visible_top():
     ]
     cards, _ = ir.build_layout(nodes, 100)
 
-    assert cards[0].tag_top == 100
-    assert cards[0].top == 100 + t.TAG_CHIP_HEIGHT
-    assert cards[1].top - cards[0].bottom == t.CARD_GAP
-    assert cards[2].tag_top - cards[1].bottom == t.CARD_GAP
-    assert cards[2].top == cards[2].tag_top + t.TAG_CHIP_HEIGHT
+    assert [card.top for card in cards] == [
+        100,
+        100 + t.CARD_HEIGHT + t.CARD_GAP,
+        100 + 2 * (t.CARD_HEIGHT + t.CARD_GAP),
+    ]
+    assert t.CARD_GAP > 4
 
 
-def test_tag_tab_is_left_aligned_above_server_row():
+def test_tag_overlay_shares_card_top_left_anchor():
     node = {"tag": "生存", "tag_color": "3181D0", "children": []}
     card = ir.CardLayout(node=node, level=0, top=100)
     canvas = raster.Canvas(t.CANVAS_WIDTH, 200)
@@ -602,13 +603,11 @@ def test_tag_tab_is_left_aligned_above_server_row():
     canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: (  # type: ignore[assignment]
         texts.append((text, xy, anchor)) or canvas.measure(text, font)
     )
-    box = ir._draw_tag_tab(canvas, card)
+    box = ir._draw_tag_overlay(canvas, card)
 
     assert box is not None
-    assert box[0] == card.box_left
-    assert box[1] == card.tag_top
-    assert box[3] == card.top
-    assert box[3] - box[1] == t.TAG_CHIP_HEIGHT < 24
+    assert box[:2] == (card.box_left, card.top)
+    assert box[3] == card.top + t.TAG_CHIP_HEIGHT
     assert texts[0][2] == "lm"
 
 
@@ -639,12 +638,13 @@ def test_header_status_dot_turns_red_for_each_zero_counter():
     assert fills == [t.STATE_POOR, t.STATE_POOR]
 
 
-def test_signal_bars_are_shorter_than_latency_text():
+def test_signal_bars_extend_to_nine_pixels_but_stay_below_text_size():
     canvas = raster.Canvas(100, 40)
     boxes = []
     canvas.rect = lambda box, **kwargs: boxes.append(box)  # type: ignore[assignment]
     ir._draw_signal(canvas, 90, 20, "excellent")
     heights = [bottom - top for _, top, _, bottom in boxes]
+    assert max(heights) == 9
     assert max(heights) < t.TYPE_DATA
 
 

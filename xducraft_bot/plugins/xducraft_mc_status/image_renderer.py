@@ -75,7 +75,7 @@ LATENCY_UNIT_GAP = 2
 BAR_WIDTH = 2
 BAR_GAP = 2
 BAR_STEP = 1.5
-BAR_BASE = 2
+BAR_BASE = 3
 
 @dataclass(frozen=True)
 class HeaderMetrics:
@@ -134,13 +134,6 @@ class CardLayout:
     def bottom(self) -> float:
         return self.top + self.height
 
-    @property
-    def has_tag(self) -> bool:
-        return bool(str(self.node.get("tag") or "").strip())
-
-    @property
-    def tag_top(self) -> float:
-        return self.top - (t.TAG_CHIP_HEIGHT if self.has_tag else 0)
 
     @property
     def icon_left(self) -> float:
@@ -175,18 +168,15 @@ class CardLayout:
         return max(0.0, self.body_right - self.body_left)
 
 
-def _card_tag_height(node: Dict[str, Any]) -> float:
-    return t.TAG_CHIP_HEIGHT if str(node.get("tag") or "").strip() else 0
-
 
 def build_layout(
     nodes: List[Dict[str, Any]], start_y: float, level: int = 0,
 ) -> Tuple[List[CardLayout], float]:
-    """排版服务器行，并把外置 Tag 高度计入相邻卡片之间的流式间距。"""
+    """按固定行高与固定间距排版；Tag 只叠加绘制，不参与流式高度。"""
     cards: List[CardLayout] = []
     cursor = start_y
     for node in nodes:
-        card = CardLayout(node=node, level=level, top=cursor + _card_tag_height(node))
+        card = CardLayout(node=node, level=level, top=cursor)
         cursor = card.bottom + t.CARD_GAP
         children = node.get("children") or []
         if children:
@@ -651,10 +641,10 @@ def _draw_meta_row(
         )
 
 
-def _draw_tag_tab(
+def _draw_tag_overlay(
     canvas: Canvas, card: CardLayout,
 ) -> Optional[Tuple[float, float, float, float]]:
-    """Tag 作为卡片外的左对齐页签；底边与服务器行顶边重合。"""
+    """Tag 左上角与卡片左上角重合；允许覆盖图标和 MOTD。"""
     tag = str(card.node.get("tag") or "").strip()
     if not tag:
         return None
@@ -666,10 +656,10 @@ def _draw_tag_tab(
         canvas.measure(label, CHIP) + 2 * t.TAG_CHIP_PADDING_X,
     )
     left = card.box_left
-    box = (left, card.tag_top, left + width, card.top)
+    box = (left, card.top, left + width, card.top + t.TAG_CHIP_HEIGHT)
     canvas.rect(box, fill=background, outline=t.RULE, width=1)
     canvas.text(
-        label, (left + t.TAG_CHIP_PADDING_X, card.tag_top + t.TAG_CHIP_HEIGHT / 2),
+        label, (left + t.TAG_CHIP_PADDING_X, card.top + t.TAG_CHIP_HEIGHT / 2),
         CHIP, ink_for_background(background), "lm",
     )
     return box
@@ -680,7 +670,8 @@ def _draw_signal(canvas: Canvas, right: float, center_y: float, tier: str) -> fl
     color = TIER_COLORS[tier]
     width = t.SIGNAL_BARS * BAR_WIDTH + (t.SIGNAL_BARS - 1) * BAR_GAP
     max_height = BAR_BASE + (t.SIGNAL_BARS - 1) * BAR_STEP
-    bottom = center_y + max_height / 2
+    # BAR_BASE 比旧值高 1，同时底边下移 1：每格顶边不动，只向下延长 1px。
+    bottom = center_y + (max_height + 1) / 2
     left = right - width
     for index in range(t.SIGNAL_BARS):
         height = BAR_BASE + index * BAR_STEP
@@ -752,12 +743,12 @@ def _draw_card(
     online = bool(card.node.get("online"))
     resolved = _resolve_rendered_auth(card.node, group_default)
     address = get_server_display_address(card.node, pixel_font=True)
-    _draw_tag_tab(canvas, card)
     _draw_card_shell(canvas, card, resolved, online)
     _draw_icon(canvas, icons.get(id(card.node)), card, online)
     _draw_motd_rows(canvas, card)
     _draw_meta_row(canvas, card, address, resolved)
     _draw_rail(canvas, card, show_fire)
+    _draw_tag_overlay(canvas, card)
 
 
 # ------------------------------------------------------------------------------

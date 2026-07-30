@@ -157,7 +157,7 @@ BAND_BOTTOM = (0, 0, 0, 205)
 # --- 卡片 ---
 #: 精简卡片只保留两行 MOTD；80px 高度让 64px 图标与四边保持 8px 内边距。
 CARD_HEIGHT = 80
-CARD_GAP = 4
+CARD_GAP = 8
 CARD_PAD = 8
 CARD_COL_GAP = 12
 ICON_SIZE = CARD_HEIGHT - 2 * CARD_PAD
@@ -169,8 +169,7 @@ FIRE_ICON_GAP = 4
 
 #: 左边条：承载验证方式颜色，是这套设计里唯一的彩色竖条。
 AUTH_STRIPE_WIDTH = 4
-#: Tag 作为卡片左上方的外置页签，底边与卡片顶边重合。高度从 24 缩到 20，
-#: 减少上下留白；宽度仍按文本自适应并设上限。
+#: Tag 叠在卡片左上角，允许覆盖图标或 MOTD；宽度按文本自适应并设上限。
 TAG_CHIP_PADDING_X = 8
 TAG_CHIP_HEIGHT = 20
 TAG_CHIP_MAX_WIDTH = 96
