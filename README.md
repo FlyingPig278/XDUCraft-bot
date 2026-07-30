@@ -145,6 +145,41 @@ A Minecraft server status query plugin for NoneBot, specially designed for XDUCr
 
 自建查询后端见 `scripts/mc_status_backend/README.md`。
 
+#### 状态图外观
+
+状态图的设计语言参考了 [`koishi-plugin-mcsm-portal`](https://github.com/KrLite/koishi-plugin-mcsm-portal)：
+854×480 的原版窗口画布、方块材质、Minecraft 像素字体、直角硬边框和原版文字投影。
+每张材质会按自身亮度动态压暗，避免竹板砖过亮、黑色混凝土粉末过暗。卡片固定高度；
+延迟 / 人数 / 版本在右栏等字号排列，登录验证方式在左边条显示（实测为实线、仅配置为虚线）。
+
+外观参数写在 `.env`（见 `.env.prod.example`，改完重启生效）：
+
+| 配置项 | 默认 | 说明 |
+| --- | --- | --- |
+| `MCS_BRAND` | `XDUCRAFT` | 顶栏品牌行，留空则不画 |
+| `MCS_TITLE` | `Minecraft 服务器状态` | 主标题，留空则不画 |
+| `MCS_CREDIT` | `Powered by … & KrLite` | 底部渐变压角里的署名，留空则不画 |
+| `MCS_SHOW_GENERATED_AT` | `true` | 压角右侧是否显示生成时间 |
+| `MCS_TEXTURE` | 留空 | 背景材质：留空按群号固定、`random`、`none` 或具体文件名；亮度会自动归一化 |
+| `MCS_WIDTH` | `854` | 画布逻辑宽度（640–1600） |
+| `MCS_SCALE` | `2` | 输出倍率，只接受 2 或 4 |
+| `MCS_MIN_HEIGHT` | `480` | 最小逻辑高度，`0` 表示收缩到内容 |
+
+`MCS_BRAND`、`MCS_TITLE`、`MCS_CREDIT` 都支持 `§` 颜色码。
+
+调外观不用启动机器人：
+
+```bash
+python scripts/preview_mc_status.py            # 用假数据出全部场景到 preview/
+python scripts/preview_mc_status.py --list     # 看有哪些场景
+python scripts/preview_mc_status.py velocity   # 只出 Velocity 群组服那张
+python scripts/preview_mc_status.py --min-height 0 --texture none
+```
+
+预览脚本和线上出图走的是同一个渲染函数，所以看到的就是真实效果。场景覆盖
+Velocity 群组服层级、超长 MOTD、彩虹名字（逐字色码 / 双色渐变 / 多色渐变）、
+六种验证方式、五档延迟和空态。
+
 ### ❓ 常见问题 (FAQ)
 
 - **`nb: command not found`**：
