@@ -113,7 +113,7 @@ TYPE_TITLE = 36      # 图片主标题
 TYPE_SUBTITLE = 12   # 顶栏副标题（时间 + 数据源）
 TYPE_CHIP = 12       # 顶栏右侧概览胶片 / 卡片 Tag
 TYPE_NAME = 20       # 卡片服务器标题
-TYPE_MOTD = 12       # 卡片 MOTD，两行
+TYPE_MOTD = 16       # 卡片 MOTD，两行；放大填满标题与地址之间的文字区
 TYPE_ADDRESS = 12    # 地址行
 TYPE_MICRO = 8       # 玩家名、署名、版本号
 #: 数字用等宽体 Monocraft。它本身带抗锯齿、不受像素网格约束，但缺中日韩字形，
@@ -166,7 +166,7 @@ CARD_PAD = 8
 CARD_COL_GAP = 12
 ICON_SIZE = CARD_HEIGHT - 2 * CARD_PAD
 MOTD_LINES = 2
-MOTD_LINE_HEIGHT = 18
+MOTD_LINE_HEIGHT = 22
 RAIL_WIDTH = 156
 #: 地址与右下角玩家名之间的结构间距（两者已经分列，保留作最小退让令牌）。
 PLAYERS_GAP = 16

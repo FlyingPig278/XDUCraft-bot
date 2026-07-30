@@ -25,7 +25,7 @@ from functools import lru_cache
 from typing import List, Optional, Sequence, Tuple
 
 from nonebot.log import logger
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 from . import tokens as t
 from .constants import TEXTURES_PATH
@@ -328,10 +328,10 @@ class Canvas:
         if segment.bold:
             width += bold_width(drawn, font_set)
 
-        if segment.italic or segment.gradient is not None:
+        color = as_rgba(segment.color)
+        if segment.italic or segment.gradient is not None or color[3] < 255:
             self._draw_run_masked(drawn, face, x, baseline, segment, font_set, width, span)
         else:
-            color = as_rgba(segment.color)
             self._stamp(self.draw, drawn, face, x, baseline, color, font_set, segment.bold)
 
         self._draw_decorations(x, baseline, width, segment, font_set, face)
@@ -392,7 +392,9 @@ class Canvas:
         else:
             patch = Image.new("RGBA", size, as_rgba(segment.color))
 
-        patch.putalpha(mask)
+        # ``putalpha(mask)`` 会把颜色本身的 alpha 完全覆盖掉，导致 INK_GHOST 等
+        # 半透明文本最终仍以 255 不透明度落笔。字形覆盖率与颜色 alpha 必须相乘。
+        patch.putalpha(ImageChops.multiply(patch.getchannel("A"), mask))
         self.image.paste(patch, origin, patch)
 
     def _draw_decorations(

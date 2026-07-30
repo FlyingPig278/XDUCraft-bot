@@ -533,6 +533,36 @@ def test_latency_number_has_a_small_fixed_gap_before_ms():
     assert all(segment.color == t.INK_GHOST for segment in rich_segments)
 
 
+def test_version_is_visibly_translucent_after_rasterization():
+    translucent = raster.Canvas(120, 40)
+    opaque = raster.Canvas(120, 40)
+    translucent.text("1.21.1", (8, 20), fonts.VERSION, t.INK_GHOST)
+    opaque.text("1.21.1", (8, 20), fonts.VERSION, t.INK)
+    assert np.array(translucent.image).max() < 200
+    assert np.array(opaque.image).max() == 255
+
+
+def test_version_and_counter_have_matching_optical_height():
+    counter_box = fonts.DATA.primary.getbbox("30/100")
+    version_box = fonts.VERSION.primary.getbbox("1.21.1")
+    counter_height = counter_box[3] - counter_box[1]
+    version_height = version_box[3] - version_box[1]
+    assert abs(version_height - counter_height) <= 2
+
+
+def test_motd_is_larger_than_status_data():
+    assert fonts.MOTD.size > fonts.DATA.size
+
+
+def test_offline_icon_is_not_dimmed():
+    card = ir.CardLayout(node={"children": []}, level=0, top=0)
+    icon = Image.new("RGBA", (t.px(t.ICON_SIZE), t.px(t.ICON_SIZE)), (200, 40, 20, 255))
+    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT)
+    ir._draw_icon(canvas, icon, card, online=False)
+    pixel = canvas.image.getpixel((t.px(card.icon_left + 2), t.px(card.icon_top + 2)))
+    assert pixel == (200, 40, 20)
+
+
 def test_playing_players_anchor_to_card_bottom_right():
     node = {
         "players": {"sample": [{"name": "Steve"}, {"name": "Alex"}]},

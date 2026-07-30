@@ -66,7 +66,7 @@ HEADER_RULE_GAP = 6
 # Tag 高 24，中心在 20，正好从 y=8 开始，与图标顶边齐平；地址中心在 98，
 # 字形底部约落在 y=104，也与图标底边齐平。
 ROW_TITLE_Y = 20
-ROW_MOTD_Y = (46, 64)
+ROW_MOTD_Y = (48, 70)
 ROW_META_Y = 98
 RAIL_ROW_Y = (16, 34, 52)
 LATENCY_SIGNAL_GAP = 4
@@ -492,8 +492,7 @@ def _draw_icon(canvas: Canvas, icon: Optional[Image.Image], card: CardLayout, on
         card.icon_top + t.ICON_SIZE,
     )
     if icon is not None:
-        if not online:
-            icon = Image.blend(Image.new("RGBA", icon.size, (0, 0, 0, 0)), icon, 0.45)
+        # 离线 barrier 本身已经是明确的状态符号，不再额外降低不透明度。
         canvas.paste(icon, card.icon_left, card.icon_top)
     canvas.rect(box, outline=t.RULE)
 
