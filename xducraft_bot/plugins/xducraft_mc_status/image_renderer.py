@@ -39,7 +39,7 @@ from .constants import (
 from .data_manager import get_footer, get_group_default_auth_mode
 from .decode_image import decode_image
 from .drawing_utils import Segment, as_rgba, parse_minecraft_formatting, wrap_segments
-from .fonts import ADDRESS, CHIP, DATA, EYEBROW, LABEL, MICRO, MOTD, NAME, SUBTITLE, TITLE
+from .fonts import ADDRESS, CHIP, DATA, EYEBROW, LABEL, MICRO, MOTD, NAME, SUBTITLE, TITLE, VERSION
 from .raster import Canvas, TIER_BARS, TIER_COLORS, ink_for_background, list_textures, ping_tier
 from .settings import (
     NO_TEXTURE,
@@ -550,6 +550,16 @@ def _draw_tag(canvas: Canvas, card: CardLayout, tag: str, x: float, center_y: fl
     return width
 
 
+def _server_title_segments(title: str) -> List[Segment]:
+    """解析服务器标题；支持 § 逐字彩虹、十六进制颜色和多色渐变标签。"""
+    lowered = title.lower()
+    rich_markup = any(
+        marker in lowered
+        for marker in ("<gradient:", "<font ", "<b>", "<strong>", "<i>", "<u>")
+    )
+    return parse_minecraft_formatting(title, t.INK, is_html=rich_markup)
+
+
 def _draw_title_row(canvas: Canvas, card: CardLayout, title: str) -> None:
     center_y = card.top + ROW_TITLE_Y
     cursor = card.body_left
@@ -557,7 +567,7 @@ def _draw_title_row(canvas: Canvas, card: CardLayout, title: str) -> None:
     if tag:
         cursor += _draw_tag(canvas, card, tag, cursor, center_y) + t.CARD_COL_GAP
     available = max(0.0, card.body_right - cursor)
-    segments = canvas.fit(parse_minecraft_formatting(title, t.INK), NAME, available)
+    segments = canvas.fit(_server_title_segments(title), NAME, available)
     canvas.segments(segments, (cursor, center_y), NAME, "lm")
 
 
@@ -686,11 +696,11 @@ def _draw_rail(canvas: Canvas, card: CardLayout) -> None:
         (right, players_y), DATA, t.INK, "rm",
     )
     version = canvas.fit(
-        parse_minecraft_formatting(str(node.get("version") or "N/A"), t.INK_FAINT),
-        ADDRESS,
+        parse_minecraft_formatting(str(node.get("version") or "N/A"), t.INK_GHOST),
+        VERSION,
         t.RAIL_WIDTH,
     )
-    canvas.segments(version, (right, version_y), ADDRESS, "rm")
+    canvas.segments(version, (right, version_y), VERSION, "rm")
 
 
 def _draw_spine(canvas: Canvas, card: CardLayout) -> None:

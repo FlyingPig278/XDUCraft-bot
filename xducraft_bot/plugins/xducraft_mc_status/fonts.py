@@ -242,11 +242,12 @@ MOTD = FontSet("motd", px(TYPE_MOTD), (FACE_BODY,))
 CHIP = FontSet("chip", px(TYPE_CHIP), (FACE_BODY,))
 #: 地址行。
 ADDRESS = FontSet("address", px(TYPE_ADDRESS), (FACE_BODY,))
-#: 玩家列表、署名、版本胶片。
+#: 玩家列表与署名。
 MICRO = FontSet("micro", px(TYPE_MICRO), (FACE_BODY,))
-#: 右栏的三行数据：延迟 / 人数 / 版本号。三者同字号、等间距，读起来才像一列。
-#: 等宽体只有 ASCII，混进中文时自动回退到正文体。
+#: 延迟与人数计数器。等宽体只有 ASCII，混进中文时自动回退正文体。
 DATA = FontSet("data", px(TYPE_DATA), (FACE_DATA, FACE_BODY))
+#: 版本号：与 DATA 完全同字号，但固定使用普通 Minecraft 字体。
+VERSION = FontSet("version", px(TYPE_DATA), (FACE_BODY,))
 #: OFFLINE 等状态词。
 LABEL = FontSet("label", px(TYPE_LABEL), (FACE_LABEL, FACE_CJK_PIXEL, FACE_BODY))
 
@@ -254,5 +255,5 @@ __all__ = [
     "FACE_BODY", "FACE_DISPLAY", "FACE_LABEL", "FACE_DATA", "FACE_CJK_PIXEL",
     "load_face", "covers", "FontSet",
     "EYEBROW", "TITLE", "SUBTITLE", "CHIP", "NAME", "MOTD", "ADDRESS", "MICRO",
-    "DATA", "LABEL",
+    "DATA", "VERSION", "LABEL",
 ]

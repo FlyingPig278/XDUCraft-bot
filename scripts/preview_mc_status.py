@@ -161,6 +161,7 @@ def scenario_rainbow() -> Dict[str, Any]:
         "servers": [
             server(
                 ip="legacy.example.com", tag="逐字色码", tag_color="ff5555", ping=35,
+                comment=legacy_rainbow,
                 description={"text": legacy_rainbow + "\n§7用 §c§§c§7 这类逐字颜色码拼出来的彩虹"},
                 players={"online": 9, "max": 40}),
             server(
@@ -170,6 +171,7 @@ def scenario_rainbow() -> Dict[str, Any]:
                 players={"online": 14, "max": 40}),
             server(
                 ip="gradient-rainbow.example.com", tag="彩虹渐变", tag_color="a371f7", ping=52,
+                comment="<gradient:#FF5555:#FFAA00:#FFFF55:#55FF55:#5555FF:#FF55FF>彩虹服务器 RAINBOW</gradient>",
                 description={"html": "<gradient:#FF5555:#FFAA00:#FFFF55:#55FF55:#55FFFF:#5555FF:#FF55FF>"
                                      "RAINBOW 彩虹渐变横跨中英文</gradient>"
                                      "<br><font color=\"gray\">七个色标的多段渐变</font>"},

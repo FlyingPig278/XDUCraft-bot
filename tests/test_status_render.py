@@ -16,7 +16,7 @@ from xducraft_bot.plugins.xducraft_mc_status import settings as cfg
 
 ROLES = [
     fonts.EYEBROW, fonts.TITLE, fonts.SUBTITLE, fonts.CHIP, fonts.NAME, fonts.MOTD,
-    fonts.ADDRESS, fonts.MICRO, fonts.DATA, fonts.LABEL,
+    fonts.ADDRESS, fonts.MICRO, fonts.DATA, fonts.VERSION, fonts.LABEL,
 ]
 
 CJK = "服务器状态在线离线延迟版本玩家验证登录混合正版第三方外置"
@@ -512,12 +512,15 @@ def test_latency_number_has_a_small_fixed_gap_before_ms():
     card = ir.CardLayout(node=node, level=0, top=0)
     canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT)
     drawn = []
+    rich_segments = []
     canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: (  # type: ignore[assignment]
         drawn.append((text, xy, font, anchor)) or canvas.measure(text, font)
     )
-    canvas.segments = lambda segs, xy, font, anchor="lm", **kwargs: (  # type: ignore[assignment]
-        drawn.append(("".join(s.text for s in segs), xy, font, anchor)) or 0.0
-    )
+    def capture_segments(segs, xy, font, anchor="lm", **kwargs):
+        rich_segments.extend(segs)
+        drawn.append(("".join(s.text for s in segs), xy, font, anchor))
+        return 0.0
+    canvas.segments = capture_segments  # type: ignore[assignment]
     ir._draw_rail(canvas, card)
     calls = {text: (xy, font, anchor) for text, xy, font, anchor in drawn}
 
@@ -525,7 +528,9 @@ def test_latency_number_has_a_small_fixed_gap_before_ms():
     unit_x = calls["ms"][0][0]
     assert calls["42"][2] == "rm"
     assert unit_x - canvas.measure("ms", fonts.DATA) - number_x == ir.LATENCY_UNIT_GAP
-    assert calls["1.21.1"][1] is fonts.ADDRESS
+    assert calls["1.21.1"][1] is fonts.VERSION
+    assert fonts.VERSION.size == fonts.DATA.size
+    assert all(segment.color == t.INK_GHOST for segment in rich_segments)
 
 
 def test_playing_players_anchor_to_card_bottom_right():
@@ -618,3 +623,15 @@ def test_comment_is_the_server_title_not_motd_fallback():
     motd = "".join(segment.text for segment in ir._motd_segments(node))
     assert "服务器标题" not in motd
     assert motd == "第一行 MOTD\n第二行 MOTD"
+
+
+
+def test_server_title_supports_legacy_and_gradient_rainbows():
+    legacy = ir._server_title_segments("§cR§6A§eI§aN§bB§9O§dW")
+    assert len({segment.color for segment in legacy}) >= 6
+
+    gradient = ir._server_title_segments(
+        "<gradient:#FF5555:#FFFF55:#55FF55:#5555FF>彩虹 RAINBOW</gradient>"
+    )
+    assert gradient and gradient[0].gradient is not None
+    assert len(gradient[0].gradient) == 4
