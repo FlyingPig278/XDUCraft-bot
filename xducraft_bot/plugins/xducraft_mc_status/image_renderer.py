@@ -225,7 +225,7 @@ def band_is_visible(settings: RenderSettings, footer_text: str = "") -> bool:
 
 def band_height(footer_text: str, credit_row: bool = True) -> float:
     """底部内容高度。渐变可以向上溢出，但只为实际文字保留空间。"""
-    height = 2 * t.BAND_PADDING_Y
+    height = t.BAND_PADDING_TOP + t.BAND_PADDING_BOTTOM
     if footer_text.strip():
         height += t.BAND_NOTICE_HEIGHT
     if footer_text.strip() and credit_row:
@@ -393,10 +393,15 @@ def _draw_header(
 
 
 def _draw_legend(canvas: Canvas, modes: Sequence[str], top: float) -> None:
-    """只解释验证方式颜色；实线 / 虚线直接由形状表达，不再放说明句。"""
+    """登录方式图例：无边框色块 + 彩色下划线完整名称。"""
     center_y = top + t.LEGEND_HEIGHT / 2
     cursor = t.PAGE_PADDING_X
     limit = t.CANVAS_WIDTH - t.PAGE_PADDING_X
+
+    note = "登录方式"
+    canvas.text(note, (cursor, center_y), MICRO, t.INK_MUTED, "lm")
+    cursor += canvas.measure(note, MICRO) + t.LEGEND_GAP
+
     for mode in modes:
         style = auth.style_for(mode)
         label = style.label
@@ -407,10 +412,11 @@ def _draw_legend(canvas: Canvas, modes: Sequence[str], top: float) -> None:
             (cursor, center_y - t.LEGEND_SWATCH / 2,
              cursor + t.LEGEND_SWATCH, center_y + t.LEGEND_SWATCH / 2),
             fill=style.color,
-            outline=t.RULE,
-            width=1,
         )
-        canvas.text(label, (cursor + t.LEGEND_SWATCH + 6, center_y), MICRO, t.INK_FAINT, "lm")
+        canvas.segments(
+            [Segment(label, as_rgba(style.color), underline=True)],
+            (cursor + t.LEGEND_SWATCH + 6, center_y), MICRO, "lm",
+        )
         cursor += width + t.LEGEND_GAP
 
 
@@ -430,7 +436,7 @@ def _draw_band(
         t.BAND_BOTTOM,
     )
 
-    cursor = content_top + t.BAND_PADDING_Y
+    cursor = content_top + t.BAND_PADDING_TOP
     if footer_text.strip():
         canvas.text(
             canvas.fit_text(footer_text.strip(), SUBTITLE, t.CANVAS_WIDTH - 2 * t.PAGE_PADDING_X),
@@ -468,6 +474,12 @@ def _auth_color(resolved: Optional[auth.ResolvedAuth]):
     return as_rgba(resolved.style.color)
 
 
+def _gradient_auth_color(resolved: Optional[auth.ResolvedAuth]):
+    base = as_rgba(_auth_color(resolved))
+    alpha = min(base[3] - 1, int(round(base[3] * t.CARD_GRADIENT_ALPHA_RATIO))) if base[3] else 0
+    return (*base[:3], max(0, alpha))
+
+
 def _draw_auth_stripe(canvas: Canvas, card: CardLayout, resolved: Optional[auth.ResolvedAuth]) -> None:
     color = _auth_color(resolved)
     if resolved is None or resolved.mode == auth.MODE_UNKNOWN or resolved.confirmed:
@@ -502,7 +514,7 @@ def _draw_card_shell(
     )
     if online:
         base_color = as_rgba(_auth_color(resolved))
-        color = (*base_color[:3], min(base_color[3], t.CARD_GRADIENT_ALPHA))
+        color = _gradient_auth_color(resolved)
         transparent = (*base_color[:3], 0)
         canvas.horizontal_gradient(
             (card.box_left, card.top, card.box_right, card.top + t.RULE_WIDTH),
@@ -699,7 +711,7 @@ def _draw_player_list(
     text = _fit_player_list(canvas, names, available)
     if not text:
         return ""
-    canvas.text(text, (text_right, center_y), MICRO, t.INK_FAINT, "rm")
+    canvas.text(text, (text_right, center_y), MICRO, t.INK_PLAYER, "rm")
     canvas.rect(
         (dot_left, center_y - t.PLAYER_LIST_DOT / 2,
          dot_right, center_y + t.PLAYER_LIST_DOT / 2),
@@ -714,7 +726,7 @@ def _draw_meta_row(
     address: str,
     resolved: Optional[auth.ResolvedAuth],
 ) -> None:
-    """底部地址行；长 Tag 会把地址起点推到 Tag 右边。"""
+    """底部只保留地址与受它约束的玩家名单。"""
     center_y = card.top + ROW_META_Y
     tag_layout = _tag_layout(canvas, card)
     tag_right = card.box_left + (tag_layout[2] if tag_layout else 0)
@@ -722,27 +734,33 @@ def _draw_meta_row(
         card.body_left,
         tag_right + (t.TAG_ADDRESS_GAP if tag_layout else 0),
     )
-
-    label = ""
-    label_width = 0.0
-    if resolved is not None and resolved.mode != auth.MODE_UNKNOWN:
-        label = resolved.style.short_label
-        label_width = canvas.measure(label, ADDRESS)
-    gap = 8 if label else 0
-    address_budget = max(0.0, card.rail_right - content_left - label_width - gap)
+    address_budget = max(0.0, card.rail_right - content_left)
     address_text = canvas.fit_text(address, ADDRESS, address_budget)
     address_width = canvas.text(
-        address_text, (content_left, center_y), ADDRESS, t.INK_FAINT, "lm",
+        address_text, (content_left, center_y), ADDRESS, t.INK_META, "lm",
     )
-    content_end = content_left + address_width
-    if label:
-        label_left = content_end + gap
-        canvas.segments(
-            [Segment(label, _auth_color(resolved), underline=True)],
-            (label_left, center_y), ADDRESS, "lm",
-        )
-        content_end = label_left + label_width
-    _draw_player_list(canvas, card, content_end, center_y)
+    _draw_player_list(canvas, card, content_left + address_width, center_y)
+
+
+def _draw_tag_glints(canvas: Canvas, box: Tuple[float, float, float, float]) -> None:
+    """角点最亮，沿两条邻边快速淡出的金属铭牌高光。"""
+    left, top, right, bottom = box
+    length = min(t.TAG_GLINT_LENGTH, (right - left) / 2, (bottom - top) / 2)
+    width = t.TAG_GLINT_WIDTH
+    color = t.TAG_GLINT_COLOR
+    transparent = (*as_rgba(color)[:3], 0)
+    canvas.horizontal_gradient(
+        (left, top, left + length, top + width), color, transparent,
+    )
+    canvas.vertical_gradient(
+        (left, top, left + width, top + length), color, transparent,
+    )
+    canvas.horizontal_gradient(
+        (right - length, bottom - width, right, bottom), transparent, color,
+    )
+    canvas.vertical_gradient(
+        (right - width, bottom - length, right, bottom), transparent, color,
+    )
 
 
 def _draw_tag_overlay(
@@ -761,6 +779,7 @@ def _draw_tag_overlay(
         color=t.TAG_SHADOW_COLOR,
     )
     canvas.rect(box, fill=background, outline=t.RULE, width=1)
+    _draw_tag_glints(canvas, box)
     canvas.text(
         label, (left + t.TAG_CHIP_PADDING_X, top + t.TAG_CHIP_HEIGHT / 2),
         CHIP, ink_for_background(background), "lm",
@@ -773,7 +792,6 @@ def _draw_signal(canvas: Canvas, right: float, center_y: float, tier: str) -> fl
     color = TIER_COLORS[tier]
     width = t.SIGNAL_BARS * BAR_WIDTH + (t.SIGNAL_BARS - 1) * BAR_GAP
     max_height = BAR_BASE + (t.SIGNAL_BARS - 1) * BAR_STEP
-    # BAR_BASE 比旧值高 1，同时底边下移 1：每格顶边不动，只向下延长 1px。
     bottom = center_y + (max_height + 1) / 2
     left = right - width
     for index in range(t.SIGNAL_BARS):
@@ -786,8 +804,33 @@ def _draw_signal(canvas: Canvas, right: float, center_y: float, tier: str) -> fl
     return width
 
 
-def _draw_rail(canvas: Canvas, card: CardLayout, show_fire: bool = False) -> None:
-    """服务器行右侧的延迟、人数和版本状态栈。"""
+def _version_auth_segments(
+    canvas: Canvas, node: Dict[str, Any], resolved: Optional[auth.ResolvedAuth],
+) -> List[Segment]:
+    """灰色版本在前，粗体下划线验证方式在后；验证方式优先保留。"""
+    tail: List[Segment] = []
+    if resolved is not None and resolved.mode != auth.MODE_UNKNOWN:
+        tail = [
+            Segment("  ", t.INK_META),
+            Segment(
+                resolved.style.short_label, _auth_color(resolved),
+                bold=True, underline=True,
+            ),
+        ]
+    tail_width = canvas.measure_segments(tail, VERSION)
+    version = canvas.fit(
+        parse_minecraft_formatting(str(node.get("version") or "N/A"), t.INK_META),
+        VERSION,
+        max(0.0, t.RAIL_WIDTH - tail_width),
+    )
+    return version + tail
+
+
+def _draw_rail(
+    canvas: Canvas, card: CardLayout, show_fire: bool = False,
+    resolved: Optional[auth.ResolvedAuth] = None,
+) -> None:
+    """服务器行右侧的延迟、人数和版本 / 验证方式状态栈。"""
     node = card.node
     online = bool(node.get("online"))
     ping = int(node.get("ping") or 0) if online else None
@@ -801,21 +844,14 @@ def _draw_rail(canvas: Canvas, card: CardLayout, show_fire: bool = False) -> Non
         canvas.text("离线", (unit_right, ping_y), DATA, t.STATE_POOR, "rm")
         return
 
-    color = TIER_COLORS[tier]
-    latency_text = f"{ping}ms"
-    canvas.text(latency_text, (unit_right, ping_y), DATA, color, "rm")
-
+    canvas.text(f"{ping}ms", (unit_right, ping_y), DATA, TIER_COLORS[tier], "rm")
     players = node.get("players") if isinstance(node.get("players"), dict) else {}
     counter_text = f"{players.get('online', 0)}/{players.get('max', 0)}"
     canvas.text(counter_text, (right, players_y), DATA, t.INK, "rm")
     if show_fire:
         _draw_fire_by_player_count(canvas, right, players_y, counter_text)
-    version = canvas.fit(
-        parse_minecraft_formatting(str(node.get("version") or "N/A"), t.INK_GHOST),
-        VERSION,
-        t.RAIL_WIDTH,
-    )
-    canvas.segments(version, (right, version_y), VERSION, "rm")
+    version_auth = _version_auth_segments(canvas, node, resolved)
+    canvas.segments(version_auth, (right, version_y), VERSION, "rm")
 
 
 def _draw_spine(canvas: Canvas, card: CardLayout) -> None:
@@ -847,7 +883,7 @@ def _draw_card(
     _draw_icon(canvas, icons.get(id(card.node)), card, online)
     _draw_motd_rows(canvas, card)
     _draw_meta_row(canvas, card, address, resolved)
-    _draw_rail(canvas, card, show_fire)
+    _draw_rail(canvas, card, show_fire, resolved)
     _draw_tag_overlay(canvas, card)
 
 

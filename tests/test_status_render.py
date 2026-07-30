@@ -303,6 +303,10 @@ def test_footer_announcement_uses_opaque_ink():
     assert calls == [("服务器公告", t.INK)]
 
 
+def test_footer_has_more_bottom_than_top_padding():
+    assert t.BAND_PADDING_BOTTOM > t.BAND_PADDING_TOP
+
+
 def test_texture_selection_honours_every_mode():
     available = raster.list_textures()
     assert available, "预览与出图都依赖 resources/textures 里的方块材质"
@@ -595,8 +599,22 @@ def test_online_server_uses_auth_colored_top_and_bottom_gradients():
     assert len(gradients) == 2
     assert gradients[0][0] == (card.box_left, card.top, card.box_right, card.top + t.RULE_WIDTH)
     assert gradients[1][0] == (card.box_left, card.bottom - t.RULE_WIDTH, card.box_right, card.bottom)
-    assert all(start[3] == 0 and end[:3] == resolved.style.color[:3]
-               and end[3] == t.CARD_GRADIENT_ALPHA for _, start, end in gradients)
+    expected_end = ir._gradient_auth_color(resolved)
+    assert all(start[3] == 0 and end == expected_end for _, start, end in gradients)
+    assert expected_end[3] < resolved.style.color[3]
+
+
+def test_gradient_is_always_more_translucent_than_any_stripe():
+    from types import SimpleNamespace
+
+    translucent = SimpleNamespace(mode="custom", style=SimpleNamespace(color=(40, 80, 120, 80)))
+    end = ir._gradient_auth_color(translucent)
+    assert end[:3] == translucent.style.color[:3]
+    assert 0 <= end[3] < translucent.style.color[3]
+
+    neutral_stripe = ir._auth_color(None)
+    neutral_end = ir._gradient_auth_color(None)
+    assert neutral_end[3] < neutral_stripe[3]
 
 
 def test_offline_server_has_no_gradient_border():
@@ -606,6 +624,29 @@ def test_offline_server_has_no_gradient_border():
     canvas.horizontal_gradient = lambda *args: gradients.append(args)  # type: ignore[assignment]
     ir._draw_card_shell(canvas, card, resolved=None, online=False)
     assert gradients == []
+
+
+def test_auth_legend_uses_note_borderless_swatches_and_tinted_underlines():
+    from xducraft_bot.plugins.xducraft_mc_status import auth_mode as auth
+
+    modes = [auth.MODE_OFFICIAL, auth.MODE_MUA]
+    canvas = raster.Canvas(t.CANVAS_WIDTH, t.LEGEND_HEIGHT)
+    text_calls = []
+    swatches = []
+    segments = []
+    canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: (  # type: ignore[assignment]
+        text_calls.append((text, fill)) or canvas.measure(text, font)
+    )
+    canvas.rect = lambda box, **kwargs: swatches.append(kwargs)  # type: ignore[assignment]
+    canvas.segments = lambda items, *args, **kwargs: segments.extend(items) or 0.0  # type: ignore[assignment]
+    ir._draw_legend(canvas, modes, 0)
+
+    assert text_calls[0] == ("登录方式", t.INK_MUTED)
+    assert len(swatches) == len(modes)
+    assert all("outline" not in swatch for swatch in swatches)
+    assert [segment.text for segment in segments] == [auth.style_for(mode).label for mode in modes]
+    assert all(segment.underline for segment in segments)
+    assert [segment.color for segment in segments] == [auth.style_for(mode).color for mode in modes]
 
 
 def test_parent_child_connectors_use_stronger_color():
@@ -645,7 +686,7 @@ def test_latency_is_one_compact_right_aligned_text_run():
     assert "42" not in calls and "ms" not in calls
     assert calls["1.21.1"][1] is fonts.VERSION
     assert fonts.VERSION.size == fonts.DATA.size
-    assert all(segment.color == t.INK_GHOST for segment in rich_segments)
+    assert all(segment.color == t.INK_META for segment in rich_segments)
 
 
 def test_compact_card_and_icon_share_edge_padding():
@@ -686,7 +727,7 @@ def test_two_line_motd_keeps_both_row_positions():
 def test_version_is_visibly_translucent_after_rasterization():
     translucent = raster.Canvas(120, 40)
     opaque = raster.Canvas(120, 40)
-    translucent.text("1.21.1", (8, 20), fonts.VERSION, t.INK_GHOST)
+    translucent.text("1.21.1", (8, 20), fonts.VERSION, t.INK_META)
     opaque.text("1.21.1", (8, 20), fonts.VERSION, t.INK)
     assert np.array(translucent.image).max() < 200
     assert np.array(opaque.image).max() == 255
@@ -767,6 +808,23 @@ def test_tag_casts_soft_shadow_beyond_its_hard_edge():
     assert max(canvas.image.getpixel((sample_x, sample_y))) < 255
     assert canvas.image.getpixel((t.px(card.right - 20), t.px(card.top + 30))) == (255, 255, 255)
     assert t.TAG_SHADOW_BLUR >= 3
+
+
+def test_tag_glints_fade_away_from_bright_corners():
+    node = {"tag": "Metal", "tag_color": "6E7681", "children": []}
+    card = ir.CardLayout(node=node, level=0, top=0)
+    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT + 20)
+    gradients = []
+    canvas.horizontal_gradient = lambda box, start, end: gradients.append(("h", box, start, end))  # type: ignore[assignment]
+    canvas.vertical_gradient = lambda box, start, end: gradients.append(("v", box, start, end))  # type: ignore[assignment]
+    box = ir._draw_tag_overlay(canvas, card)
+
+    assert box is not None and len(gradients) == 4
+    transparent = (*t.TAG_GLINT_COLOR[:3], 0)
+    assert gradients[0][2:] == (t.TAG_GLINT_COLOR, transparent)
+    assert gradients[1][2:] == (t.TAG_GLINT_COLOR, transparent)
+    assert gradients[2][2:] == (transparent, t.TAG_GLINT_COLOR)
+    assert gradients[3][2:] == (transparent, t.TAG_GLINT_COLOR)
     assert t.TAG_SHADOW_COLOR[3] >= 180
 
 def test_long_tag_pushes_address_right_of_tag_edge():
@@ -803,14 +861,21 @@ def test_short_player_list_is_shown_in_full_with_green_dot():
     texts = []
     dots = []
     canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: (  # type: ignore[assignment]
-        texts.append((text, xy, anchor)) or canvas.measure(text, font)
+        texts.append((text, xy, anchor, fill)) or canvas.measure(text, font)
     )
     canvas.rect = lambda box, **kwargs: dots.append((box, kwargs.get("fill")))  # type: ignore[assignment]
     ir._draw_meta_row(canvas, card, "short.example.com", resolved=None)
+    assert texts[0][3] == t.INK_META
     assert texts[-1][0] == "Steve, Alex正在游玩"
     assert texts[-1][2] == "rm"
+    assert texts[-1][3] == t.INK_PLAYER
     assert dots[-1][0][2] == card.rail_right
     assert dots[-1][1] == t.STATE_EXCELLENT
+
+
+def test_player_list_is_darker_than_address_and_version():
+    assert du.relative_luminance(t.INK_PLAYER) < du.relative_luminance(t.INK_META)
+    assert t.INK_PLAYER[3] <= t.INK_META[3]
 
 
 def test_long_player_list_uses_maximal_prefix_and_others_suffix():
@@ -859,21 +924,34 @@ def test_signal_bars_extend_to_nine_pixels_but_stay_below_text_size():
     assert max(heights) < t.TYPE_DATA
 
 
-def test_auth_method_is_underlined_colored_text_not_a_badge():
+def test_auth_method_is_bold_after_version_not_address():
     from types import SimpleNamespace
     from xducraft_bot.plugins.xducraft_mc_status import auth_mode as auth
 
     resolved = SimpleNamespace(mode=auth.MODE_XDU, style=auth.style_for(auth.MODE_XDU))
-    card = ir.CardLayout(node={"children": []}, level=0, top=0)
+    card = ir.CardLayout(
+        node={
+            "online": True, "ping": 42, "version": "1.21.1",
+            "players": {"online": 0, "max": 20}, "children": [],
+        },
+        level=0, top=0,
+    )
     canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT)
-    segments = []
+    meta_segments = []
     canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: canvas.measure(text, font)  # type: ignore[assignment]
-    canvas.segments = lambda items, *args, **kwargs: segments.extend(items) or 0.0  # type: ignore[assignment]
+    canvas.segments = lambda items, *args, **kwargs: meta_segments.extend(items) or 0.0  # type: ignore[assignment]
     ir._draw_meta_row(canvas, card, "mc.example.com", resolved)
-    assert len(segments) == 1
-    assert segments[0].text == resolved.style.short_label
-    assert segments[0].underline
-    assert segments[0].color == ir._auth_color(resolved)
+    assert meta_segments == []
+
+    rail_segments = []
+    canvas.segments = lambda items, *args, **kwargs: rail_segments.extend(items) or 0.0  # type: ignore[assignment]
+    ir._draw_rail(canvas, card, resolved=resolved)
+    assert "".join(segment.text for segment in rail_segments[:-2]) == "1.21.1"
+    assert rail_segments[-2].text == "  "
+    assert rail_segments[-1].text == resolved.style.short_label
+    assert rail_segments[-1].bold
+    assert rail_segments[-1].underline
+    assert rail_segments[-1].color == ir._auth_color(resolved)
 
 
 def test_config_only_auth_stripe_is_opaque_and_dashed():
