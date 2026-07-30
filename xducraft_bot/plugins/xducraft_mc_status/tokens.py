@@ -158,17 +158,17 @@ BAND_VIGNETTE = 56
 BAND_BOTTOM = (0, 0, 0, 205)
 
 # --- 卡片 ---
-#: 卡片高度固定；服务器标题、两行 MOTD、地址各有自己的行，不再把 MOTD 压平。
-CARD_HEIGHT = 96
+#: 卡片加高到 112：标题、两行 MOTD、底部地址之间留出呼吸，同时给 96px 图标留出
+#: 与正文完全相同的 8px 上下内边距。
+CARD_HEIGHT = 112
 CARD_GAP = 4
-#: 图标仍与四边保持统一内边距。80 逻辑像素的图标用最近邻缩放，保留像素边缘。
 CARD_PAD = 8
 CARD_COL_GAP = 12
 ICON_SIZE = CARD_HEIGHT - 2 * CARD_PAD
 MOTD_LINES = 2
 MOTD_LINE_HEIGHT = 18
 RAIL_WIDTH = 156
-#: 地址与玩家名之间的最小间距。
+#: 地址与右下角玩家名之间的结构间距（两者已经分列，保留作最小退让令牌）。
 PLAYERS_GAP = 16
 
 #: 左边条：承载验证方式颜色，是这套设计里唯一的彩色竖条。

@@ -490,6 +490,59 @@ def test_every_server_row_has_the_same_height():
     assert cards[1].top - cards[0].top == t.CARD_HEIGHT + t.CARD_GAP
 
 
+def test_icon_and_text_share_card_edge_padding():
+    """图标与正文必须从同一条顶边开始、在同一条底边结束。"""
+    assert t.ICON_SIZE == t.CARD_HEIGHT - 2 * t.CARD_PAD
+    assert t.ICON_SIZE > 80
+    assert ir.ROW_TITLE_Y - t.TAG_CHIP_HEIGHT / 2 == t.CARD_PAD
+    assert t.CARD_HEIGHT - (ir.ROW_META_Y + t.TYPE_ADDRESS / 2) == t.CARD_PAD
+
+
+def test_status_stack_is_compact_in_the_top_half():
+    first, second, third = ir.RAIL_ROW_Y
+    assert second - first == third - second
+    assert third < t.CARD_HEIGHT / 2
+
+
+def test_latency_number_has_a_small_fixed_gap_before_ms():
+    node = {
+        "online": True, "ping": 42, "version": "1.21.1",
+        "players": {"online": 3, "max": 20}, "children": [],
+    }
+    card = ir.CardLayout(node=node, level=0, top=0)
+    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT)
+    drawn = []
+    canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: (  # type: ignore[assignment]
+        drawn.append((text, xy, font, anchor)) or canvas.measure(text, font)
+    )
+    canvas.segments = lambda segs, xy, font, anchor="lm", **kwargs: (  # type: ignore[assignment]
+        drawn.append(("".join(s.text for s in segs), xy, font, anchor)) or 0.0
+    )
+    ir._draw_rail(canvas, card)
+    calls = {text: (xy, font, anchor) for text, xy, font, anchor in drawn}
+
+    number_x = calls["42"][0][0]
+    unit_x = calls["ms"][0][0]
+    assert calls["42"][2] == "rm"
+    assert unit_x - canvas.measure("ms", fonts.DATA) - number_x == ir.LATENCY_UNIT_GAP
+    assert calls["1.21.1"][1] is fonts.ADDRESS
+
+
+def test_playing_players_anchor_to_card_bottom_right():
+    node = {
+        "players": {"sample": [{"name": "Steve"}, {"name": "Alex"}]},
+        "children": [],
+    }
+    card = ir.CardLayout(node=node, level=0, top=10)
+    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT + 20)
+    drawn = []
+    canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: (  # type: ignore[assignment]
+        drawn.append((text, xy, anchor)) or 0.0
+    )
+    ir._draw_playing_players(canvas, card)
+    assert drawn == [("Steve · Alex", (card.rail_right, card.top + ir.ROW_META_Y), "rm")]
+
+
 def test_config_only_auth_stripe_is_opaque_and_dashed():
     from types import SimpleNamespace
     from xducraft_bot.plugins.xducraft_mc_status import auth_mode as auth

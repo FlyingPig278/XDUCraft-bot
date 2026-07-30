@@ -62,11 +62,15 @@ HEADER_ROW_TITLE = 44
 HEADER_ROW_SUBTITLE = 20
 HEADER_RULE_GAP = 6
 
-# 固定卡片内的标题、两行 MOTD、元信息，以及右栏三行数据。
-ROW_TITLE_Y = 16
-ROW_MOTD_Y = (40, 58)
-ROW_META_Y = 80
-RAIL_ROW_Y = (16, 48, 80)
+# 固定卡片内的标题、两行 MOTD、底部元信息；右栏三项压在右上角。
+# Tag 高 24，中心在 20，正好从 y=8 开始，与图标顶边齐平；地址中心在 98，
+# 字形底部约落在 y=104，也与图标底边齐平。
+ROW_TITLE_Y = 20
+ROW_MOTD_Y = (46, 64)
+ROW_META_Y = 98
+RAIL_ROW_Y = (16, 34, 52)
+LATENCY_SIGNAL_GAP = 4
+LATENCY_UNIT_GAP = 2
 
 # 信号条。
 BAR_WIDTH = 3
@@ -614,6 +618,7 @@ def _draw_meta_row(
     address: str,
     resolved: Optional[auth.ResolvedAuth],
 ) -> None:
+    """底部左侧：地址 + 验证方式。右下角留给正在游玩的玩家名。"""
     center_y = card.top + ROW_META_Y
     auth_width = _auth_chip_width(canvas, resolved)
     auth_gap = 8 if auth_width else 0
@@ -622,17 +627,20 @@ def _draw_meta_row(
     address_width = canvas.text(
         address_text, (card.body_left, center_y), ADDRESS, t.INK_FAINT, "lm",
     )
-    cursor = card.body_left + address_width
     if auth_width:
-        cursor += auth_gap
-        cursor += _draw_auth_chip(canvas, resolved, cursor, center_y)
+        _draw_auth_chip(canvas, resolved, card.body_left + address_width + auth_gap, center_y)
 
+
+def _draw_playing_players(canvas: Canvas, card: CardLayout) -> None:
+    """右下角：正在游玩的玩家名；只占用压缩状态栈释放出的右栏空间。"""
     names = _player_names(card.node)
-    available = max(0.0, card.body_right - cursor - t.PLAYERS_GAP)
-    if names and available > 0:
-        text = canvas.fit_text(" · ".join(names), MICRO, available)
-        if text:
-            canvas.text(text, (card.body_right, center_y), MICRO, t.INK_FAINT, "rm")
+    if not names:
+        return
+    text = canvas.fit_text(" · ".join(names), MICRO, t.RAIL_WIDTH)
+    if text:
+        canvas.text(
+            text, (card.rail_right, card.top + ROW_META_Y), MICRO, t.INK_FAINT, "rm",
+        )
 
 
 def _draw_signal(canvas: Canvas, right: float, center_y: float, tier: str) -> float:
@@ -652,6 +660,7 @@ def _draw_signal(canvas: Canvas, right: float, center_y: float, tier: str) -> fl
 
 
 def _draw_rail(canvas: Canvas, card: CardLayout) -> None:
+    """右上角紧凑状态栈：延迟、人数、版本；版本使用普通 Minecraft 字体。"""
     node = card.node
     online = bool(node.get("online"))
     ping = int(node.get("ping") or 0) if online else None
@@ -660,12 +669,17 @@ def _draw_rail(canvas: Canvas, card: CardLayout) -> None:
     ping_y, players_y, version_y = (card.top + offset for offset in RAIL_ROW_Y)
 
     bars = _draw_signal(canvas, right, ping_y, tier)
-    latency_right = right - bars - 6
+    unit_right = right - bars - LATENCY_SIGNAL_GAP
     if not online:
-        canvas.text("离线", (latency_right, ping_y), DATA, t.STATE_POOR, "rm")
+        canvas.text("离线", (unit_right, ping_y), DATA, t.STATE_POOR, "rm")
         return
 
-    canvas.text(f"{ping} ms", (latency_right, ping_y), DATA, TIER_COLORS[tier], "rm")
+    color = TIER_COLORS[tier]
+    unit_width = canvas.measure("ms", DATA)
+    canvas.text("ms", (unit_right, ping_y), DATA, color, "rm")
+    number_right = unit_right - unit_width - LATENCY_UNIT_GAP
+    canvas.text(str(ping), (number_right, ping_y), DATA, color, "rm")
+
     players = node.get("players") if isinstance(node.get("players"), dict) else {}
     canvas.text(
         f"{players.get('online', 0)}/{players.get('max', 0)}",
@@ -673,10 +687,10 @@ def _draw_rail(canvas: Canvas, card: CardLayout) -> None:
     )
     version = canvas.fit(
         parse_minecraft_formatting(str(node.get("version") or "N/A"), t.INK_FAINT),
-        DATA,
+        ADDRESS,
         t.RAIL_WIDTH,
     )
-    canvas.segments(version, (right, version_y), DATA, "rm")
+    canvas.segments(version, (right, version_y), ADDRESS, "rm")
 
 
 def _draw_spine(canvas: Canvas, card: CardLayout) -> None:
@@ -710,6 +724,7 @@ def _draw_card(
     _draw_motd_rows(canvas, card)
     _draw_meta_row(canvas, card, "" if title == address else address, resolved)
     _draw_rail(canvas, card)
+    _draw_playing_players(canvas, card)
 
 
 # ------------------------------------------------------------------------------

@@ -149,9 +149,10 @@ A Minecraft server status query plugin for NoneBot, specially designed for XDUCr
 
 状态图的设计语言参考了 [`koishi-plugin-mcsm-portal`](https://github.com/KrLite/koishi-plugin-mcsm-portal)：
 854×480 的原版窗口画布、方块材质、Minecraft 像素字体和直角硬边框；仅白字保留原版投影，黑字与彩色字不加投影。
-每张材质会按自身亮度动态压暗，避免竹板砖过亮、黑色混凝土粉末过暗。卡片固定高度，
-彩色标签旁是服务器标题，下面完整保留两行 MOTD；延迟 / 人数 / 版本在右栏等字号排列，
-登录验证方式在左边条显示（实测为实线、仅配置为虚线）。
+每张材质会按自身亮度动态压暗，避免竹板砖过亮、黑色混凝土粉末过暗。卡片加高后，
+图标和文字区共用 8px 上下内边距；彩色标签旁是服务器标题，下面完整保留两行 MOTD。
+右上角紧凑排列延迟 / 人数 / 普通 Minecraft 字体版本号，玩家名落在右下角；登录验证
+方式在左边条显示（实测为实线、仅配置为虚线）。
 
 外观参数写在 `.env`（见 `.env.prod.example`，改完重启生效）：
 
