@@ -4,9 +4,8 @@
 
 设计语言来自 ``koishi-plugin-mcsm-portal``，规则只有几条，但每条都是硬约束：
 
-1. **逻辑坐标 = Minecraft 原版窗口宽度 854。** 所有尺寸都用逻辑单位书写，
-   出图时统一乘 :data:`SCALE`。这等价于参考项目的 ``deviceScaleFactor``：
-   整数倍放大，像素字体不会糊。
+1. **布局使用可配置的逻辑画布宽度。** 所有尺寸都用逻辑单位书写，出图时统一乘
+   :data:`SCALE`。这等价于参考项目的 ``deviceScaleFactor``：整数倍放大，像素字体不会糊。
 2. **零圆角。** 所有边框都是 2 逻辑像素的实心直角边。
 3. **不发明配色。** 背景是方块材质平铺 + 一层纯黑压暗，卡片只用黑白透明度
    分层；有彩色的地方只有两处——右栏的状态色取自 Minecraft 自己的聊天调色板，
@@ -23,9 +22,8 @@ from .settings import SETTINGS
 # 1. 缩放
 # ==============================================================================
 
-#: 逻辑画布宽度。854×480 是 Minecraft 的默认窗口尺寸，参考项目直接拿它当画布。
-#: 由 ``MCS_WIDTH`` 配置，import 时读取一次——:mod:`.fonts` 的字号在 import 阶段
-#: 就按倍率算好了，运行期再改会让字号和画布对不上。改这两项要重启。
+#: 逻辑画布宽度由 ``MCS_WIDTH`` 配置，import 时读取一次；:mod:`.fonts` 的字号
+#: 同样在 import 阶段按倍率加载，改宽度或倍率后需要重启。
 CANVAS_WIDTH = SETTINGS.width
 #: 画布最小高度，同样取自原版窗口。``MCS_MIN_HEIGHT=0`` 表示收缩到内容。
 CANVAS_MIN_HEIGHT = SETTINGS.min_height
@@ -49,11 +47,11 @@ def px(value: float) -> int:
 #: 有材质时压多少黑由 :func:`.raster.texture_scrim` 按材质亮度算，不是定值——
 #: 竹板砖比泥土亮得多，泥土又比黑色混凝土粉末亮得多，一刀切会让亮材质上的字发飘。
 SCRIM = (0, 0, 0, 148)
-#: 所有较亮材质压到与黑色混凝土粉末接近的相对亮度。黑色叠层无法提亮少数
-#: 更暗的纹理，但全库压暗后的亮度差从约 100 倍收敛到约 1.5 倍。
-SCRIM_TARGET_LUMINANCE = 0.012
-#: 再亮的材质也保留最低限度的纹理。
-SCRIM_MAX_ALPHA = 0.96
+#: 背景只保留很淡的纹理。目标低于当前资源里最暗的煤炭块 / 黑曜石，因此连
+#: 黑色混凝土粉末也一定会继续压暗，而不是因为“已经够暗”跳过遮罩。
+SCRIM_TARGET_LUMINANCE = 0.003
+#: 极亮材质允许接近全黑，但保留最低限度的纹理差异。
+SCRIM_MAX_ALPHA = 0.99
 #: 在线卡片底色 rgba(0,0,0,.40)。
 SURFACE = (0, 0, 0, 102)
 #: 离线卡片不铺底——“暗”本身就是离线的信号，不需要再加一个颜色。
@@ -177,6 +175,10 @@ TAG_CHIP_HEIGHT = 20
 TAG_CHIP_MAX_WIDTH = 240
 #: 长 Tag 把地址推开时保留的文字间距；短 Tag 不影响地址默认起点。
 TAG_ADDRESS_GAP = 8
+#: Tag 与图标 / 文字相交时，用轻微投影软化硬边。
+TAG_SHADOW_OFFSET = (1, 1)
+TAG_SHADOW_BLUR = 2
+TAG_SHADOW_COLOR = (0, 0, 0, 150)
 
 #: 地址之后至少留出这段距离才显示玩家名；玩家名用小绿点引导并向左截断。
 PLAYER_LIST_GAP = 12
@@ -206,5 +208,6 @@ __all__ = [
     "ICON_SIZE", "MOTD_LINES", "RAIL_WIDTH", "FIRE_ICON_SIZE", "FIRE_ICON_GAP", "FIRE_ICON_RISE",
     "AUTH_STRIPE_WIDTH",
     "TAG_CHIP_PADDING_X", "TAG_CHIP_HEIGHT", "TAG_CHIP_MAX_WIDTH", "TAG_ADDRESS_GAP",
+    "TAG_SHADOW_OFFSET", "TAG_SHADOW_BLUR", "TAG_SHADOW_COLOR",
     "PLAYER_LIST_GAP", "PLAYER_LIST_DOT", "PLAYER_LIST_DOT_GAP",
 ]

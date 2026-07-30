@@ -118,11 +118,15 @@ class CardLayout:
 
     @property
     def box_left(self) -> float:
-        return self.left + t.AUTH_STRIPE_WIDTH
+        return self.left
 
     @property
     def right(self) -> float:
         return t.CANVAS_WIDTH - t.PAGE_PADDING_X
+
+    @property
+    def box_right(self) -> float:
+        return self.right - t.AUTH_STRIPE_WIDTH
 
     @property
     def bottom(self) -> float:
@@ -147,7 +151,7 @@ class CardLayout:
 
     @property
     def rail_right(self) -> float:
-        return self.right - t.CARD_PAD
+        return self.box_right - t.CARD_PAD
 
     @property
     def rail_left(self) -> float:
@@ -331,7 +335,7 @@ def _draw_header_statuses(
 ) -> float:
     """右对齐纯文字概览；有在线项用绿点，计数为零时对应点变红。"""
     items = (
-        (f"{stats['online']}/{stats['total']}服务器在线", stats["online"] > 0),
+        (f"{stats['online']}/{stats['total']}个服务器在线", stats["online"] > 0),
         (f"{stats['players_online']}人在线", stats["players_online"] > 0),
     )
     widths = [
@@ -466,23 +470,21 @@ def _auth_color(resolved: Optional[auth.ResolvedAuth]):
 def _draw_auth_stripe(canvas: Canvas, card: CardLayout, resolved: Optional[auth.ResolvedAuth]) -> None:
     color = _auth_color(resolved)
     if resolved is None or resolved.mode == auth.MODE_UNKNOWN or resolved.confirmed:
-        canvas.rect((card.left, card.top, card.box_left, card.bottom), fill=color)
+        canvas.rect((card.box_right, card.top, card.right, card.bottom), fill=color)
     else:
         cursor = card.top
         while cursor < card.bottom:
             start = cursor
-            # 最后一段保持正常长度并贴住底边；宁可把最后一个内部间隔放宽一点，
-            # 也不在卡片底部留下 1–Npx 的残缺空隙。
             if start + t.AUTH_DASH < card.bottom <= start + t.AUTH_DASH + t.AUTH_DASH_GAP:
                 start = card.bottom - t.AUTH_DASH
             end = min(start + t.AUTH_DASH, card.bottom)
-            canvas.rect((card.left, start, card.box_left, end), fill=color)
+            canvas.rect((card.box_right, start, card.right, end), fill=color)
             if end >= card.bottom:
                 break
             cursor += t.AUTH_DASH + t.AUTH_DASH_GAP
     if resolved is not None and resolved.conflict:
         canvas.rect(
-            (card.left, card.top, card.box_left, min(card.top + t.AUTH_DASH, card.bottom)),
+            (card.box_right, card.top, card.right, min(card.top + t.AUTH_DASH, card.bottom)),
             fill=t.AUTH_CONFLICT_COLOR,
         )
 
@@ -494,9 +496,9 @@ def _draw_card_shell(
     online: bool,
 ) -> None:
     canvas.rect(
-        (card.box_left, card.top, card.right, card.bottom),
+        (card.box_left, card.top, card.box_right, card.bottom),
         fill=t.SURFACE if online else t.SURFACE_IDLE,
-        outline=t.RULE,
+        outline=t.RULE_DARK,
     )
     _draw_auth_stripe(canvas, card, resolved)
 
@@ -624,13 +626,16 @@ def _motd_segments(server_data: Dict[str, Any]) -> List[Segment]:
 
 
 def _draw_motd_rows(canvas: Canvas, card: CardLayout) -> None:
+
     lines = wrap_segments(
         _motd_segments(card.node), MOTD, card.body_width * t.SCALE, t.MOTD_LINES,
     )
-    for index, line in enumerate(lines[:t.MOTD_LINES]):
-        canvas.segments(
-            line, (card.body_left, card.top + ROW_MOTD_Y[index]), MOTD, "lm",
-        )
+    if len(lines) == 1:
+        positions = [(ROW_MOTD_Y[0] + ROW_MOTD_Y[1]) / 2]
+    else:
+        positions = ROW_MOTD_Y
+    for line, offset_y in zip(lines[:t.MOTD_LINES], positions):
+        canvas.segments(line, (card.body_left, card.top + offset_y), MOTD, "lm")
 
 
 def _tag_layout(
@@ -743,6 +748,10 @@ def _draw_tag_overlay(
     left = card.box_left
     top = card.bottom - t.TAG_CHIP_HEIGHT
     box = (left, top, left + width, card.bottom)
+    canvas.soft_shadow(
+        box, offset=t.TAG_SHADOW_OFFSET, blur=t.TAG_SHADOW_BLUR,
+        color=t.TAG_SHADOW_COLOR,
+    )
     canvas.rect(box, fill=background, outline=t.RULE, width=1)
     canvas.text(
         label, (left + t.TAG_CHIP_PADDING_X, top + t.TAG_CHIP_HEIGHT / 2),

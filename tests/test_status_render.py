@@ -5,6 +5,8 @@
 恰好盯着看，否则可以坏上好几个月。
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from PIL import Image, ImageDraw
@@ -239,6 +241,8 @@ def test_width_is_clamped_to_a_sane_range():
     assert cfg.normalize_width(100) == 640
     assert cfg.normalize_width(99999) == 1600
     assert cfg.normalize_width(854) == 854
+    assert cfg.RenderSettings().width == 768
+    assert cfg.normalize_width("invalid") == 768
 
 
 def test_min_height_zero_collapses_to_content():
@@ -342,6 +346,62 @@ def test_per_group_texture_is_stable_across_runs():
     assert first == ir.resolve_texture(settings, 123456789)
     others = {ir.resolve_texture(settings, group) for group in range(20)}
     assert len(others) > 1, "不同群应该拿到不同背景"
+
+
+def test_glazed_terracotta_builds_a_rotated_two_by_two_pattern():
+    from xducraft_bot.plugins.xducraft_mc_status.constants import TEXTURES_PATH
+
+    name = "cyan_glazed_terracotta.png"
+    loaded = raster.load_texture(name)
+    assert loaded is not None
+    tile = t.px(t.TEXTURE_TILE)
+    assert loaded.size == (tile * 2, tile * 2)
+
+    with Image.open(Path(TEXTURES_PATH) / name) as raw:
+        base = raw.convert("RGBA").resize((tile, tile), Image.Resampling.NEAREST)
+    quadrants = (
+        loaded.crop((0, 0, tile, tile)),
+        loaded.crop((tile, 0, tile * 2, tile)),
+        loaded.crop((0, tile, tile, tile * 2)),
+        loaded.crop((tile, tile, tile * 2, tile * 2)),
+    )
+    expected = (
+        base,
+        base.transpose(Image.Transpose.ROTATE_270),
+        base.transpose(Image.Transpose.ROTATE_90),
+        base.transpose(Image.Transpose.ROTATE_180),
+    )
+    assert all(np.array_equal(np.array(actual), np.array(wanted))
+               for actual, wanted in zip(quadrants, expected))
+
+
+def test_every_glazed_terracotta_uses_the_larger_pattern_tile():
+    names = [name for name in raster.list_textures() if raster.is_glazed_terracotta(name)]
+    assert len(names) == 16
+    expected = (t.px(t.TEXTURE_TILE) * 2,) * 2
+    assert all(raster.load_texture(name).size == expected for name in names)
+
+
+def test_all_texture_backgrounds_are_dark_enough_for_text():
+    luminances = []
+    for name in raster.list_textures():
+        canvas = raster.Canvas(64, 64)
+        canvas.tile_background(name)
+        luminances.append(raster._mean_luminance(canvas.image))
+    assert max(luminances) <= t.SCRIM_TARGET_LUMINANCE + 0.0005
+
+
+def test_black_concrete_powder_still_receives_darkening():
+    name = "black_concrete_powder.png"
+    texture = raster.load_texture(name)
+    assert texture is not None
+    before = raster._mean_luminance(texture)
+    alpha = raster.texture_scrim(name)[3]
+    canvas = raster.Canvas(64, 64)
+    canvas.tile_background(name)
+    after = raster._mean_luminance(canvas.image)
+    assert alpha > 0
+    assert after < before * 0.5
 
 
 # ==============================================================================
@@ -505,13 +565,25 @@ def test_chosen_ink_is_never_the_worse_of_the_two():
         )
 
 
-def test_auth_stripe_sits_outside_the_bordered_box():
-    """色条挂在方框外面，不占卡片的内边距。"""
+def test_auth_stripe_sits_outside_the_bordered_box_on_right():
+    """色条挂在方框右侧，不占图标或状态栏内边距。"""
     card = ir.CardLayout(node={"children": []}, level=0, top=0)
 
-    assert card.box_left == card.left + t.AUTH_STRIPE_WIDTH
+    assert card.box_left == card.left
+    assert card.box_right == card.right - t.AUTH_STRIPE_WIDTH
     assert card.icon_left == card.box_left + t.CARD_PAD
-    assert card.icon_left - card.box_left == t.CARD_PAD
+    assert card.rail_right == card.box_right - t.CARD_PAD
+
+
+def test_server_row_border_is_translucent_black():
+    card = ir.CardLayout(node={"children": []}, level=0, top=0)
+    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT)
+    calls = []
+    canvas.rect = lambda box, **kwargs: calls.append((box, kwargs))  # type: ignore[assignment]
+    ir._draw_card_shell(canvas, card, resolved=None, online=True)
+    shell = calls[0]
+    assert shell[0] == (card.box_left, card.top, card.box_right, card.bottom)
+    assert shell[1]["outline"] == t.RULE_DARK
 
 
 def test_latency_is_one_compact_right_aligned_text_run():
@@ -551,6 +623,26 @@ def test_status_stack_fits_above_address_row():
     first, second, third = ir.RAIL_ROW_Y
     assert second - first == third - second
     assert third < ir.ROW_META_Y
+
+
+def test_single_line_motd_is_centered_between_two_row_positions():
+    node = {"online": True, "description": {"text": "单行 MOTD"}, "children": []}
+    card = ir.CardLayout(node=node, level=0, top=10)
+    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT + 20)
+    calls = []
+    canvas.segments = lambda segments, xy, font, anchor="lm", **kwargs: calls.append(xy) or 0.0  # type: ignore[assignment]
+    ir._draw_motd_rows(canvas, card)
+    assert calls == [(card.body_left, card.top + sum(ir.ROW_MOTD_Y) / 2)]
+
+
+def test_two_line_motd_keeps_both_row_positions():
+    node = {"online": True, "description": {"text": "第一行\n第二行"}, "children": []}
+    card = ir.CardLayout(node=node, level=0, top=10)
+    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT + 20)
+    calls = []
+    canvas.segments = lambda segments, xy, font, anchor="lm", **kwargs: calls.append(xy) or 0.0  # type: ignore[assignment]
+    ir._draw_motd_rows(canvas, card)
+    assert calls == [(card.body_left, card.top + offset) for offset in ir.ROW_MOTD_Y]
 
 
 
@@ -626,6 +718,19 @@ def test_tag_overlay_shares_card_bottom_left_anchor():
     assert texts[0][2] == "lm"
 
 
+
+def test_tag_casts_soft_shadow_beyond_its_hard_edge():
+    node = {"tag": "Tag", "tag_color": "3181D0", "children": []}
+    card = ir.CardLayout(node=node, level=0, top=0)
+    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT + 20, background=(255, 255, 255))
+    box = ir._draw_tag_overlay(canvas, card)
+    assert box is not None
+
+    sample_x = t.px(box[2] + t.TAG_SHADOW_OFFSET[0] + 1)
+    sample_y = t.px(box[1] + t.TAG_CHIP_HEIGHT / 2)
+    assert max(canvas.image.getpixel((sample_x, sample_y))) < 255
+    assert canvas.image.getpixel((t.px(card.right - 20), t.px(card.top + 30))) == (255, 255, 255)
+
 def test_long_tag_pushes_address_right_of_tag_edge():
     node = {
         "tag": "very-long-tag " * 20,
@@ -690,7 +795,7 @@ def test_header_statuses_are_plain_text_with_green_dots():
     ir._draw_header_statuses(
         canvas, {"online": 3, "total": 5, "players_online": 12}, 800, 30,
     )
-    assert texts == ["3/5服务器在线", "12人在线"]
+    assert texts == ["3/5个服务器在线", "12人在线"]
     dots = [box for box, fill, outline in boxes if fill == t.STATE_EXCELLENT and outline is None]
     assert len(dots) == 2
 
@@ -752,6 +857,8 @@ def test_config_only_auth_stripe_is_opaque_and_dashed():
     assert len(boxes) > 1
     assert all(fill[3] == 255 for _, fill in boxes)
     assert all(bottom - top <= t.AUTH_DASH for (_, top, _, bottom), _ in boxes)
+    assert all(left == card.box_right and right == card.right
+               for (left, _, right, _), _ in boxes)
     assert max(box[3] for box, _ in boxes) == card.bottom
 
 
@@ -770,7 +877,7 @@ def test_confirmed_auth_stripe_is_one_solid_block():
     boxes = []
     canvas.rect = lambda box, **kwargs: boxes.append((box, kwargs.get("fill")))  # type: ignore[assignment]
     ir._draw_auth_stripe(canvas, card, resolved)
-    assert boxes == [((card.left, card.top, card.box_left, card.bottom), resolved.style.color)]
+    assert boxes == [((card.box_right, card.top, card.right, card.bottom), resolved.style.color)]
 
 
 def test_named_textures_converge_to_black_concrete_brightness():

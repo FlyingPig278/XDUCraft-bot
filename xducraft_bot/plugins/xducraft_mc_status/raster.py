@@ -1,6 +1,6 @@
 """绘制原语。
 
-调用方一律用**逻辑单位**（854 宽的画布空间）下指令，这里统一乘 :data:`~.tokens.SCALE`
+调用方一律用**逻辑单位**下指令，这里统一乘 :data:`~.tokens.SCALE`
 换算成物理像素。好处有两个：布局代码只需要读参考项目的 CSS 数值就能照搬，
 而放大倍率是整数，像素字体和方块材质不会在放大过程中被插值糊掉。
 
@@ -25,7 +25,7 @@ from functools import lru_cache
 from typing import List, Optional, Sequence, Tuple
 
 from nonebot.log import logger
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from . import tokens as t
 from .constants import TEXTURES_PATH
@@ -51,9 +51,24 @@ _OBFUSCATE_POOL_CJK = "の㋡区块方界岩石木水火土风雷光暗天地人
 # 材质
 # ==============================================================================
 
+def is_glazed_terracotta(name: str) -> bool:
+    return str(name).lower().endswith("_glazed_terracotta.png")
+
+
+def _glazed_pinwheel(source: Image.Image) -> Image.Image:
+    """四块釉面陶瓦按顺时针每格旋转 90°，组成可无缝重复的 2×2 图案。"""
+    width, height = source.size
+    pattern = Image.new("RGBA", (width * 2, height * 2), (0, 0, 0, 0))
+    pattern.paste(source, (0, 0))
+    pattern.paste(source.transpose(Image.Transpose.ROTATE_270), (width, 0))
+    pattern.paste(source.transpose(Image.Transpose.ROTATE_90), (0, height))
+    pattern.paste(source.transpose(Image.Transpose.ROTATE_180), (width, height))
+    return pattern
+
+
 @lru_cache(maxsize=8)
 def load_texture(name: str) -> Optional[Image.Image]:
-    """读取一张方块材质并放大到平铺尺寸（最近邻，保持硬像素）。"""
+    """读取方块材质；釉面陶瓦先组成 2×2 旋转图案，再按最近邻放大。"""
     if not name or name != os.path.basename(name):
         return None
     path = os.path.join(TEXTURES_PATH, name)
@@ -64,6 +79,9 @@ def load_texture(name: str) -> Optional[Image.Image]:
             if source.height > source.width:
                 source = source.crop((0, 0, source.width, source.width))
             tile = t.px(t.TEXTURE_TILE)
+            if is_glazed_terracotta(name):
+                pattern = _glazed_pinwheel(source)
+                return pattern.resize((tile * 2, tile * 2), Image.Resampling.NEAREST)
             return source.resize((tile, tile), Image.Resampling.NEAREST)
     except Exception as exc:
         logger.warning("[MCStatus] 材质 {} 加载失败：{}", name, exc)
@@ -179,6 +197,41 @@ class Canvas:
             self.draw.rectangle(
                 (left, top, right - 1, bottom - 1), outline=outline, width=t.px(width),
             )
+
+    def soft_shadow(
+        self,
+        box: Box,
+        *,
+        offset: Tuple[float, float] = (1, 1),
+        blur: float = 2,
+        color: Color = (0, 0, 0, 140),
+    ) -> None:
+        """小范围模糊投影；用局部贴片避免为每个 Tag 分配整画布蒙版。"""
+        left, top, right, bottom = (t.px(value) for value in box)
+        dx, dy = (t.px(value) for value in offset)
+        radius = max(1, t.px(blur))
+        margin = radius * 3
+        shadow_left, shadow_top = left + dx, top + dy
+        shadow_right, shadow_bottom = right + dx, bottom + dy
+        patch_left = max(0, shadow_left - margin)
+        patch_top = max(0, shadow_top - margin)
+        patch_right = min(self.image.width, shadow_right + margin)
+        patch_bottom = min(self.image.height, shadow_bottom + margin)
+        if patch_right <= patch_left or patch_bottom <= patch_top:
+            return
+
+        size = (patch_right - patch_left, patch_bottom - patch_top)
+        mask = Image.new("L", size, 0)
+        alpha = as_rgba(color)[3]
+        ImageDraw.Draw(mask).rectangle(
+            (shadow_left - patch_left, shadow_top - patch_top,
+             shadow_right - patch_left - 1, shadow_bottom - patch_top - 1),
+            fill=alpha,
+        )
+        mask = mask.filter(ImageFilter.GaussianBlur(radius))
+        shadow = Image.new("RGBA", size, (*as_rgba(color)[:3], 0))
+        shadow.putalpha(mask)
+        self.image.paste(shadow, (patch_left, patch_top), shadow)
 
     def hline(self, y: float, x0: float, x1: float, color: Color, width: float = t.RULE_WIDTH) -> None:
         self.rect((x0, y, x1, y + width), fill=color)
@@ -606,6 +659,6 @@ TIER_BARS = {"excellent": 5, "good": 4, "fair": 3, "poor": 2, "dead": 0}
 
 
 __all__ = [
-    "Canvas", "Box", "load_texture", "list_textures",
-    "ink_for_background", "ping_tier", "TIER_COLORS", "TIER_BARS",
+    "Canvas", "Box", "load_texture", "list_textures", "is_glazed_terracotta",
+    "texture_scrim", "ink_for_background", "ping_tier", "TIER_COLORS", "TIER_BARS",
 ]

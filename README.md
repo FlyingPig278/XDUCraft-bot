@@ -149,12 +149,12 @@ A Minecraft server status query plugin for NoneBot, specially designed for XDUCr
 #### 状态图外观
 
 状态图的设计语言参考了 [`koishi-plugin-mcsm-portal`](https://github.com/KrLite/koishi-plugin-mcsm-portal)：
-方块材质背景、Minecraft 像素字体和直角边框。材质亮度会自动归一化，避免影响文字可读性。
+方块材质背景、Minecraft 像素字体和直角边框。背景只保留淡淡的纹理；釉面陶瓦会按 Minecraft 的 2×2 旋转方式组成重复图案。
 
 卡片显示两行 MOTD、地址和状态；空 MOTD 或默认的 `A Minecraft Server` 会改用配置备注。
 Tag 位于左下角，长 Tag 会自动让开地址。玩家名单只使用地址剩余空间，过长时截断。
 顶部显示服务器与玩家在线概览，人数最多且至少 5 人的服务器会显示火焰标记。
-验证方式通过左侧边条和地址后的彩色下划线文字表示。
+验证方式通过右侧边条和地址后的彩色下划线文字表示。
 
 外观参数写在 `.env`（见 `.env.prod.example`，改完重启生效）：
 
@@ -165,7 +165,7 @@ Tag 位于左下角，长 Tag 会自动让开地址。玩家名单只使用地�
 | `MCS_CREDIT` | `Powered by …` | 底部渐变压角里的署名，留空则不画 |
 | `MCS_SHOW_GENERATED_AT` | `true` | 压角右侧是否显示生成时间 |
 | `MCS_TEXTURE` | 留空 | 背景材质：留空按群号固定、`random`、`none` 或具体文件名；亮度会自动归一化 |
-| `MCS_WIDTH` | `854` | 画布逻辑宽度（640–1600） |
+| `MCS_WIDTH` | `768` | 画布逻辑宽度（640–1600） |
 | `MCS_SCALE` | `2` | 输出倍率，只接受 2 或 4 |
 | `MCS_MIN_HEIGHT` | `480` | 最小逻辑高度，`0` 表示收缩到内容 |
 
@@ -178,6 +178,8 @@ python scripts/preview_mc_status.py            # 用假数据出全部场景到 
 python scripts/preview_mc_status.py --list     # 看有哪些场景
 python scripts/preview_mc_status.py velocity   # 只出 Velocity 群组服那张
 python scripts/preview_mc_status.py --min-height 0 --texture none
+python scripts/preview_mc_status.py velocity --texture dirt
+python scripts/preview_mc_texture.py cyan_glazed_terracotta  # 方形背景处理预览
 ```
 
 预览脚本和线上出图走的是同一个渲染函数。场景覆盖 Velocity 层级、超长与彩虹 MOTD、

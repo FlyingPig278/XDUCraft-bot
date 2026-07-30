@@ -313,11 +313,21 @@ def render(name: str, output_dir: Path, settings: cfg.RenderSettings) -> Path:
     return destination
 
 
+def normalize_preview_texture(value: str) -> str:
+    raw = str(value or "").strip()
+    if raw in (cfg.RANDOM_TEXTURE, cfg.NO_TEXTURE):
+        return raw
+    resolved = ir.normalize_texture_override(raw)
+    if not resolved:
+        raise ValueError(f"找不到背景材质：{raw}")
+    return resolved
+
+
 def build_settings(args: argparse.Namespace) -> cfg.RenderSettings:
     settings = cfg.current()
     changes: Dict[str, Any] = {}
     if args.texture is not None:
-        changes["texture"] = args.texture
+        changes["texture"] = normalize_preview_texture(args.texture)
     if args.brand is not None:
         changes["brand"] = args.brand
     if args.title is not None:
@@ -340,7 +350,7 @@ def main() -> int:
     parser.add_argument("scenarios", nargs="*", help="要出的场景，留空表示全部")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUTPUT, help="输出目录")
     parser.add_argument("--list", action="store_true", help="列出所有场景后退出")
-    parser.add_argument("--texture", help="背景材质：文件名 / random / none")
+    parser.add_argument("--texture", help="背景材质：名称（dirt）/ 文件名 / random / none")
     parser.add_argument("--brand", help="顶栏品牌行")
     parser.add_argument("--title", help="图片主标题")
     parser.add_argument("--credit", help="底栏署名")
@@ -358,7 +368,10 @@ def main() -> int:
     if unknown:
         parser.error(f"未知场景：{', '.join(unknown)}（可用：{', '.join(SCENARIOS)}）")
 
-    settings = build_settings(args)
+    try:
+        settings = build_settings(args)
+    except ValueError as exc:
+        parser.error(str(exc))
     args.out.mkdir(parents=True, exist_ok=True)
 
     print(f"画布 {t.CANVAS_WIDTH}×{t.SCALE} 倍，最小高度 "

@@ -37,6 +37,7 @@ DEFAULT_BRAND = "XDUCRAFT"
 DEFAULT_TITLE = "Minecraft 服务器状态"
 #: 支持 ``§`` 颜色码，和参考项目的 ``DEFAULT_COPYRIGHT_TEXT`` 一样。
 DEFAULT_CREDIT = "Powered by §7FlyingPig278, LITTLE-UNIkeEN, and KrLite"
+DEFAULT_CANVAS_WIDTH = 768
 
 
 class Config(BaseModel):
@@ -55,8 +56,8 @@ class Config(BaseModel):
     #: 或留空按群号稳定挑选。
     mcs_texture: str = PER_GROUP_TEXTURE
 
-    #: 画布逻辑宽度。854 是 Minecraft 的默认窗口宽度。
-    mcs_width: int = 854
+    #: 更适合群聊移动端查看的默认逻辑宽度；仍可通过 MCS_WIDTH 覆盖。
+    mcs_width: int = DEFAULT_CANVAS_WIDTH
     #: 逻辑单位到物理像素的倍率。只接受偶数，见 :func:`normalize_scale`。
     mcs_scale: int = 2
     #: 图片最小逻辑高度。``0`` 表示收缩到内容，不留空白。
@@ -72,7 +73,7 @@ class RenderSettings:
     credit: str = DEFAULT_CREDIT
     show_generated_at: bool = True
     texture: str = PER_GROUP_TEXTURE
-    width: int = 854
+    width: int = DEFAULT_CANVAS_WIDTH
     scale: int = 2
     min_height: int = 480
 
@@ -86,7 +87,7 @@ def normalize_width(value: int) -> int:
     try:
         return max(640, min(1600, int(value)))
     except (TypeError, ValueError):
-        return 854
+        return DEFAULT_CANVAS_WIDTH
 
 
 def normalize_scale(value: int) -> int:
@@ -154,6 +155,7 @@ def current() -> RenderSettings:
 __all__ = [
     "Config", "RenderSettings", "SETTINGS", "current", "load",
     "RANDOM_TEXTURE", "NO_TEXTURE", "PER_GROUP_TEXTURE",
+    "DEFAULT_CANVAS_WIDTH",
     "DEFAULT_BRAND", "DEFAULT_TITLE", "DEFAULT_CREDIT",
     "normalize_width", "normalize_scale", "normalize_min_height",
 ]
