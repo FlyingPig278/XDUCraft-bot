@@ -141,9 +141,47 @@ A Minecraft server status query plugin for NoneBot, specially designed for XDUCr
 - `/mcs auth`：查看并显式配置正版、MUA、XDU、第三方外置、离线或混合登录方式；自动探测默认关闭。
 - `/mcs source`、`/mcs api`：按群或全局选择本地协议、公共 API 或自建后端。
 - `/mcs edit`：私聊获取网页编辑链接；编辑会话 30 分钟过期且只允许导入一次。
+- 查询命令末尾可加 `texture=<材质>` 临时换背景，例如 `/mcs all texture=dirt`；临时值会覆盖固定、随机或纯黑配置，名称不存在时回退部署配置。
 - `/mcs diag`：查看配置、缓存和各状态源连通性。
 
 自建查询后端见 `scripts/mc_status_backend/README.md`。
+
+#### 状态图外观
+
+状态图的设计语言参考了 [`koishi-plugin-mcsm-portal`](https://github.com/KrLite/koishi-plugin-mcsm-portal)：
+方块材质背景、Minecraft 像素字体和直角边框。材质亮度会自动归一化，避免影响文字可读性。
+
+卡片显示两行 MOTD、地址和状态；空 MOTD 或默认的 `A Minecraft Server` 会改用配置备注。
+Tag 位于左下角，长 Tag 会自动让开地址。玩家名单只使用地址剩余空间，过长时截断。
+顶部显示服务器与玩家在线概览，人数最多且至少 5 人的服务器会显示火焰标记。
+验证方式通过左侧边条和地址后的彩色下划线文字表示。
+
+外观参数写在 `.env`（见 `.env.prod.example`，改完重启生效）：
+
+| 配置项 | 默认 | 说明 |
+| --- | --- | --- |
+| `MCS_BRAND` | `XDUCRAFT` | 顶栏品牌行，留空则不画 |
+| `MCS_TITLE` | `Minecraft 服务器状态` | 主标题，留空则不画 |
+| `MCS_CREDIT` | `Powered by …` | 底部渐变压角里的署名，留空则不画 |
+| `MCS_SHOW_GENERATED_AT` | `true` | 压角右侧是否显示生成时间 |
+| `MCS_TEXTURE` | 留空 | 背景材质：留空按群号固定、`random`、`none` 或具体文件名；亮度会自动归一化 |
+| `MCS_WIDTH` | `854` | 画布逻辑宽度（640–1600） |
+| `MCS_SCALE` | `2` | 输出倍率，只接受 2 或 4 |
+| `MCS_MIN_HEIGHT` | `480` | 最小逻辑高度，`0` 表示收缩到内容 |
+
+`MCS_BRAND`、`MCS_TITLE`、`MCS_CREDIT` 都支持 `§` 颜色码。
+
+调外观不用启动机器人：
+
+```bash
+python scripts/preview_mc_status.py            # 用假数据出全部场景到 preview/
+python scripts/preview_mc_status.py --list     # 看有哪些场景
+python scripts/preview_mc_status.py velocity   # 只出 Velocity 群组服那张
+python scripts/preview_mc_status.py --min-height 0 --texture none
+```
+
+预览脚本和线上出图走的是同一个渲染函数。场景覆盖 Velocity 层级、超长与彩虹 MOTD、
+短 / 长 / 受地址约束的玩家名单、验证方式、延迟和空态。
 
 ### ❓ 常见问题 (FAQ)
 

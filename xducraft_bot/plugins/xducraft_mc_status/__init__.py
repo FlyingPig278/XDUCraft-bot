@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from typing import List, Tuple
+
 from nonebot import on_command
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageEvent, PrivateMessageEvent
 from nonebot.params import CommandArg
@@ -35,6 +37,19 @@ feature_gate.register(feature_gate.Feature(
 mc_status = on_command("mcs", aliases={"mcstatus", "服务器", "状态"}, block=True, priority=4)
 
 
+def split_query_options(arg_list: List[str]) -> Tuple[List[str], str]:
+    """从查询参数中摘出最后一个 ``texture=<名称>``，保留其余位置参数。"""
+    positional: List[str] = []
+    texture_override = ""
+    for argument in arg_list:
+        key, separator, value = argument.partition("=")
+        if separator and key.lower() == "texture":
+            texture_override = value.strip()
+        else:
+            positional.append(argument)
+    return positional, texture_override
+
+
 @mc_status.handle()
 async def handle_entry(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
     """按消息来源分发到私聊 / 群聊处理器。"""
@@ -57,23 +72,28 @@ async def handle_entry(bot: Bot, event: MessageEvent, args: Message = CommandArg
     if not arg_list:
         await handle_query_all(bot, event, get_show_offline_by_default(event.group_id))
 
+    # 管理子命令优先，避免 ``/mcs set ... texture=dirt`` 里的普通文本被当成查询选项。
     subcommand = arg_list[0].lower()
-
     if subcommand == "import":
         await mc_status.finish(
             "配置导入已移到私聊进行。\n请先在本群发送 /mcs edit，然后按私信里的提示操作。"
         )
-
     if subcommand in SUBCOMMAND_HANDLERS:
         await SUBCOMMAND_HANDLERS[subcommand](bot, event, arg_list)
 
-    if subcommand == "all" and len(arg_list) == 1:
-        await handle_query_all(bot, event, True)
+    query_args, texture_override = split_query_options(arg_list)
+    if not query_args:
+        await handle_query_all(
+            bot, event, get_show_offline_by_default(event.group_id), texture_override,
+        )
 
-    if len(arg_list) == 1:
-        # 不是已知子命令，那就当成要查的服务器地址。
-        await handle_query_single(bot, event, arg_list[0])
+    query_command = query_args[0].lower()
+    if query_command == "all" and len(query_args) == 1:
+        await handle_query_all(bot, event, True, texture_override)
+
+    if len(query_args) == 1:
+        await handle_query_single(bot, event, query_args[0], texture_override)
 
     await mc_status.finish(
-        f"不认识的命令：{' '.join(arg_list[:2])}\n发送 /mcs help 查看可用命令。"
+        f"不认识的命令：{' '.join(query_args[:2])}\n发送 /mcs help 查看可用命令。"
     )

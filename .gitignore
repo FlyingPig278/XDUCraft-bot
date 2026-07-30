@@ -69,4 +69,13 @@ node_modules/
 
 bot.py
 
-tests/
+# 注意写成 tests/* 而不是 tests/：Git 不会进入被排除的**目录**，写成后者的话
+# 下面的 ! 例外永远不会生效。
+tests/*
+# 但状态图的不变量测试要跟着代码一起走：像素网格字号、中日韩字体回退这些东西
+# 一旦坏掉不会报任何错，只会悄悄糊掉或者变成豆腐块，必须有测试守着。
+!tests/conftest.py
+!tests/test_status_render.py
+
+# 预览脚本的出图产物
+/preview/

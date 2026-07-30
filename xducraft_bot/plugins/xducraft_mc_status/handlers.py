@@ -313,7 +313,7 @@ def _parse_priority(value: str) -> Optional[int]:
 
 
 SETTABLE_ATTRIBUTES: Dict[str, Tuple[str, Callable[[str], Any]]] = {
-    "tag": ("标签文字", lambda value: value),
+    "tag": ("标签文字（建议少于 5 个汉字或不超过 10 个英文字母）", lambda value: value),
     "tag_color": ("标签底色，6 位十六进制如 3498DB", _parse_tag_color),
     "comment": ("服务器名称/备注", lambda value: value),
     "display_name": ("图片中的线路名称/连接提示（设置后自动隐藏查询地址）", lambda value: value),
@@ -535,8 +535,10 @@ async def _handle_auth(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
 # 查询
 # ==============================================================================
 
-async def handle_query_all(bot: Bot, event: GroupMessageEvent, show_all_servers: bool):
-    """查询本群所有服务器并出图。"""
+async def handle_query_all(
+    bot: Bot, event: GroupMessageEvent, show_all_servers: bool, texture_override: str = "",
+):
+    """查询本群所有服务器并出图，可临时覆盖背景材质。"""
     matcher = _matcher()
 
     servers = get_server_list(event.group_id)
@@ -551,7 +553,10 @@ async def handle_query_all(bot: Bot, event: GroupMessageEvent, show_all_servers:
     try:
         source, _ = get_effective_status_api_source(event.group_id)
         server_data_list = await get_all_servers_status(event.group_id)
-        image_path = await render_status_image(server_data_list, event.group_id, show_all_servers, source_label=source)
+        image_path = await render_status_image(
+            server_data_list, event.group_id, show_all_servers,
+            source_label=source, texture_override=texture_override,
+        )
     except Exception as exc:
         logger.exception("[MCStatus] 查询群 {} 全部服务器失败", event.group_id)
         await matcher.finish(f"查询失败：{type(exc).__name__}: {exc}\n管理员可用 /mcs diag 排查。")
@@ -592,8 +597,10 @@ def _easter_egg_reply(ip: str) -> Optional[str]:
     ])
 
 
-async def handle_query_single(bot: Bot, event: GroupMessageEvent, ip: str):
-    """查询单个服务器。"""
+async def handle_query_single(
+    bot: Bot, event: GroupMessageEvent, ip: str, texture_override: str = "",
+):
+    """查询单个服务器，可临时覆盖背景材质。"""
     matcher = _matcher()
 
     if not is_valid_server_address(ip):
@@ -614,7 +621,10 @@ async def handle_query_single(bot: Bot, event: GroupMessageEvent, ip: str):
         if get_auth_detect_enabled(event.group_id):
             await auth.annotate_servers([final_data])
 
-        image_path = await render_status_image([final_data], event.group_id, True, source_label=source)
+        image_path = await render_status_image(
+            [final_data], event.group_id, True,
+            source_label=source, texture_override=texture_override,
+        )
     except Exception as exc:
         logger.exception("[MCStatus] 查询 {} 失败", ip)
         await matcher.finish(f"查询 {ip} 失败：{type(exc).__name__}: {exc}")
