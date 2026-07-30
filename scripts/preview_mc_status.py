@@ -134,7 +134,7 @@ def scenario_long_motd() -> Dict[str, Any]:
             server(
                 ip="overflow.example.com", tag="超长", tag_color="da3c8f", ping=140,
                 description={"text": "§c" + filler * 4},
-                players={"online": 5, "max": 20}),
+                players={"online": 30, "max": 100}),
             server(
                 ip="many-lines.example.com", tag="多行", tag_color="a371f7", ping=88,
                 description={"text": "§a第一行\n§e第二行\n§c第三行会被截掉\n§9第四行也是"},

@@ -152,8 +152,9 @@ A Minecraft server status query plugin for NoneBot, specially designed for XDUCr
 每张材质会按自身亮度动态压暗。顶部概览改为带绿色像素点的纯文字：`X/Y服务器在线`
 和 `A人在线`。服务器卡片收回 80px：64px 图标不再加内边框，正文给 MOTD 两行；
 空 MOTD 或默认的 `A Minecraft Server` 会改用配置备注。Tag 右对齐到延迟左侧，地址行
-仍保留，验证方式改为紧凑的彩色下划线文字。版本号使用普通 Minecraft 字体并以半透明
-合成；离线 barrier 图标保持完全不透明，验证方式边条仍以实线 / 虚线区分实测 / 配置。
+仍保留，验证方式改为紧凑的彩色下划线文字。在线人数最高且至少 5 人的服务器会在人
+数计数器左侧显示小火焰；并列最高时全部显示。版本号使用普通 Minecraft 字体并以半
+透明合成；离线 barrier 图标保持完全不透明，验证方式边条仍以实线 / 虚线区分实测 / 配置。
 
 外观参数写在 `.env`（见 `.env.prod.example`，改完重启生效）：
 

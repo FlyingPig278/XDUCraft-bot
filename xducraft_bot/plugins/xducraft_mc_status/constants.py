@@ -18,6 +18,7 @@ FONTS_PATH = os.path.join(_current_dir, "resources", "fonts")
 TEXTURES_PATH = os.path.join(_current_dir, "resources", "textures")
 DEFAULT_SERVER_ICON_PATH = os.path.join(_current_dir, "resources", "images", "default_server_icon.png")
 OFFLINE_SERVER_ICON_PATH = os.path.join(_current_dir, "resources", "images", "offline_server_icon.png")
+FIRE_ICON_PATH = os.path.join(_current_dir, "resources", "images", "fire.png")
 SAVE_IMG_DIR = os.path.join(_current_dir, "data", "images")
 
 # ==============================================================================

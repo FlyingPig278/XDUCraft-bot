@@ -721,3 +721,41 @@ def test_rainbow_remark_survives_default_motd_fallback():
     segments = ir._motd_segments(node)
     assert segments and segments[0].gradient is not None
     assert len(segments[0].gradient) == 4
+
+
+def test_all_tied_busiest_servers_receive_fire_at_five_or_more():
+    nodes = [
+        {"online": True, "players": {"online": 9}, "children": []},
+        {"online": True, "players": {"online": 7}, "children": []},
+        {"online": True, "players": {"online": 9}, "children": []},
+        {"online": False, "players": {"online": 99}, "children": []},
+    ]
+    cards, _ = ir.build_layout(nodes, 0)
+    hottest = ir._hottest_card_ids(list(ir._iter_cards(cards)))
+    assert hottest == {id(nodes[0]), id(nodes[2])}
+
+
+def test_no_fire_when_busiest_server_has_fewer_than_five_players():
+    nodes = [
+        {"online": True, "players": {"online": 4}, "children": []},
+        {"online": True, "players": {"online": 4}, "children": []},
+    ]
+    cards, _ = ir.build_layout(nodes, 0)
+    assert ir._hottest_card_ids(list(ir._iter_cards(cards))) == set()
+
+
+def test_fire_icon_sits_immediately_left_of_player_counter():
+    canvas = raster.Canvas(200, 60)
+    pasted = []
+    canvas.paste = lambda icon, x, y: pasted.append((icon, x, y))  # type: ignore[assignment]
+    right = 180
+    center_y = 30
+    counter = "12/100"
+    box = ir._draw_fire_by_player_count(canvas, right, center_y, counter)
+
+    assert box is not None and len(pasted) == 1
+    expected_right = right - canvas.measure(counter, fonts.DATA) - t.FIRE_ICON_GAP
+    assert box[2] == expected_right
+    assert box[3] - box[1] == t.FIRE_ICON_SIZE
+    assert (box[1] + box[3]) / 2 == center_y
+    assert pasted[0][0].size == (t.px(t.FIRE_ICON_SIZE), t.px(t.FIRE_ICON_SIZE))

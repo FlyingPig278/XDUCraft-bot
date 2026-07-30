@@ -33,6 +33,7 @@ from . import tokens as t
 from .constants import (
     DEFAULT_SERVER_ICON_PATH,
     OFFLINE_SERVER_ICON_PATH,
+    FIRE_ICON_PATH,
     RENDERED_IMAGE_TTL,
     SAVE_IMG_DIR,
 )
@@ -54,6 +55,7 @@ from .utils import get_server_display_address
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 MAX_ICON_PIXELS = 2048 * 2048
+HOT_SERVER_MIN_PLAYERS = 5
 FALLBACK_TEXTURE = "stone.png"
 
 # 顶部垂直节奏。
@@ -186,6 +188,29 @@ def _iter_cards(cards: Sequence[CardLayout]) -> Iterable[CardLayout]:
     for card in cards:
         yield card
         yield from _iter_cards(card.children)
+
+
+
+
+def _player_count(card: CardLayout) -> int:
+    if not card.node.get("online"):
+        return 0
+    players = card.node.get("players")
+    if not isinstance(players, dict):
+        return 0
+    try:
+        return max(0, int(players.get("online") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _hottest_card_ids(cards: Sequence[CardLayout]) -> set:
+    """返回所有并列最高在线人数的卡片；最高值不足 5 时不标火焰。"""
+    counts = [(card, _player_count(card)) for card in cards]
+    maximum = max((count for _, count in counts), default=0)
+    if maximum < HOT_SERVER_MIN_PLAYERS:
+        return set()
+    return {id(card.node) for card, count in counts if count == maximum}
 
 
 def _iter_nodes(nodes: Sequence[Dict[str, Any]]) -> Iterable[Dict[str, Any]]:
@@ -490,6 +515,31 @@ def _builtin_icon(online: bool) -> Optional[Image.Image]:
         return None
 
 
+@lru_cache(maxsize=1)
+def _fire_icon() -> Optional[Image.Image]:
+    try:
+        with Image.open(FIRE_ICON_PATH) as raw:
+            size = t.px(t.FIRE_ICON_SIZE)
+            return raw.convert("RGBA").resize((size, size), Image.Resampling.NEAREST)
+    except Exception as exc:
+        logger.warning("[MCStatus] 火焰图标加载失败 {}: {}", FIRE_ICON_PATH, exc)
+        return None
+
+
+def _draw_fire_by_player_count(
+    canvas: Canvas, right: float, center_y: float, counter_text: str,
+) -> Optional[Tuple[float, float, float, float]]:
+    icon = _fire_icon()
+    if icon is None:
+        return None
+    counter_width = canvas.measure(counter_text, DATA)
+    icon_right = right - counter_width - t.FIRE_ICON_GAP
+    left = icon_right - t.FIRE_ICON_SIZE
+    top = center_y - t.FIRE_ICON_SIZE / 2
+    canvas.paste(icon, left, top)
+    return left, top, icon_right, top + t.FIRE_ICON_SIZE
+
+
 def _draw_icon(canvas: Canvas, icon: Optional[Image.Image], card: CardLayout, online: bool) -> None:
     if icon is not None:
         # 图标本身已有清楚的像素轮廓；不再套一层与卡片重复的边框。
@@ -630,7 +680,7 @@ def _draw_signal(canvas: Canvas, right: float, center_y: float, tier: str) -> fl
     return width
 
 
-def _draw_rail(canvas: Canvas, card: CardLayout) -> None:
+def _draw_rail(canvas: Canvas, card: CardLayout, show_fire: bool = False) -> None:
     """右侧状态栈；Tag 右对齐到延迟文字左侧。"""
     node = card.node
     online = bool(node.get("online"))
@@ -658,10 +708,10 @@ def _draw_rail(canvas: Canvas, card: CardLayout) -> None:
     canvas.text(number, (number_right, ping_y), DATA, color, "rm")
 
     players = node.get("players") if isinstance(node.get("players"), dict) else {}
-    canvas.text(
-        f"{players.get('online', 0)}/{players.get('max', 0)}",
-        (right, players_y), DATA, t.INK, "rm",
-    )
+    counter_text = f"{players.get('online', 0)}/{players.get('max', 0)}"
+    canvas.text(counter_text, (right, players_y), DATA, t.INK, "rm")
+    if show_fire:
+        _draw_fire_by_player_count(canvas, right, players_y, counter_text)
     version = canvas.fit(
         parse_minecraft_formatting(str(node.get("version") or "N/A"), t.INK_GHOST),
         VERSION,
@@ -690,6 +740,7 @@ def _draw_card(
     card: CardLayout,
     group_default: str,
     icons: Dict[int, Optional[Image.Image]],
+    show_fire: bool = False,
 ) -> None:
     online = bool(card.node.get("online"))
     resolved = _resolve_rendered_auth(card.node, group_default)
@@ -698,7 +749,7 @@ def _draw_card(
     _draw_icon(canvas, icons.get(id(card.node)), card, online)
     _draw_motd_rows(canvas, card)
     _draw_meta_row(canvas, card, address, resolved)
-    _draw_rail(canvas, card)
+    _draw_rail(canvas, card, show_fire)
 
 
 # ------------------------------------------------------------------------------
@@ -752,6 +803,7 @@ def render_servers(
     list_height = max(0.0, end_y - metrics.list_top - (t.CARD_GAP if cards else 0))
     all_cards = list(_iter_cards(cards))
     legend_modes = _collect_auth_modes(all_cards, group_default_auth)
+    hottest_ids = _hottest_card_ids(all_cards)
     stats = summarize(list(display_data))
     band = band_is_visible(settings, footer_text)
 
@@ -775,7 +827,10 @@ def render_servers(
         for card in all_cards:
             _draw_spine(canvas, card)
         for card in all_cards:
-            _draw_card(canvas, card, group_default_auth, prepared_icons)
+            _draw_card(
+                canvas, card, group_default_auth, prepared_icons,
+                show_fire=id(card.node) in hottest_ids,
+            )
     else:
         reserved = band_height(footer_text) if band else 0
         _draw_empty_state(canvas, metrics.list_top, height - reserved)
