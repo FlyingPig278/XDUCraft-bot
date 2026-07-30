@@ -539,7 +539,7 @@ def _draw_fire_by_player_count(
     counter_width = canvas.measure(counter_text, DATA)
     icon_right = right - counter_width - t.FIRE_ICON_GAP
     left = icon_right - t.FIRE_ICON_SIZE
-    top = center_y - t.FIRE_ICON_SIZE / 2
+    top = center_y - t.FIRE_ICON_SIZE / 2 - t.FIRE_ICON_RISE
     canvas.paste(icon, left, top)
     return left, top, icon_right, top + t.FIRE_ICON_SIZE
 

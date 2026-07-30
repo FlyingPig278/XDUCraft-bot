@@ -797,6 +797,6 @@ def test_fire_icon_sits_immediately_left_of_player_counter():
     expected_right = right - canvas.measure(counter, fonts.DATA) - t.FIRE_ICON_GAP
     assert box[2] == expected_right
     assert box[3] - box[1] == t.FIRE_ICON_SIZE
-    assert (box[1] + box[3]) / 2 == center_y
+    assert (box[1] + box[3]) / 2 == center_y - t.FIRE_ICON_RISE
     assert pasted[0][0].size == (t.px(t.FIRE_ICON_SIZE), t.px(t.FIRE_ICON_SIZE))
     assert t.FIRE_ICON_SIZE == t.TYPE_DATA
