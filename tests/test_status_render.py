@@ -660,24 +660,24 @@ def test_short_player_list_is_shown_in_full_with_green_dot():
     texts = []
     dots = []
     canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: (  # type: ignore[assignment]
-        texts.append(text) or canvas.measure(text, font)
+        texts.append((text, xy, anchor)) or canvas.measure(text, font)
     )
     canvas.rect = lambda box, **kwargs: dots.append((box, kwargs.get("fill")))  # type: ignore[assignment]
     ir._draw_meta_row(canvas, card, "short.example.com", resolved=None)
-    assert texts[-1] == "Steve · Alex"
+    assert texts[-1][0] == "Steve, Alex正在游玩"
+    assert texts[-1][2] == "rm"
+    assert dots[-1][0][2] == card.rail_right
     assert dots[-1][1] == t.STATE_EXCELLENT
 
 
-def test_long_player_list_truncates_to_remaining_width():
-    names = [{"name": f"VeryLongPlayerName{index}"} for index in range(30)]
-    card = ir.CardLayout(node={"players": {"sample": names}, "children": []}, level=0, top=0)
+def test_long_player_list_uses_maximal_prefix_and_others_suffix():
+    names = ["AAA", "BBB", "CCC", "DDD"]
     canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT)
-    texts = []
-    canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: (  # type: ignore[assignment]
-        texts.append(text) or canvas.measure(text, font)
-    )
-    ir._draw_meta_row(canvas, card, "x.io", resolved=None)
-    assert texts[-1].endswith("…")
+    width = canvas.measure("AAA, BBB, CCC等人正在游玩", fonts.MICRO)
+    assert ir._fit_player_list(canvas, names, width) == "AAA, BBB, CCC等人正在游玩"
+    assert ir._fit_player_list(
+        canvas, names, canvas.measure("AAA等人正在游玩", fonts.MICRO) - 1,
+    ) == ""
 
 def test_header_statuses_are_plain_text_with_green_dots():
     canvas = raster.Canvas(t.CANVAS_WIDTH, 80)

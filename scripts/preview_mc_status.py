@@ -238,6 +238,8 @@ def scenario_players() -> Dict[str, Any]:
         {"name": name} for name in (
             "Steve", "Alex", "Notch", "Dinnerbone", "建筑师老王", "红石工程师",
             "VeryLongPlayerName", "小明", "阿强", "EnderDragonRider",
+            "NetherExplorer", "TheEndArchitect", "CommandBlockMaster", "VillagerTrader",
+            "MountainBuilder", "OceanMonumentGuide", "CopperGolemFriend", "AncientCityScout",
         )
     ]
     return {

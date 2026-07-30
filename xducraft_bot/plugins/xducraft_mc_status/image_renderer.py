@@ -658,30 +658,40 @@ def _player_names(node: Dict[str, Any]) -> List[str]:
     ]
 
 
+def _fit_player_list(canvas: Canvas, names: Sequence[str], max_width: float) -> str:
+    """生成完整或“等人”玩家文案；连首名都放不下时返回空串。"""
+    if not names or max_width <= 0:
+        return ""
+    full = f"{', '.join(names)}正在游玩"
+    if canvas.measure(full, MICRO) <= max_width:
+        return full
+    for count in range(len(names) - 1, 0, -1):
+        candidate = f"{', '.join(names[:count])}等人正在游玩"
+        if canvas.measure(candidate, MICRO) <= max_width:
+            return candidate
+    return ""
+
+
 def _draw_player_list(
     canvas: Canvas, card: CardLayout, left_bound: float, center_y: float,
 ) -> str:
-    """在地址剩余空间里右对齐玩家名；空间不足时截断或省略。"""
+    """玩家文案向左展开，绿点固定在服务器行最右侧。"""
     names = _player_names(card.node)
     if not names:
         return ""
-    reserved = t.PLAYER_LIST_DOT + t.PLAYER_LIST_DOT_GAP
-    available = card.body_right - left_bound - t.PLAYER_LIST_GAP - reserved
-    if available < canvas.measure("…", MICRO):
-        return ""
-    text = canvas.fit_text(" · ".join(names), MICRO, available)
+    dot_right = card.rail_right
+    dot_left = dot_right - t.PLAYER_LIST_DOT
+    text_right = dot_left - t.PLAYER_LIST_DOT_GAP
+    available = text_right - left_bound - t.PLAYER_LIST_GAP
+    text = _fit_player_list(canvas, names, available)
     if not text:
         return ""
-    text_width = canvas.measure(text, MICRO)
-    text_left = card.body_right - text_width
-    dot_right = text_left - t.PLAYER_LIST_DOT_GAP
-    dot_left = dot_right - t.PLAYER_LIST_DOT
+    canvas.text(text, (text_right, center_y), MICRO, t.INK_FAINT, "rm")
     canvas.rect(
         (dot_left, center_y - t.PLAYER_LIST_DOT / 2,
          dot_right, center_y + t.PLAYER_LIST_DOT / 2),
         fill=t.STATE_EXCELLENT,
     )
-    canvas.text(text, (card.body_right, center_y), MICRO, t.INK_FAINT, "rm")
     return text
 
 
@@ -706,7 +716,7 @@ def _draw_meta_row(
         label = resolved.style.short_label
         label_width = canvas.measure(label, ADDRESS)
     gap = 8 if label else 0
-    address_budget = max(0.0, card.body_right - content_left - label_width - gap)
+    address_budget = max(0.0, card.rail_right - content_left - label_width - gap)
     address_text = canvas.fit_text(address, ADDRESS, address_budget)
     address_width = canvas.text(
         address_text, (content_left, center_y), ADDRESS, t.INK_FAINT, "lm",
