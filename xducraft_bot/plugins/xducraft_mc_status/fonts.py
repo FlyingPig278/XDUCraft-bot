@@ -46,7 +46,7 @@ from PIL import Image, ImageDraw, ImageFont
 from .constants import FONTS_PATH
 from .tokens import (
     TYPE_ADDRESS, TYPE_CHIP, TYPE_DATA, TYPE_EYEBROW, TYPE_LABEL,
-    TYPE_MICRO, TYPE_NAME, TYPE_SUBTITLE, TYPE_TITLE, px,
+    TYPE_MICRO, TYPE_MOTD, TYPE_NAME, TYPE_SUBTITLE, TYPE_TITLE, px,
 )
 
 # ==============================================================================
@@ -234,9 +234,11 @@ EYEBROW = FontSet("eyebrow", px(TYPE_EYEBROW), (FACE_LABEL, FACE_CJK_PIXEL, FACE
 TITLE = FontSet("title", px(TYPE_TITLE), (FACE_DISPLAY, FACE_CJK_PIXEL, FACE_BODY))
 #: 顶栏概览行。
 SUBTITLE = FontSet("subtitle", px(TYPE_SUBTITLE), (FACE_BODY,))
-#: 卡片上的 Tag 与服务器标题（MOTD）。
+#: 卡片服务器标题。
 NAME = FontSet("name", px(TYPE_NAME), (FACE_BODY,))
-#: 顶栏右侧的概览胶片。
+#: 卡片两行 MOTD。
+MOTD = FontSet("motd", px(TYPE_MOTD), (FACE_BODY,))
+#: 顶栏右侧的概览胶片与卡片 Tag。
 CHIP = FontSet("chip", px(TYPE_CHIP), (FACE_BODY,))
 #: 地址行。
 ADDRESS = FontSet("address", px(TYPE_ADDRESS), (FACE_BODY,))
@@ -251,6 +253,6 @@ LABEL = FontSet("label", px(TYPE_LABEL), (FACE_LABEL, FACE_CJK_PIXEL, FACE_BODY)
 __all__ = [
     "FACE_BODY", "FACE_DISPLAY", "FACE_LABEL", "FACE_DATA", "FACE_CJK_PIXEL",
     "load_face", "covers", "FontSet",
-    "EYEBROW", "TITLE", "SUBTITLE", "CHIP", "NAME", "ADDRESS", "MICRO",
+    "EYEBROW", "TITLE", "SUBTITLE", "CHIP", "NAME", "MOTD", "ADDRESS", "MICRO",
     "DATA", "LABEL",
 ]

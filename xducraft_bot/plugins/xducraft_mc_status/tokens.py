@@ -111,8 +111,9 @@ AUTH_CONFLICT_COLOR = STATE_FAIR
 TYPE_EYEBROW = 12    # 顶栏品牌行
 TYPE_TITLE = 36      # 图片主标题
 TYPE_SUBTITLE = 12   # 顶栏副标题（时间 + 数据源）
-TYPE_CHIP = 12       # 顶栏右侧概览胶片
-TYPE_NAME = 20       # 卡片上的 Tag 与服务器标题（MOTD）
+TYPE_CHIP = 12       # 顶栏右侧概览胶片 / 卡片 Tag
+TYPE_NAME = 20       # 卡片服务器标题
+TYPE_MOTD = 12       # 卡片 MOTD，两行
 TYPE_ADDRESS = 12    # 地址行
 TYPE_MICRO = 8       # 玩家名、署名、版本号
 #: 数字用等宽体 Monocraft。它本身带抗锯齿、不受像素网格约束，但缺中日韩字形，
@@ -157,18 +158,15 @@ BAND_VIGNETTE = 56
 BAND_BOTTOM = (0, 0, 0, 205)
 
 # --- 卡片 ---
-#: 卡片高度是**固定**的。以前有“正在游玩”那一行时会多长出一截，一列卡片高低
-#: 参差；现在玩家名并进地址那一行，所有卡片一样高。
-CARD_HEIGHT = 80
+#: 卡片高度固定；服务器标题、两行 MOTD、地址各有自己的行，不再把 MOTD 压平。
+CARD_HEIGHT = 96
 CARD_GAP = 4
-#: 上下左右统一用同一个内边距。图标、正文、右栏都从它起算，不再各用各的。
+#: 图标仍与四边保持统一内边距。80 逻辑像素的图标用最近邻缩放，保留像素边缘。
 CARD_PAD = 8
 CARD_COL_GAP = 12
-
-#: 服务器图标边长 = 卡片高度减去上下内边距，正好填满可用高度。
-#: 64 逻辑单位 = 128 物理像素，正好是 64×64 favicon 的 2 倍整数放大，
-#: 用最近邻缩放就能保持原始像素。
 ICON_SIZE = CARD_HEIGHT - 2 * CARD_PAD
+MOTD_LINES = 2
+MOTD_LINE_HEIGHT = 18
 RAIL_WIDTH = 156
 #: 地址与玩家名之间的最小间距。
 PLAYERS_GAP = 16
@@ -196,7 +194,7 @@ __all__ = [
     "PING_TIER_THRESHOLDS", "SIGNAL_BARS",
     "AUTH_DASH", "AUTH_DASH_GAP", "AUTH_CONFLICT_COLOR",
     "TYPE_EYEBROW", "TYPE_TITLE", "TYPE_SUBTITLE", "TYPE_CHIP", "TYPE_NAME",
-    "TYPE_ADDRESS", "TYPE_MICRO", "TYPE_DATA", "TYPE_LABEL",
+    "TYPE_MOTD", "TYPE_ADDRESS", "TYPE_MICRO", "TYPE_DATA", "TYPE_LABEL",
     "BLOCK", "PAGE_PADDING_X", "PAGE_PADDING_TOP", "PAGE_PADDING_BOTTOM", "TEXTURE_TILE",
     "SECTION_GAP", "HEADER_GAP",
     "HEADER_CHIP_HEIGHT", "HEADER_CHIP_PADDING_X", "HEADER_CHIP_GAP",
@@ -204,7 +202,7 @@ __all__ = [
     "BAND_PADDING_Y", "BAND_NOTICE_HEIGHT", "BAND_CREDIT_HEIGHT", "BAND_LINE_GAP",
     "BAND_VIGNETTE", "BAND_BOTTOM",
     "CARD_HEIGHT", "CARD_GAP", "CARD_PAD", "CARD_COL_GAP",
-    "ICON_SIZE", "RAIL_WIDTH", "PLAYERS_GAP",
+    "ICON_SIZE", "MOTD_LINES", "MOTD_LINE_HEIGHT", "RAIL_WIDTH", "PLAYERS_GAP",
     "AUTH_STRIPE_WIDTH", "AUTH_CHIP_PADDING_X", "AUTH_CHIP_HEIGHT",
     "TAG_CHIP_PADDING_X", "TAG_CHIP_HEIGHT",
     "CHILD_INDENT", "SPINE_DOT", "SPINE_GAP",

@@ -3,8 +3,8 @@
 布局沿用 ``koishi-plugin-mcsm-portal`` 的信息骨架，但针对群聊图片做了收束：
 
 - 顶部左侧是品牌、标题和数据源，右侧是在线服务器 / 在线玩家概览胶片；
-- 每台服务器固定 80 逻辑像素高，图标 / 正文 / 数据栏三列严格共用 8px 内边距；
-- Tag 与单行 MOTD 同行，地址与玩家名同行；地址优先，玩家名只用剩余空间；
+- 每台服务器保持固定高度，图标 / 正文 / 数据栏三列严格共用 8px 内边距；
+- Tag 与服务器标题同行，下面保留两行 MOTD；地址与玩家名共享末行；
 - 右栏的延迟、人数、版本同字号、等间距；离线时只保留离线状态；
 - 验证方式颜色只出现在左边条与短标签：已实测为实线，仅配置为虚线；
 - 图例留在材质区，群公告与署名进入底部透明到黑色的渐变压角。
@@ -38,8 +38,8 @@ from .constants import (
 )
 from .data_manager import get_footer, get_group_default_auth_mode
 from .decode_image import decode_image
-from .drawing_utils import Segment, as_rgba, parse_minecraft_formatting
-from .fonts import ADDRESS, CHIP, DATA, EYEBROW, LABEL, MICRO, NAME, SUBTITLE, TITLE
+from .drawing_utils import Segment, as_rgba, parse_minecraft_formatting, wrap_segments
+from .fonts import ADDRESS, CHIP, DATA, EYEBROW, LABEL, MICRO, MOTD, NAME, SUBTITLE, TITLE
 from .raster import Canvas, TIER_BARS, TIER_COLORS, ink_for_background, list_textures, ping_tier
 from .settings import (
     NO_TEXTURE,
@@ -62,10 +62,11 @@ HEADER_ROW_TITLE = 44
 HEADER_ROW_SUBTITLE = 20
 HEADER_RULE_GAP = 6
 
-# 固定卡片内的两行正文与三行数据。
-ROW_TITLE_Y = 23
-ROW_META_Y = 58
-RAIL_ROW_Y = (16, 40, 64)
+# 固定卡片内的标题、两行 MOTD、元信息，以及右栏三行数据。
+ROW_TITLE_Y = 16
+ROW_MOTD_Y = (40, 58)
+ROW_META_Y = 80
+RAIL_ROW_Y = (16, 48, 80)
 
 # 信号条。
 BAR_WIDTH = 3
@@ -462,11 +463,10 @@ async def _load_icon(server_data: Dict[str, Any]) -> Optional[Image.Image]:
 def _fit_icon(icon: Image.Image, size: int) -> Image.Image:
     if icon.size == (size, size):
         return icon
-    integral = size % max(1, icon.width) == 0 and icon.width == icon.height and size > icon.width
-    return icon.resize(
-        (size, size),
-        Image.Resampling.NEAREST if integral else Image.Resampling.LANCZOS,
-    )
+    # Java 服务器 favicon 本来就是 64×64 像素画；即使目标不是整数倍，也宁可
+    # 保留硬边和不等宽像素块，不用 Lanczos 把它抹成一张模糊缩略图。
+    resample = Image.Resampling.NEAREST if icon.width == icon.height else Image.Resampling.LANCZOS
+    return icon.resize((size, size), resample)
 
 
 @lru_cache(maxsize=4)
@@ -504,25 +504,23 @@ def _tag_background(tag_color: str):
         return t.CHIP
 
 
+def _server_title(server_data: Dict[str, Any], address: str) -> str:
+    """服务器标题来自配置里的 comment；未配置时用显示地址兜底。"""
+    return str(server_data.get("comment") or "").strip() or address
+
+
 def _motd_segments(server_data: Dict[str, Any]) -> List[Segment]:
     if not server_data.get("online"):
-        return parse_minecraft_formatting(
-            str(server_data.get("comment") or "服务器离线"), t.INK_GHOST,
-        )
+        return parse_minecraft_formatting("服务器离线", t.INK_GHOST)
 
     description = server_data.get("description")
-    comment = str(server_data.get("comment") or "").strip()
     if isinstance(description, dict):
         html = description.get("html")
         raw = str(html or description.get("text") or "").replace("服务器已离线...", "").strip()
-        if raw in ("", "A Minecraft Server") and comment:
-            return parse_minecraft_formatting(comment, t.INK_FAINT)
-        if raw:
+        if raw and raw != "A Minecraft Server":
             return parse_minecraft_formatting(raw, t.INK, is_html=bool(html))
     elif isinstance(description, str) and description.strip():
         return parse_minecraft_formatting(description, t.INK)
-    if comment:
-        return parse_minecraft_formatting(comment, t.INK_FAINT)
     return parse_minecraft_formatting("未获取到 MOTD", t.INK_GHOST)
 
 
@@ -548,15 +546,25 @@ def _draw_tag(canvas: Canvas, card: CardLayout, tag: str, x: float, center_y: fl
     return width
 
 
-def _draw_title_row(canvas: Canvas, card: CardLayout) -> None:
+def _draw_title_row(canvas: Canvas, card: CardLayout, title: str) -> None:
     center_y = card.top + ROW_TITLE_Y
     cursor = card.body_left
     tag = str(card.node.get("tag") or "").strip()
     if tag:
         cursor += _draw_tag(canvas, card, tag, cursor, center_y) + t.CARD_COL_GAP
     available = max(0.0, card.body_right - cursor)
-    title = canvas.fit(canvas.flatten(_motd_segments(card.node)), NAME, available)
-    canvas.segments(title, (cursor, center_y), NAME, "lm")
+    segments = canvas.fit(parse_minecraft_formatting(title, t.INK), NAME, available)
+    canvas.segments(segments, (cursor, center_y), NAME, "lm")
+
+
+def _draw_motd_rows(canvas: Canvas, card: CardLayout) -> None:
+    lines = wrap_segments(
+        _motd_segments(card.node), MOTD, card.body_width * t.SCALE, t.MOTD_LINES,
+    )
+    for index, line in enumerate(lines[:t.MOTD_LINES]):
+        canvas.segments(
+            line, (card.body_left, card.top + ROW_MOTD_Y[index]), MOTD, "lm",
+        )
 
 
 def _auth_chip_width(canvas: Canvas, resolved: Optional[auth.ResolvedAuth]) -> float:
@@ -695,10 +703,12 @@ def _draw_card(
     online = bool(card.node.get("online"))
     resolved = _resolve_rendered_auth(card.node, group_default)
     address = get_server_display_address(card.node, pixel_font=True)
+    title = _server_title(card.node, address)
     _draw_card_shell(canvas, card, resolved, online)
     _draw_icon(canvas, icons.get(id(card.node)), card, online)
-    _draw_title_row(canvas, card)
-    _draw_meta_row(canvas, card, address, resolved)
+    _draw_title_row(canvas, card, title)
+    _draw_motd_rows(canvas, card)
+    _draw_meta_row(canvas, card, "" if title == address else address, resolved)
     _draw_rail(canvas, card)
 
 

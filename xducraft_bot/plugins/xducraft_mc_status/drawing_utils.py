@@ -9,8 +9,8 @@
    被“正确消费”然后扔掉，等于每个装饰过的 MOTD 都被降级成纯色文本。现在它们
    进入 :class:`Segment` 的样式位，由 :mod:`.raster` 真的画出来。
 2. **换行不再丢内容。** 旧实现把 ``\\n`` 换成一个 ``■`` 记号挤进单行，再按字符数
-   截断，一半内容直接消失。现在解析阶段完整保留换行，由
-   :func:`flatten_segments` 在单行标题中按像素宽度合并。
+   截断，一半内容直接消失。现在解析阶段完整保留换行，由 :func:`wrap_segments`
+   按像素宽度排进两行 MOTD。
 
 绘制在 :mod:`.raster`，这里只做与画布无关的纯计算。
 """
@@ -452,26 +452,61 @@ def truncate_text(text: str, font_set: FontSet, max_width: float, ellipsis: str 
     return "".join(segment.text for segment in truncated)
 
 
-def flatten_segments(segments: Sequence[Segment], separator: str = "  ") -> List[Segment]:
-    """把多行 MOTD 压成一行，换行处换成分隔符。
 
-    服务器标题只有一行的位置，而 MOTD 本身经常是两行。原版客户端的服务器列表
-    也是这么做的：两行拼起来，放不下就截断。分隔符默认用两个空格而不是可见符号，
-    免得在本来就不换行的 MOTD 里凭空多出一个记号。
-    """
-    flattened: List[Segment] = []
-    pending_separator = False
+
+def wrap_segments(
+    segments: Sequence[Segment],
+    font_set: FontSet,
+    max_width: float,
+    max_lines: int,
+    ellipsis: str = "…",
+) -> List[List[Segment]]:
+    """按显式换行和像素宽度把富文本折成固定行数。"""
+    lines: List[List[Segment]] = [[]]
+    used = [0.0]
+
+    def start_line() -> bool:
+        if len(lines) >= max_lines:
+            return False
+        lines.append([])
+        used.append(0.0)
+        return True
+
+    overflow = False
     for segment in segments:
-        parts = segment.text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-        for index, part in enumerate(parts):
-            if index:
-                pending_separator = True
-            if not part:
+        for index, chunk in enumerate(segment.text.split("\n")):
+            if index and not start_line():
+                overflow = True
+                break
+            if not chunk:
                 continue
-            prefix = separator if pending_separator and flattened else ""
-            flattened.append(replace(segment, text=prefix + part))
-            pending_separator = False
-    return flattened
+            buffer: List[str] = []
+            for character in chunk:
+                width = segment_char_width(segment, character, font_set)
+                if used[-1] + width > max_width:
+                    if buffer:
+                        lines[-1].append(replace(segment, text="".join(buffer)))
+                        buffer = []
+                    if not start_line():
+                        overflow = True
+                        break
+                buffer.append(character)
+                used[-1] += width
+            if buffer:
+                lines[-1].append(replace(segment, text="".join(buffer)))
+            if overflow:
+                break
+        if overflow:
+            break
+
+    if overflow and lines[-1]:
+        budget = max_width - font_set.length(ellipsis)
+        lines[-1] = truncate_segments(lines[-1], font_set, budget)
+        if lines[-1] and lines[-1][-1].text == ellipsis:
+            lines[-1].pop()
+        tail = lines[-1][-1] if lines[-1] else Segment("", (255, 255, 255, 255))
+        lines[-1].append(replace(tail, text=ellipsis, bold=False, obfuscated=False, gradient=None))
+    return [line for line in lines if line] or [[]]
 
 
 __all__ = [
@@ -481,5 +516,5 @@ __all__ = [
     "parse_minecraft_formatting",
     "bold_offset", "bold_offset_for", "bold_width", "is_full_width",
     "measure_segments", "measure_text", "segment_char_width",
-    "truncate_segments", "truncate_text", "flatten_segments",
+    "truncate_segments", "truncate_text", "wrap_segments",
 ]

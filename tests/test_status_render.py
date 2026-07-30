@@ -15,7 +15,7 @@ from xducraft_bot.plugins.xducraft_mc_status import image_renderer as ir
 from xducraft_bot.plugins.xducraft_mc_status import settings as cfg
 
 ROLES = [
-    fonts.EYEBROW, fonts.TITLE, fonts.SUBTITLE, fonts.CHIP, fonts.NAME,
+    fonts.EYEBROW, fonts.TITLE, fonts.SUBTITLE, fonts.CHIP, fonts.NAME, fonts.MOTD,
     fonts.ADDRESS, fonts.MICRO, fonts.DATA, fonts.LABEL,
 ]
 
@@ -98,22 +98,26 @@ def test_measured_width_matches_drawn_width():
     )
 
 
-def test_flattened_motd_preserves_both_source_lines():
-    """卡片标题只有一行；原 MOTD 的换行要变成间隔，不能丢掉后一行。"""
+def test_motd_preserves_two_explicit_lines():
     segments = du.parse_minecraft_formatting(
         "§b第一行\n§7第二行", (255, 255, 255, 255),
     )
-    flattened = du.flatten_segments(segments)
+    lines = du.wrap_segments(segments, fonts.MOTD, 600 * t.SCALE, t.MOTD_LINES)
 
-    assert "".join(segment.text for segment in flattened) == "第一行  第二行"
+    assert len(lines) == 2
+    assert "".join(segment.text for segment in lines[0]) == "第一行"
+    assert "".join(segment.text for segment in lines[1]) == "第二行"
 
 
-def test_flattened_motd_can_be_truncated_to_one_row():
-    segments = du.flatten_segments(du.parse_minecraft_formatting(
-        "§b第一行\n§7第二行非常长" + "内容" * 60, (255, 255, 255, 255),
-    ))
-    fitted = du.truncate_segments(segments, fonts.NAME, 300 * t.SCALE)
-    assert du.measure_segments(fitted, fonts.NAME) <= 300 * t.SCALE + 1
+def test_long_motd_wraps_and_truncates_at_two_rows():
+    segments = du.parse_minecraft_formatting(
+        "§b第一行很长" + "内容" * 80, (255, 255, 255, 255),
+    )
+    width = 300 * t.SCALE
+    lines = du.wrap_segments(segments, fonts.MOTD, width, t.MOTD_LINES)
+    assert len(lines) == 2
+    assert all(du.measure_segments(line, fonts.MOTD) <= width + 1 for line in lines)
+    assert lines[-1][-1].text == "…"
 
 
 def test_format_codes_survive_parsing():
@@ -225,7 +229,8 @@ def test_scale_only_accepts_grid_safe_values():
     for scale in (2, 4):
         for logical in (
             t.TYPE_EYEBROW, t.TYPE_TITLE, t.TYPE_SUBTITLE, t.TYPE_CHIP,
-            t.TYPE_NAME, t.TYPE_ADDRESS, t.TYPE_MICRO, t.TYPE_LABEL, t.TYPE_DATA,
+            t.TYPE_NAME, t.TYPE_MOTD, t.TYPE_ADDRESS, t.TYPE_MICRO,
+            t.TYPE_LABEL, t.TYPE_DATA,
         ):
             assert (logical * scale) % 8 == 0, (logical, scale)
 
@@ -540,3 +545,23 @@ def test_text_shadow_is_enabled_by_default():
     without_shadow.text("SHADOW", (8, 20), fonts.DATA, t.INK, shadow=False)
     assert np.array(with_shadow.image).min() < 255
     assert np.array(without_shadow.image).min() == 255
+
+
+def test_black_text_never_receives_a_shadow():
+    default_shadow = raster.Canvas(120, 40, background=(255, 255, 255))
+    shadow_disabled = raster.Canvas(120, 40, background=(255, 255, 255))
+    default_shadow.text("BLACK", (8, 20), fonts.DATA, t.INK_DARK)
+    shadow_disabled.text("BLACK", (8, 20), fonts.DATA, t.INK_DARK, shadow=False)
+    assert np.array_equal(np.array(default_shadow.image), np.array(shadow_disabled.image))
+
+
+def test_comment_is_the_server_title_not_motd_fallback():
+    node = {
+        "online": True,
+        "comment": "配置的服务器标题",
+        "description": {"text": "第一行 MOTD\n第二行 MOTD"},
+    }
+    assert ir._server_title(node, "fallback.example.com") == "配置的服务器标题"
+    motd = "".join(segment.text for segment in ir._motd_segments(node))
+    assert "服务器标题" not in motd
+    assert motd == "第一行 MOTD\n第二行 MOTD"

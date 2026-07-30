@@ -57,6 +57,8 @@ def server(**overrides: Any) -> Dict[str, Any]:
         "children": [],
     }
     node.update(overrides)
+    if not str(node.get("comment") or "").strip() and str(node.get("tag") or "").strip():
+        node["comment"] = f"{node['tag']}服务器"
     return node
 
 
@@ -118,8 +120,8 @@ def scenario_velocity() -> Dict[str, Any]:
 
 
 def scenario_long_motd() -> Dict[str, Any]:
-    """长 MOTD：多行合并、无空格长串和单行像素截断。"""
-    filler = "这是一段很长的服务器公告文本，用来测试单行合并与截断的表现，"
+    """长 MOTD：显式换行、自动折成两行、无空格长串和像素截断。"""
+    filler = "这是一段很长的服务器公告文本，用来测试两行折行与截断的表现，"
     return {
         "footer": "页脚也可以很长：" + filler * 3,
         "source_label": "自建后端",

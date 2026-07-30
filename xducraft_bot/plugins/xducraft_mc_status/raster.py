@@ -31,8 +31,7 @@ from . import tokens as t
 from .constants import TEXTURES_PATH
 from .drawing_utils import (
     Color, Segment, as_rgba, bold_offset_for, bold_width, contrast_ratio,
-    flatten_segments, measure_segments, relative_luminance, truncate_segments,
-    truncate_text,
+    measure_segments, relative_luminance, truncate_segments, truncate_text,
 )
 from .fonts import FontSet
 
@@ -283,12 +282,16 @@ class Canvas:
         baseline = self._baseline(xy[1], font_set, vertical)
         spans = _gradient_spans(segments, widths, x)
 
-        # 投影必须整串先画完，再画正文。逐段“先影后字”的话，后一段的投影会盖在
-        # 前一段的字上——原版也是分两趟画的。
+        # Minecraft 投影只留给白色文字。彩色 / 黑色胶片文字不画投影：尤其亮色
+        # Tag 自动切成黑字时，原来的黑色投影会糊成一团。
+        # 投影仍须整串先画完，再画正文，避免后一段的影子盖住前一段正文。
         if shadow:
             offset = shadow_offset(font_set)
             cursor = x
             for index, segment in enumerate(segments):
+                if not has_white_ink(segment):
+                    cursor += widths[index]
+                    continue
                 span = spans[index]
                 shifted = None if span is None else (span[0] + offset, span[1])
                 dimmed = shadow_of(segment)
@@ -425,9 +428,6 @@ class Canvas:
     def fit_text(text: str, font_set: FontSet, max_width: float) -> str:
         return truncate_text(text, font_set, max_width * t.SCALE)
 
-    @staticmethod
-    def flatten(segments: Sequence[Segment]) -> List[Segment]:
-        return flatten_segments(segments)
 
     # --- 输出 ---
 
@@ -535,6 +535,13 @@ def shadow_offset(font_set: FontSet) -> int:
     不随字宽变化，减半反而会让中英混排的影子错位。
     """
     return max(1, int(font_set.size) // 8)
+
+
+def has_white_ink(segment: Segment) -> bool:
+    """只有纯白（透明度不限）的文字使用 Minecraft 投影。"""
+    if segment.gradient is not None:
+        return all(as_rgba(stop)[:3] == (255, 255, 255) for stop in segment.gradient)
+    return as_rgba(segment.color)[:3] == (255, 255, 255)
 
 
 def shadow_of(segment: Segment) -> Segment:
