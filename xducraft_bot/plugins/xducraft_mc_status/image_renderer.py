@@ -65,6 +65,7 @@ HEADER_ROW_SUBTITLE = 20
 
 # 精简卡片保留两行 MOTD 和一行底部地址；右侧是 Tag + 三项紧凑状态栈。
 ROW_MOTD_Y = (18, 40)
+SINGLE_MOTD_Y = 34
 ROW_META_Y = 68
 RAIL_ROW_Y = (16, 34, 52)
 LATENCY_SIGNAL_GAP = 4
@@ -498,8 +499,18 @@ def _draw_card_shell(
     canvas.rect(
         (card.box_left, card.top, card.box_right, card.bottom),
         fill=t.SURFACE if online else t.SURFACE_IDLE,
-        outline=t.RULE_DARK,
     )
+    if online:
+        color = _auth_color(resolved)
+        transparent = (*as_rgba(color)[:3], 0)
+        canvas.horizontal_gradient(
+            (card.box_left, card.top, card.box_right, card.top + t.RULE_WIDTH),
+            transparent, color,
+        )
+        canvas.horizontal_gradient(
+            (card.box_left, card.bottom - t.RULE_WIDTH, card.box_right, card.bottom),
+            transparent, color,
+        )
     _draw_auth_stripe(canvas, card, resolved)
 
 
@@ -626,14 +637,10 @@ def _motd_segments(server_data: Dict[str, Any]) -> List[Segment]:
 
 
 def _draw_motd_rows(canvas: Canvas, card: CardLayout) -> None:
-
     lines = wrap_segments(
         _motd_segments(card.node), MOTD, card.body_width * t.SCALE, t.MOTD_LINES,
     )
-    if len(lines) == 1:
-        positions = [(ROW_MOTD_Y[0] + ROW_MOTD_Y[1]) / 2]
-    else:
-        positions = ROW_MOTD_Y
+    positions = [SINGLE_MOTD_Y] if len(lines) == 1 else ROW_MOTD_Y
     for line, offset_y in zip(lines[:t.MOTD_LINES], positions):
         canvas.segments(line, (card.body_left, card.top + offset_y), MOTD, "lm")
 

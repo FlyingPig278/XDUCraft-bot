@@ -196,10 +196,10 @@ def scenario_auth() -> Dict[str, Any]:
         "servers": [
             server(ip="official.example.com", tag="正版", tag_color="2ea043",
                    auth_mode="official", auth_detected="official", ping=30,
-                   description={"text": "§a已实测确认：左边条为完整实线"}),
+                   description={"text": "§a已实测确认：右边条为完整实线"}),
             server(ip="mua.example.com", tag="MUA", tag_color="5865f2",
                    auth_mode="mua", ping=45,
-                   description={"text": "§7仅按配置显示：左边条为不透明虚线"}),
+                   description={"text": "§7仅按配置显示：右边条为不透明虚线"}),
             server(ip="xdu.example.com", tag="XDU", tag_color="1f6feb",
                    auth_mode="xdu", auth_detected="xdu", ping=60),
             server(ip="ygg.example.com", tag="外置", tag_color="00a8b5",

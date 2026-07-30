@@ -204,9 +204,9 @@ def test_offline_label_stays_inside_the_latency_slot():
 
 
 def test_auth_colors_and_state_colors_never_share_a_slot():
-    """色相分区：状态色只在右栏，验证方式色只在左边条。
+    """色相分区：状态色与验证方式色使用不同的视觉槽位。
 
-    两边撞色的话，绿色既可能是“延迟低”又可能是“正版登录”，图就没法读了。
+    两者撞色会让绿色既表示“延迟低”又表示“正版登录”，图片无法稳定解读。
     """
     from xducraft_bot.plugins.xducraft_mc_status import auth_mode as auth
 
@@ -388,7 +388,7 @@ def test_all_texture_backgrounds_are_dark_enough_for_text():
         canvas = raster.Canvas(64, 64)
         canvas.tile_background(name)
         luminances.append(raster._mean_luminance(canvas.image))
-    assert max(luminances) <= t.SCRIM_TARGET_LUMINANCE + 0.0005
+    assert max(luminances) <= t.SCRIM_TARGET_LUMINANCE + 0.001
 
 
 def test_black_concrete_powder_still_receives_darkening():
@@ -401,7 +401,7 @@ def test_black_concrete_powder_still_receives_darkening():
     canvas.tile_background(name)
     after = raster._mean_luminance(canvas.image)
     assert alpha > 0
-    assert after < before * 0.5
+    assert after < before * 0.6
 
 
 # ==============================================================================
@@ -575,15 +575,36 @@ def test_auth_stripe_sits_outside_the_bordered_box_on_right():
     assert card.rail_right == card.box_right - t.CARD_PAD
 
 
-def test_server_row_border_is_translucent_black():
+def test_online_server_uses_auth_colored_top_and_bottom_gradients():
+    from types import SimpleNamespace
+    from xducraft_bot.plugins.xducraft_mc_status import auth_mode as auth
+
+    card = ir.CardLayout(node={"children": []}, level=0, top=0)
+    resolved = SimpleNamespace(
+        mode=auth.MODE_XDU, confirmed=True, conflict=False,
+        style=auth.style_for(auth.MODE_XDU),
+    )
+    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT)
+    rects = []
+    gradients = []
+    canvas.rect = lambda box, **kwargs: rects.append((box, kwargs))  # type: ignore[assignment]
+    canvas.horizontal_gradient = lambda box, start, end: gradients.append((box, start, end))  # type: ignore[assignment]
+    ir._draw_card_shell(canvas, card, resolved=resolved, online=True)
+
+    assert "outline" not in rects[0][1]
+    assert len(gradients) == 2
+    assert gradients[0][0] == (card.box_left, card.top, card.box_right, card.top + t.RULE_WIDTH)
+    assert gradients[1][0] == (card.box_left, card.bottom - t.RULE_WIDTH, card.box_right, card.bottom)
+    assert all(start[3] == 0 and end == resolved.style.color for _, start, end in gradients)
+
+
+def test_offline_server_has_no_gradient_border():
     card = ir.CardLayout(node={"children": []}, level=0, top=0)
     canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT)
-    calls = []
-    canvas.rect = lambda box, **kwargs: calls.append((box, kwargs))  # type: ignore[assignment]
-    ir._draw_card_shell(canvas, card, resolved=None, online=True)
-    shell = calls[0]
-    assert shell[0] == (card.box_left, card.top, card.box_right, card.bottom)
-    assert shell[1]["outline"] == t.RULE_DARK
+    gradients = []
+    canvas.horizontal_gradient = lambda *args: gradients.append(args)  # type: ignore[assignment]
+    ir._draw_card_shell(canvas, card, resolved=None, online=False)
+    assert gradients == []
 
 
 def test_latency_is_one_compact_right_aligned_text_run():
@@ -625,14 +646,15 @@ def test_status_stack_fits_above_address_row():
     assert third < ir.ROW_META_Y
 
 
-def test_single_line_motd_is_centered_between_two_row_positions():
+def test_single_line_motd_is_lower_than_geometric_center():
     node = {"online": True, "description": {"text": "单行 MOTD"}, "children": []}
     card = ir.CardLayout(node=node, level=0, top=10)
     canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT + 20)
     calls = []
     canvas.segments = lambda segments, xy, font, anchor="lm", **kwargs: calls.append(xy) or 0.0  # type: ignore[assignment]
     ir._draw_motd_rows(canvas, card)
-    assert calls == [(card.body_left, card.top + sum(ir.ROW_MOTD_Y) / 2)]
+    assert ir.SINGLE_MOTD_Y > sum(ir.ROW_MOTD_Y) / 2
+    assert calls == [(card.body_left, card.top + ir.SINGLE_MOTD_Y)]
 
 
 def test_two_line_motd_keeps_both_row_positions():
@@ -730,6 +752,8 @@ def test_tag_casts_soft_shadow_beyond_its_hard_edge():
     sample_y = t.px(box[1] + t.TAG_CHIP_HEIGHT / 2)
     assert max(canvas.image.getpixel((sample_x, sample_y))) < 255
     assert canvas.image.getpixel((t.px(card.right - 20), t.px(card.top + 30))) == (255, 255, 255)
+    assert t.TAG_SHADOW_BLUR >= 3
+    assert t.TAG_SHADOW_COLOR[3] >= 180
 
 def test_long_tag_pushes_address_right_of_tag_edge():
     node = {

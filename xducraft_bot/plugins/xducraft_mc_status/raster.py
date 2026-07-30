@@ -272,6 +272,25 @@ class Canvas:
         patch = column.resize((width, height), Image.Resampling.NEAREST)
         self.image.paste(patch, (left, top_y), patch)
 
+    def horizontal_gradient(self, box: Box, left_color: Color, right_color: Color) -> None:
+        """横向线性渐变；服务器行上下边从透明过渡到验证方式颜色。"""
+        left, top, right, bottom = (t.px(value) for value in box)
+        width, height = right - left, bottom - top
+        if width <= 0 or height <= 0:
+            return
+        start, end = as_rgba(left_color), as_rgba(right_color)
+        row = Image.new("RGBA", (width, 1))
+        pixels = row.load()
+        span = max(1, width - 1)
+        for offset in range(width):
+            ratio = offset / span
+            pixels[offset, 0] = tuple(
+                int(round(start[channel] + (end[channel] - start[channel]) * ratio))
+                for channel in range(4)
+            )
+        patch = row.resize((width, height), Image.Resampling.NEAREST)
+        self.image.paste(patch, (left, top), patch)
+
     def dotted_hline(self, y: float, x0: float, x1: float, color: Color) -> None:
         step = t.SPINE_DOT + t.SPINE_GAP
         cursor = x0

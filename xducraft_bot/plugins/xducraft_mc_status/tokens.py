@@ -47,9 +47,8 @@ def px(value: float) -> int:
 #: 有材质时压多少黑由 :func:`.raster.texture_scrim` 按材质亮度算，不是定值——
 #: 竹板砖比泥土亮得多，泥土又比黑色混凝土粉末亮得多，一刀切会让亮材质上的字发飘。
 SCRIM = (0, 0, 0, 148)
-#: 背景保持暗色但不再接近纯黑；目标仍低于当前资源里最暗的煤炭块 / 黑曜石，
-#: 因此黑色混凝土粉末等深色材质也继续接受一层较轻的遮罩。
-SCRIM_TARGET_LUMINANCE = 0.005
+#: 背景保持暗色但让纹理更容易辨认；黑色混凝土粉末仍会接受遮罩。
+SCRIM_TARGET_LUMINANCE = 0.006
 #: 极亮材质允许重遮罩，但保留可辨认的纹理差异。
 SCRIM_MAX_ALPHA = 0.99
 #: 在线卡片底色 rgba(0,0,0,.40)。
@@ -176,9 +175,9 @@ TAG_CHIP_MAX_WIDTH = 240
 #: 长 Tag 把地址推开时保留的文字间距；短 Tag 不影响地址默认起点。
 TAG_ADDRESS_GAP = 8
 #: Tag 与图标 / 文字相交时，用轻微投影软化硬边。
-TAG_SHADOW_OFFSET = (1, 1)
-TAG_SHADOW_BLUR = 2
-TAG_SHADOW_COLOR = (0, 0, 0, 150)
+TAG_SHADOW_OFFSET = (2, 2)
+TAG_SHADOW_BLUR = 3
+TAG_SHADOW_COLOR = (0, 0, 0, 185)
 
 #: 地址之后至少留出这段距离才显示玩家名；玩家名用小绿点引导并向左截断。
 PLAYER_LIST_GAP = 12
