@@ -171,11 +171,17 @@ FIRE_ICON_RISE = 2
 
 #: 左边条：承载验证方式颜色，是这套设计里唯一的彩色竖条。
 AUTH_STRIPE_WIDTH = 4
-#: Tag 叠在卡片左上角，允许覆盖图标或 MOTD；宽度按文本自适应并设上限。
+#: Tag 叠在卡片左下角，允许覆盖图标脚部；长 Tag 会把地址起点向右推。
 TAG_CHIP_PADDING_X = 8
 TAG_CHIP_HEIGHT = 20
-TAG_CHIP_MAX_WIDTH = 96
+TAG_CHIP_MAX_WIDTH = 240
+#: 长 Tag 把地址推开时保留的文字间距；短 Tag 不影响地址默认起点。
+TAG_ADDRESS_GAP = 8
 
+#: 地址之后至少留出这段距离才显示玩家名；玩家名用小绿点引导并向左截断。
+PLAYER_LIST_GAP = 12
+PLAYER_LIST_DOT = 4
+PLAYER_LIST_DOT_GAP = 6
 #: 子服务器缩进 = 4 个方块单位。
 CHILD_INDENT = BLOCK * 4
 #: 父子连线用 2×2 的像素点阵画，不用实线——直线在像素语境里太“矢量”了。
@@ -199,6 +205,6 @@ __all__ = [
     "CARD_HEIGHT", "CARD_GAP", "CARD_PAD", "CARD_COL_GAP",
     "ICON_SIZE", "MOTD_LINES", "RAIL_WIDTH", "FIRE_ICON_SIZE", "FIRE_ICON_GAP", "FIRE_ICON_RISE",
     "AUTH_STRIPE_WIDTH",
-    "TAG_CHIP_PADDING_X", "TAG_CHIP_HEIGHT", "TAG_CHIP_MAX_WIDTH",
-    "CHILD_INDENT", "SPINE_DOT", "SPINE_GAP",
+    "TAG_CHIP_PADDING_X", "TAG_CHIP_HEIGHT", "TAG_CHIP_MAX_WIDTH", "TAG_ADDRESS_GAP",
+    "PLAYER_LIST_GAP", "PLAYER_LIST_DOT", "PLAYER_LIST_DOT_GAP",
 ]

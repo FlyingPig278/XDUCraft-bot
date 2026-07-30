@@ -232,6 +232,36 @@ def scenario_latency() -> Dict[str, Any]:
     }
 
 
+def scenario_players() -> Dict[str, Any]:
+    """玩家列表：短名单、长名单截断，以及地址优先时名单主动让位。"""
+    many = [
+        {"name": name} for name in (
+            "Steve", "Alex", "Notch", "Dinnerbone", "建筑师老王", "红石工程师",
+            "VeryLongPlayerName", "小明", "阿强", "EnderDragonRider",
+        )
+    ]
+    return {
+        "source_label": "本地协议",
+        "servers": [
+            server(
+                ip="short.example.com", tag="短名单", tag_color="2ea043",
+                description={"text": "§a短名单完整显示"},
+                players={"online": 2, "max": 20, "sample": many[:2]},
+            ),
+            server(
+                ip="list.example.com", description={"text": "§e长名单按剩余宽度截断"},
+                players={"online": 10, "max": 40, "sample": many},
+            ),
+            server(
+                ip="an-extremely-long-address-for-layout.example.com:25565",
+                tag="this tag intentionally occupies the address row",
+                tag_color="a371f7", description={"text": "§d地址优先，玩家名单主动让位"},
+                players={"online": 10, "max": 40, "sample": many},
+            ),
+        ],
+    }
+
+
 def scenario_empty() -> Dict[str, Any]:
     """一台服务器都没有的空态。"""
     return {"servers": []}
@@ -252,6 +282,7 @@ SCENARIOS: Dict[str, Callable[[], Dict[str, Any]]] = {
     "rainbow": scenario_rainbow,
     "auth": scenario_auth,
     "latency": scenario_latency,
+    "players": scenario_players,
     "minimal": scenario_minimal,
     "empty": scenario_empty,
 }

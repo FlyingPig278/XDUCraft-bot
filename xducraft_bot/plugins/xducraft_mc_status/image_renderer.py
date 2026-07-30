@@ -62,15 +62,12 @@ FALLBACK_TEXTURE = "stone.png"
 HEADER_ROW_EYEBROW = 16
 HEADER_ROW_TITLE = 44
 HEADER_ROW_SUBTITLE = 20
-HEADER_RULE_GAP = 6
 
 # 精简卡片保留两行 MOTD 和一行底部地址；右侧是 Tag + 三项紧凑状态栈。
 ROW_MOTD_Y = (18, 40)
 ROW_META_Y = 68
 RAIL_ROW_Y = (16, 34, 52)
 LATENCY_SIGNAL_GAP = 4
-LATENCY_UNIT_GAP = 2
-
 # 信号条。
 BAR_WIDTH = 2
 BAR_GAP = 2
@@ -82,7 +79,6 @@ class HeaderMetrics:
     eyebrow_y: Optional[float]
     title_y: Optional[float]
     subtitle_y: float
-    rule_y: float
     list_top: float
 
 
@@ -98,13 +94,11 @@ def header_metrics(settings: RenderSettings) -> HeaderMetrics:
         cursor += HEADER_ROW_TITLE
     subtitle_y = cursor + HEADER_ROW_SUBTITLE / 2
     cursor += HEADER_ROW_SUBTITLE
-    rule_y = cursor + HEADER_RULE_GAP
     return HeaderMetrics(
         eyebrow_y=eyebrow_y,
         title_y=title_y,
         subtitle_y=subtitle_y,
-        rule_y=rule_y,
-        list_top=rule_y + t.SECTION_GAP,
+        list_top=cursor + t.SECTION_GAP,
     )
 
 
@@ -286,10 +280,30 @@ def _collect_auth_modes(cards: Sequence[CardLayout], group_default: str) -> List
     return [mode for mode in order if mode in present]
 
 
-def resolve_texture(settings: RenderSettings, group_id: int) -> str:
+def normalize_texture_override(value: str, textures: Optional[Sequence[str]] = None) -> str:
+    """把 ``texture=dirt`` 解析成真实文件名；非法或不存在时返回空串。"""
+    raw = str(value or "").strip()
+    if not raw or raw != os.path.basename(raw):
+        return ""
+    candidate = raw if raw.lower().endswith(".png") else f"{raw}.png"
+    available = list(textures) if textures is not None else list_textures()
+    by_name = {name.casefold(): name for name in available}
+    return by_name.get(candidate.casefold(), "")
+
+
+def resolve_texture(
+    settings: RenderSettings, group_id: int, texture_override: str = "",
+) -> str:
     textures = list_textures()
     if not textures:
         return ""
+
+    requested = normalize_texture_override(texture_override, textures)
+    if requested:
+        return requested
+    if str(texture_override or "").strip():
+        logger.debug("[MCStatus] 请求材质 {} 不存在，回退部署配置。", texture_override)
+
     choice = (settings.texture or PER_GROUP_TEXTURE).strip()
     if choice == NO_TEXTURE:
         return ""
@@ -371,7 +385,6 @@ def _draw_header(
         canvas.fit_text(subtitle, SUBTITLE, text_limit),
         (left, metrics.subtitle_y), SUBTITLE, t.INK_FAINT, "lm",
     )
-    canvas.hline(metrics.rule_y, left, right, t.RULE)
 
 
 def _draw_legend(canvas: Canvas, modes: Sequence[str], top: float) -> None:
@@ -457,10 +470,15 @@ def _draw_auth_stripe(canvas: Canvas, card: CardLayout, resolved: Optional[auth.
     else:
         cursor = card.top
         while cursor < card.bottom:
-            canvas.rect(
-                (card.left, cursor, card.box_left, min(cursor + t.AUTH_DASH, card.bottom)),
-                fill=color,
-            )
+            start = cursor
+            # 最后一段保持正常长度并贴住底边；宁可把最后一个内部间隔放宽一点，
+            # 也不在卡片底部留下 1–Npx 的残缺空隙。
+            if start + t.AUTH_DASH < card.bottom <= start + t.AUTH_DASH + t.AUTH_DASH_GAP:
+                start = card.bottom - t.AUTH_DASH
+            end = min(start + t.AUTH_DASH, card.bottom)
+            canvas.rect((card.left, start, card.box_left, end), fill=color)
+            if end >= card.bottom:
+                break
             cursor += t.AUTH_DASH + t.AUTH_DASH_GAP
     if resolved is not None and resolved.conflict:
         canvas.rect(
@@ -615,36 +633,9 @@ def _draw_motd_rows(canvas: Canvas, card: CardLayout) -> None:
         )
 
 
-def _draw_meta_row(
-    canvas: Canvas,
-    card: CardLayout,
-    address: str,
-    resolved: Optional[auth.ResolvedAuth],
-) -> None:
-    """底部地址行；验证方式降级成紧随其后的彩色下划线文字。"""
-    center_y = card.top + ROW_META_Y
-    label = ""
-    label_width = 0.0
-    if resolved is not None and resolved.mode != auth.MODE_UNKNOWN:
-        label = resolved.style.short_label
-        label_width = canvas.measure(label, ADDRESS)
-    gap = 8 if label else 0
-    address_budget = max(0.0, card.body_width - label_width - gap)
-    address_text = canvas.fit_text(address, ADDRESS, address_budget)
-    address_width = canvas.text(
-        address_text, (card.body_left, center_y), ADDRESS, t.INK_FAINT, "lm",
-    )
-    if label:
-        canvas.segments(
-            [Segment(label, _auth_color(resolved), underline=True)],
-            (card.body_left + address_width + gap, center_y), ADDRESS, "lm",
-        )
-
-
-def _draw_tag_overlay(
+def _tag_layout(
     canvas: Canvas, card: CardLayout,
-) -> Optional[Tuple[float, float, float, float]]:
-    """Tag 左上角与卡片左上角重合；允许覆盖图标和 MOTD。"""
+) -> Optional[Tuple[str, Tuple[int, int, int, int], float]]:
     tag = str(card.node.get("tag") or "").strip()
     if not tag:
         return None
@@ -655,11 +646,96 @@ def _draw_tag_overlay(
         t.TAG_CHIP_MAX_WIDTH,
         canvas.measure(label, CHIP) + 2 * t.TAG_CHIP_PADDING_X,
     )
+    return label, background, width
+
+
+def _player_names(node: Dict[str, Any]) -> List[str]:
+    players = node.get("players") if isinstance(node.get("players"), dict) else {}
+    return [
+        str(player.get("name"))
+        for player in players.get("sample", [])
+        if isinstance(player, dict) and player.get("name")
+    ]
+
+
+def _draw_player_list(
+    canvas: Canvas, card: CardLayout, left_bound: float, center_y: float,
+) -> str:
+    """在地址剩余空间里右对齐玩家名；空间不足时截断或省略。"""
+    names = _player_names(card.node)
+    if not names:
+        return ""
+    reserved = t.PLAYER_LIST_DOT + t.PLAYER_LIST_DOT_GAP
+    available = card.body_right - left_bound - t.PLAYER_LIST_GAP - reserved
+    if available < canvas.measure("…", MICRO):
+        return ""
+    text = canvas.fit_text(" · ".join(names), MICRO, available)
+    if not text:
+        return ""
+    text_width = canvas.measure(text, MICRO)
+    text_left = card.body_right - text_width
+    dot_right = text_left - t.PLAYER_LIST_DOT_GAP
+    dot_left = dot_right - t.PLAYER_LIST_DOT
+    canvas.rect(
+        (dot_left, center_y - t.PLAYER_LIST_DOT / 2,
+         dot_right, center_y + t.PLAYER_LIST_DOT / 2),
+        fill=t.STATE_EXCELLENT,
+    )
+    canvas.text(text, (card.body_right, center_y), MICRO, t.INK_FAINT, "rm")
+    return text
+
+
+def _draw_meta_row(
+    canvas: Canvas,
+    card: CardLayout,
+    address: str,
+    resolved: Optional[auth.ResolvedAuth],
+) -> None:
+    """底部地址行；长 Tag 会把地址起点推到 Tag 右边。"""
+    center_y = card.top + ROW_META_Y
+    tag_layout = _tag_layout(canvas, card)
+    tag_right = card.box_left + (tag_layout[2] if tag_layout else 0)
+    content_left = max(
+        card.body_left,
+        tag_right + (t.TAG_ADDRESS_GAP if tag_layout else 0),
+    )
+
+    label = ""
+    label_width = 0.0
+    if resolved is not None and resolved.mode != auth.MODE_UNKNOWN:
+        label = resolved.style.short_label
+        label_width = canvas.measure(label, ADDRESS)
+    gap = 8 if label else 0
+    address_budget = max(0.0, card.body_right - content_left - label_width - gap)
+    address_text = canvas.fit_text(address, ADDRESS, address_budget)
+    address_width = canvas.text(
+        address_text, (content_left, center_y), ADDRESS, t.INK_FAINT, "lm",
+    )
+    content_end = content_left + address_width
+    if label:
+        label_left = content_end + gap
+        canvas.segments(
+            [Segment(label, _auth_color(resolved), underline=True)],
+            (label_left, center_y), ADDRESS, "lm",
+        )
+        content_end = label_left + label_width
+    _draw_player_list(canvas, card, content_end, center_y)
+
+
+def _draw_tag_overlay(
+    canvas: Canvas, card: CardLayout,
+) -> Optional[Tuple[float, float, float, float]]:
+    """Tag 左下角与卡片左下区域重合；允许覆盖图标脚部。"""
+    layout = _tag_layout(canvas, card)
+    if layout is None:
+        return None
+    label, background, width = layout
     left = card.box_left
-    box = (left, card.top, left + width, card.top + t.TAG_CHIP_HEIGHT)
+    top = card.bottom - t.TAG_CHIP_HEIGHT
+    box = (left, top, left + width, card.bottom)
     canvas.rect(box, fill=background, outline=t.RULE, width=1)
     canvas.text(
-        label, (left + t.TAG_CHIP_PADDING_X, card.top + t.TAG_CHIP_HEIGHT / 2),
+        label, (left + t.TAG_CHIP_PADDING_X, top + t.TAG_CHIP_HEIGHT / 2),
         CHIP, ink_for_background(background), "lm",
     )
     return box
@@ -699,11 +775,8 @@ def _draw_rail(canvas: Canvas, card: CardLayout, show_fire: bool = False) -> Non
         return
 
     color = TIER_COLORS[tier]
-    unit_width = canvas.measure("ms", DATA)
-    number = str(ping)
-    number_right = unit_right - unit_width - LATENCY_UNIT_GAP
-    canvas.text("ms", (unit_right, ping_y), DATA, color, "rm")
-    canvas.text(number, (number_right, ping_y), DATA, color, "rm")
+    latency_text = f"{ping}ms"
+    canvas.text(latency_text, (unit_right, ping_y), DATA, color, "rm")
 
     players = node.get("players") if isinstance(node.get("players"), dict) else {}
     counter_text = f"{players.get('online', 0)}/{players.get('max', 0)}"
@@ -794,6 +867,7 @@ def render_servers(
     group_id: int = 0,
     icons: Optional[Dict[int, Optional[Image.Image]]] = None,
     settings: Optional[RenderSettings] = None,
+    texture_override: str = "",
 ) -> str:
     """同步渲染入口；生产与预览共用，不联网、不读群配置。"""
     settings = settings or current_settings()
@@ -819,7 +893,7 @@ def render_servers(
         settings.min_height,
     )
     canvas = Canvas(t.CANVAS_WIDTH, height)
-    canvas.tile_background(resolve_texture(settings, group_id))
+    canvas.tile_background(resolve_texture(settings, group_id, texture_override))
     _draw_header(canvas, stats, source_label, metrics, settings)
 
     if cards:
@@ -849,6 +923,7 @@ async def render_status_image(
     group_id: int,
     show_all_servers: bool,
     source_label: str = "",
+    texture_override: str = "",
 ) -> str:
     """准备数据和图标后在线程中渲染，返回带随机后缀的图片路径。"""
     clean_data = preprocess_server_data(server_data_list)
@@ -871,6 +946,7 @@ async def render_status_image(
         group_default_auth=get_group_default_auth_mode(group_id),
         group_id=group_id,
         icons=icons,
+        texture_override=texture_override,
     )
 
 
@@ -883,6 +959,7 @@ __all__ = [
     "band_is_visible",
     "header_metrics",
     "resolve_texture",
+    "normalize_texture_override",
     "CardLayout",
     "HeaderMetrics",
 ]

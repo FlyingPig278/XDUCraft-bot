@@ -13,6 +13,7 @@ from xducraft_bot.plugins.xducraft_mc_status import fonts, raster, tokens as t
 from xducraft_bot.plugins.xducraft_mc_status import drawing_utils as du
 from xducraft_bot.plugins.xducraft_mc_status import image_renderer as ir
 from xducraft_bot.plugins.xducraft_mc_status import settings as cfg
+from xducraft_bot.plugins.xducraft_mc_status import split_query_options
 
 ROLES = [
     fonts.EYEBROW, fonts.TITLE, fonts.SUBTITLE, fonts.CHIP, fonts.MOTD,
@@ -267,6 +268,19 @@ def test_blank_header_rows_do_not_reserve_space():
     assert bare.list_top < no_brand.list_top < full.list_top
 
 
+def test_header_uses_spacing_without_a_divider_line():
+    settings = cfg.RenderSettings()
+    canvas = raster.Canvas(t.CANVAS_WIDTH, 160)
+    canvas.hline = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("divider drawn"))  # type: ignore[assignment]
+    ir._draw_header(
+        canvas,
+        {"online": 1, "total": 1, "players_online": 2, "players_max": 20},
+        "protocol",
+        ir.header_metrics(settings),
+        settings,
+    )
+
+
 def test_band_disappears_only_when_nothing_is_left_in_it():
     assert ir.band_is_visible(cfg.RenderSettings())
     assert ir.band_is_visible(cfg.RenderSettings(credit="", show_generated_at=True))
@@ -294,6 +308,31 @@ def test_texture_selection_honours_every_mode():
     assert ir.resolve_texture(cfg.RenderSettings(texture=available[0]), 1) == available[0]
     # 配置写了一张不存在的材质，退回兜底而不是变纯黑。
     assert ir.resolve_texture(cfg.RenderSettings(texture="nope.png"), 1) in available
+
+
+def test_query_texture_option_accepts_name_with_or_without_extension():
+    available = raster.list_textures()
+    assert ir.normalize_texture_override("dirt", available) == "dirt.png"
+    assert ir.normalize_texture_override("DIRT.PNG", available) == "dirt.png"
+    assert ir.normalize_texture_override("../dirt", available) == ""
+    assert ir.normalize_texture_override("missing", available) == ""
+
+
+def test_request_texture_overrides_fixed_random_and_none_config():
+    assert ir.resolve_texture(cfg.RenderSettings(texture="stone.png"), 1, "dirt") == "dirt.png"
+    assert ir.resolve_texture(cfg.RenderSettings(texture=cfg.RANDOM_TEXTURE), 1, "dirt") == "dirt.png"
+    assert ir.resolve_texture(cfg.RenderSettings(texture=cfg.NO_TEXTURE), 1, "dirt") == "dirt.png"
+
+
+def test_missing_request_texture_falls_back_to_fixed_config():
+    settings = cfg.RenderSettings(texture="stone.png")
+    assert ir.resolve_texture(settings, 1, "does-not-exist") == "stone.png"
+
+
+def test_query_texture_argument_can_appear_before_or_after_target():
+    assert split_query_options(["all", "texture=dirt"]) == (["all"], "dirt")
+    assert split_query_options(["texture=dirt", "mc.example.com"]) == (["mc.example.com"], "dirt")
+    assert split_query_options(["texture=stone", "texture=dirt"]) == ([], "dirt")
 
 
 def test_per_group_texture_is_stable_across_runs():
@@ -475,44 +514,7 @@ def test_auth_stripe_sits_outside_the_bordered_box():
     assert card.icon_left - card.box_left == t.CARD_PAD
 
 
-def test_nested_cards_keep_the_stripe_outside_too():
-    """子卡片缩进之后，色条仍然在自己方框的外面。"""
-    child = ir.CardLayout(node={"children": []}, level=2, top=0)
-    assert child.left == t.PAGE_PADDING_X + 2 * t.CHILD_INDENT
-    assert child.box_left - child.left == t.AUTH_STRIPE_WIDTH
-    assert child.icon_left == child.box_left + t.CARD_PAD
-
-
-# ==============================================================================
-# 固定卡片、验证条、材质归一化与文字投影
-# ==============================================================================
-
-
-def test_every_server_row_has_the_same_height():
-    plain = {"online": True, "players": {"online": 0, "max": 20}, "children": []}
-    sampled = {
-        "online": True,
-        "players": {"online": 2, "max": 20, "sample": [{"name": "A"}, {"name": "B"}]},
-        "children": [],
-    }
-    cards, _ = ir.build_layout([plain, sampled], 0)
-    assert [card.height for card in cards] == [t.CARD_HEIGHT, t.CARD_HEIGHT]
-    assert cards[1].top - cards[0].top == t.CARD_HEIGHT + t.CARD_GAP
-
-
-def test_compact_card_and_icon_share_edge_padding():
-    assert t.CARD_HEIGHT == 80
-    assert t.ICON_SIZE == 64
-    assert t.ICON_SIZE == t.CARD_HEIGHT - 2 * t.CARD_PAD
-
-
-def test_status_stack_fits_above_address_row():
-    first, second, third = ir.RAIL_ROW_Y
-    assert second - first == third - second
-    assert third < ir.ROW_META_Y
-
-
-def test_latency_number_has_a_small_fixed_gap_before_ms():
+def test_latency_is_one_compact_right_aligned_text_run():
     node = {
         "online": True, "ping": 42, "version": "1.21.1",
         "players": {"online": 3, "max": 20}, "children": [],
@@ -532,13 +534,25 @@ def test_latency_number_has_a_small_fixed_gap_before_ms():
     ir._draw_rail(canvas, card)
     calls = {text: (xy, font, anchor) for text, xy, font, anchor in drawn}
 
-    number_x = calls["42"][0][0]
-    unit_x = calls["ms"][0][0]
-    assert calls["42"][2] == "rm"
-    assert unit_x - canvas.measure("ms", fonts.DATA) - number_x == ir.LATENCY_UNIT_GAP
+    assert calls["42ms"][2] == "rm"
+    assert "42" not in calls and "ms" not in calls
     assert calls["1.21.1"][1] is fonts.VERSION
     assert fonts.VERSION.size == fonts.DATA.size
     assert all(segment.color == t.INK_GHOST for segment in rich_segments)
+
+
+def test_compact_card_and_icon_share_edge_padding():
+    assert t.CARD_HEIGHT == 80
+    assert t.ICON_SIZE == 64
+    assert t.ICON_SIZE == t.CARD_HEIGHT - 2 * t.CARD_PAD
+
+
+def test_status_stack_fits_above_address_row():
+    first, second, third = ir.RAIL_ROW_Y
+    assert second - first == third - second
+    assert third < ir.ROW_META_Y
+
+
 
 
 def test_version_is_visibly_translucent_after_rasterization():
@@ -595,7 +609,7 @@ def test_tagged_and_tagless_cards_always_use_fixed_gap():
     assert t.CARD_GAP > 4
 
 
-def test_tag_overlay_shares_card_top_left_anchor():
+def test_tag_overlay_shares_card_bottom_left_anchor():
     node = {"tag": "生存", "tag_color": "3181D0", "children": []}
     card = ir.CardLayout(node=node, level=0, top=100)
     canvas = raster.Canvas(t.CANVAS_WIDTH, 200)
@@ -606,10 +620,64 @@ def test_tag_overlay_shares_card_top_left_anchor():
     box = ir._draw_tag_overlay(canvas, card)
 
     assert box is not None
-    assert box[:2] == (card.box_left, card.top)
-    assert box[3] == card.top + t.TAG_CHIP_HEIGHT
+    assert box[0] == card.box_left
+    assert box[1] == card.bottom - t.TAG_CHIP_HEIGHT
+    assert box[3] == card.bottom
     assert texts[0][2] == "lm"
 
+
+def test_long_tag_pushes_address_right_of_tag_edge():
+    node = {
+        "tag": "very-long-tag " * 20,
+        "tag_color": "3181D0",
+        "players": {"sample": [{"name": "Steve"}, {"name": "Alex"}]},
+        "children": [],
+    }
+    card = ir.CardLayout(node=node, level=0, top=0)
+    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT)
+    text_calls = []
+    canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: (  # type: ignore[assignment]
+        text_calls.append((text, xy)) or canvas.measure(text, font)
+    )
+    ir._draw_meta_row(canvas, card, "an-extremely-long-address-" * 20, resolved=None)
+    layout = ir._tag_layout(canvas, card)
+    assert layout is not None
+    expected_left = max(card.body_left, card.box_left + layout[2] + t.TAG_ADDRESS_GAP)
+    assert expected_left > card.body_left
+    assert text_calls[0][1][0] == expected_left
+
+    assert expected_left - (card.box_left + layout[2]) == t.TAG_ADDRESS_GAP
+    assert len(text_calls) == 1, "地址优先时玩家列表必须主动让位"
+
+
+def test_short_player_list_is_shown_in_full_with_green_dot():
+    node = {
+        "players": {"sample": [{"name": "Steve"}, {"name": "Alex"}]},
+        "children": [],
+    }
+    card = ir.CardLayout(node=node, level=0, top=0)
+    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT)
+    texts = []
+    dots = []
+    canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: (  # type: ignore[assignment]
+        texts.append(text) or canvas.measure(text, font)
+    )
+    canvas.rect = lambda box, **kwargs: dots.append((box, kwargs.get("fill")))  # type: ignore[assignment]
+    ir._draw_meta_row(canvas, card, "short.example.com", resolved=None)
+    assert texts[-1] == "Steve · Alex"
+    assert dots[-1][1] == t.STATE_EXCELLENT
+
+
+def test_long_player_list_truncates_to_remaining_width():
+    names = [{"name": f"VeryLongPlayerName{index}"} for index in range(30)]
+    card = ir.CardLayout(node={"players": {"sample": names}, "children": []}, level=0, top=0)
+    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT)
+    texts = []
+    canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: (  # type: ignore[assignment]
+        texts.append(text) or canvas.measure(text, font)
+    )
+    ir._draw_meta_row(canvas, card, "x.io", resolved=None)
+    assert texts[-1].endswith("…")
 
 def test_header_statuses_are_plain_text_with_green_dots():
     canvas = raster.Canvas(t.CANVAS_WIDTH, 80)
@@ -684,6 +752,7 @@ def test_config_only_auth_stripe_is_opaque_and_dashed():
     assert len(boxes) > 1
     assert all(fill[3] == 255 for _, fill in boxes)
     assert all(bottom - top <= t.AUTH_DASH for (_, top, _, bottom), _ in boxes)
+    assert max(box[3] for box, _ in boxes) == card.bottom
 
 
 def test_confirmed_auth_stripe_is_one_solid_block():

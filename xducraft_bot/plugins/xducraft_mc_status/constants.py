@@ -62,6 +62,7 @@ USAGE_USER = """【查询】
 /mcs — 查询本群在线服务器
 /mcs all — 连同离线服务器一起显示
 /mcs <IP> — 查询单个服务器
+/mcs [all|<IP>] texture=<材质> — 本次查询临时换背景（如 texture=dirt）
 /mcs list — 查看已添加的服务器列表
 /mcs auth — 查看各服务器的登录验证方式
 /mcs help — 显示本帮助"""
@@ -74,6 +75,7 @@ USAGE_ADMIN = """【Web 编辑器（推荐）】
 /mcs — 查询本群在线服务器
 /mcs all — 连同离线服务器一起显示
 /mcs <IP> — 查询单个服务器
+/mcs [all|<IP>] texture=<材质> — 本次查询临时换背景（如 texture=dirt）
 /mcs list — 查看服务器列表
 /mcs auth — 查看各服务器的登录验证方式
 ---
