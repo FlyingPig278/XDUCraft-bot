@@ -152,7 +152,7 @@ def scenario_long_motd() -> Dict[str, Any]:
 
 
 def scenario_rainbow() -> Dict[str, Any]:
-    """彩虹名字：逐字颜色码、双色渐变、多色渐变，以及叠加各种格式码。"""
+    """彩虹 MOTD：逐字颜色码、双色渐变、多色渐变，以及叠加各种格式码。"""
     legacy_rainbow = "".join(
         f"§{code}{char}" for code, char in zip("c6eabd5c6eabd5", "RAINBOW SERVER")
     )

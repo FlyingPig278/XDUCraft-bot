@@ -149,12 +149,11 @@ A Minecraft server status query plugin for NoneBot, specially designed for XDUCr
 
 状态图的设计语言参考了 [`koishi-plugin-mcsm-portal`](https://github.com/KrLite/koishi-plugin-mcsm-portal)：
 854×480 的原版窗口画布、方块材质、Minecraft 像素字体和直角硬边框；仅白字保留原版投影，黑字与彩色字不加投影。
-每张材质会按自身亮度动态压暗，避免竹板砖过亮、黑色混凝土粉末过暗。卡片加高后，
-图标和文字区共用 8px 上下内边距；彩色标签旁是服务器标题，下面以更大字号完整保留
-两行 MOTD。右上角紧凑排列延迟 / 人数 / 版本号；版本号使用与人数视觉高度匹配的普通
-Minecraft 字体，并在栅格化时真正以半透明合成。玩家名落在右下角；服务器标题支持
-`§` 逐字彩虹与多色渐变标签。离线 barrier 图标保持完全不透明。登录验证方式在左边条
-显示（实测为实线、仅配置为虚线）。
+每张材质会按自身亮度动态压暗。顶部概览改为带绿色像素点的纯文字：`X/Y服务器在线`
+和 `A人在线`。服务器卡片收回 80px：64px 图标不再加内边框，正文给 MOTD 两行；
+空 MOTD 或默认的 `A Minecraft Server` 会改用配置备注。Tag 右对齐到延迟左侧，地址行
+仍保留，验证方式改为紧凑的彩色下划线文字。版本号使用普通 Minecraft 字体并以半透明
+合成；离线 barrier 图标保持完全不透明，验证方式边条仍以实线 / 虚线区分实测 / 配置。
 
 外观参数写在 `.env`（见 `.env.prod.example`，改完重启生效）：
 
@@ -162,7 +161,7 @@ Minecraft 字体，并在栅格化时真正以半透明合成。玩家名落在�
 | --- | --- | --- |
 | `MCS_BRAND` | `XDUCRAFT` | 顶栏品牌行，留空则不画 |
 | `MCS_TITLE` | `Minecraft 服务器状态` | 主标题，留空则不画 |
-| `MCS_CREDIT` | `Powered by … & KrLite` | 底部渐变压角里的署名，留空则不画 |
+| `MCS_CREDIT` | `Powered by …, KrLite` | 底部渐变压角里的署名，留空则不画 |
 | `MCS_SHOW_GENERATED_AT` | `true` | 压角右侧是否显示生成时间 |
 | `MCS_TEXTURE` | 留空 | 背景材质：留空按群号固定、`random`、`none` 或具体文件名；亮度会自动归一化 |
 | `MCS_WIDTH` | `854` | 画布逻辑宽度（640–1600） |

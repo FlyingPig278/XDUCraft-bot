@@ -15,7 +15,7 @@ from xducraft_bot.plugins.xducraft_mc_status import image_renderer as ir
 from xducraft_bot.plugins.xducraft_mc_status import settings as cfg
 
 ROLES = [
-    fonts.EYEBROW, fonts.TITLE, fonts.SUBTITLE, fonts.CHIP, fonts.NAME, fonts.MOTD,
+    fonts.EYEBROW, fonts.TITLE, fonts.SUBTITLE, fonts.CHIP, fonts.MOTD,
     fonts.ADDRESS, fonts.MICRO, fonts.DATA, fonts.VERSION, fonts.LABEL,
 ]
 
@@ -55,7 +55,7 @@ def _face_name(face):
 
 def test_pixel_faces_render_crisply_at_their_role_size():
     """网格约束真的能换来纯像素栅格——不是纸面规则。"""
-    body = fonts.load_face(fonts.FACE_BODY, fonts.NAME.size)
+    body = fonts.load_face(fonts.FACE_BODY, fonts.MOTD.size)
     assert _gray_levels(body, "ABC 123") == 2
 
 @pytest.mark.parametrize("role", ROLES, ids=lambda role: role.name)
@@ -229,8 +229,7 @@ def test_scale_only_accepts_grid_safe_values():
     for scale in (2, 4):
         for logical in (
             t.TYPE_EYEBROW, t.TYPE_TITLE, t.TYPE_SUBTITLE, t.TYPE_CHIP,
-            t.TYPE_NAME, t.TYPE_MOTD, t.TYPE_ADDRESS, t.TYPE_MICRO,
-            t.TYPE_LABEL, t.TYPE_DATA,
+            t.TYPE_MOTD, t.TYPE_ADDRESS, t.TYPE_MICRO, t.TYPE_LABEL, t.TYPE_DATA,
         ):
             assert (logical * scale) % 8 == 0, (logical, scale)
 
@@ -362,7 +361,7 @@ def test_gradient_spans_every_segment_it_wraps():
     assert len(segments) > 1, "嵌套标签必须切出多个 segment，测试才有意义"
     assert all(segment.gradient is not None for segment in segments)
 
-    widths = [du.measure_segments([segment], fonts.NAME) for segment in segments]
+    widths = [du.measure_segments([segment], fonts.MOTD) for segment in segments]
     spans = raster._gradient_spans(segments, widths, 0.0)
     assert len(set(spans)) == 1, "同一个 <gradient> 区间必须共享一条扫描线"
     assert spans[0][1] == pytest.approx(sum(widths))
@@ -373,10 +372,10 @@ def test_bold_is_lighter_on_full_width_glyphs():
 
     照半角的偏移重描，32px 的中文会糊成一团。
     """
-    narrow = du.bold_offset_for(fonts.NAME, "A")
-    wide = du.bold_offset_for(fonts.NAME, "服")
-    assert du.is_full_width(fonts.NAME, "服")
-    assert not du.is_full_width(fonts.NAME, "A")
+    narrow = du.bold_offset_for(fonts.MOTD, "A")
+    wide = du.bold_offset_for(fonts.MOTD, "服")
+    assert du.is_full_width(fonts.MOTD, "服")
+    assert not du.is_full_width(fonts.MOTD, "A")
     assert wide * 2 <= narrow <= wide * 2 + 1
 
 
@@ -384,14 +383,14 @@ def test_bold_measurement_matches_what_gets_drawn():
     """度量与绘制必须用同一套逐字偏移，否则右对齐的粗体会跑偏。"""
     text = "BOLD 粗体混排"
     segment = du.Segment(text, (255,) * 4, bold=True)
-    expected = fonts.NAME.length(text) + sum(
-        du.bold_offset_for(fonts.NAME, ch) for ch in fonts.remap(text)
+    expected = fonts.MOTD.length(text) + sum(
+        du.bold_offset_for(fonts.MOTD, ch) for ch in fonts.remap(text)
     )
-    assert du.measure_segments([segment], fonts.NAME) == pytest.approx(expected)
+    assert du.measure_segments([segment], fonts.MOTD) == pytest.approx(expected)
 
     canvas = raster.Canvas(300, 50)
     anchor_x = 280
-    canvas.segments([segment], (anchor_x, 25), fonts.NAME, "rm")
+    canvas.segments([segment], (anchor_x, 25), fonts.MOTD, "rm")
     ink = np.array(canvas.image.convert("L")) > 24
     rightmost = int(np.max(np.where(ink.any(axis=0))[0]))
     assert abs(rightmost - t.px(anchor_x)) <= t.px(2)
@@ -490,18 +489,16 @@ def test_every_server_row_has_the_same_height():
     assert cards[1].top - cards[0].top == t.CARD_HEIGHT + t.CARD_GAP
 
 
-def test_icon_and_text_share_card_edge_padding():
-    """图标与正文必须从同一条顶边开始、在同一条底边结束。"""
+def test_compact_card_and_icon_share_edge_padding():
+    assert t.CARD_HEIGHT == 80
+    assert t.ICON_SIZE == 64
     assert t.ICON_SIZE == t.CARD_HEIGHT - 2 * t.CARD_PAD
-    assert t.ICON_SIZE > 80
-    assert ir.ROW_TITLE_Y - t.TAG_CHIP_HEIGHT / 2 == t.CARD_PAD
-    assert t.CARD_HEIGHT - (ir.ROW_META_Y + t.TYPE_ADDRESS / 2) == t.CARD_PAD
 
 
-def test_status_stack_is_compact_in_the_top_half():
+def test_status_stack_fits_above_address_row():
     first, second, third = ir.RAIL_ROW_Y
     assert second - first == third - second
-    assert third < t.CARD_HEIGHT / 2
+    assert third < ir.ROW_META_Y
 
 
 def test_latency_number_has_a_small_fixed_gap_before_ms():
@@ -563,19 +560,69 @@ def test_offline_icon_is_not_dimmed():
     assert pixel == (200, 40, 20)
 
 
-def test_playing_players_anchor_to_card_bottom_right():
+def test_server_icon_draws_without_an_inner_border():
+    card = ir.CardLayout(node={"children": []}, level=0, top=0)
+    icon = Image.new("RGBA", (t.px(t.ICON_SIZE), t.px(t.ICON_SIZE)), (200, 40, 20, 255))
+    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT)
+    canvas.rect = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("icon border drawn"))  # type: ignore[assignment]
+    ir._draw_icon(canvas, icon, card, online=True)
+
+
+def test_tag_right_aligns_immediately_before_latency():
     node = {
-        "players": {"sample": [{"name": "Steve"}, {"name": "Alex"}]},
-        "children": [],
+        "online": True, "ping": 42, "version": "1.21.1", "tag": "生存",
+        "tag_color": "3181D0", "players": {"online": 3, "max": 20}, "children": [],
     }
-    card = ir.CardLayout(node=node, level=0, top=10)
-    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT + 20)
-    drawn = []
+    card = ir.CardLayout(node=node, level=0, top=0)
+    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT)
+    boxes = []
+    texts = []
+    canvas.rect = lambda box, **kwargs: boxes.append((box, kwargs.get("fill")))  # type: ignore[assignment]
     canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: (  # type: ignore[assignment]
-        drawn.append((text, xy, anchor)) or 0.0
+        texts.append((text, xy, anchor)) or canvas.measure(text, font)
     )
-    ir._draw_playing_players(canvas, card)
-    assert drawn == [("Steve · Alex", (card.rail_right, card.top + ir.ROW_META_Y), "rm")]
+    canvas.segments = lambda *args, **kwargs: 0.0  # type: ignore[assignment]
+    ir._draw_rail(canvas, card)
+
+    background = ir._tag_background("3181D0")
+    tag_box = next(box for box, fill in boxes if fill == background)
+    number_right = next(xy[0] for text, xy, _ in texts if text == "42")
+    latency_left = number_right - canvas.measure("42", fonts.DATA)
+    assert tag_box[2] == latency_left - t.TAG_STATUS_GAP
+    assert next(anchor for text, _, anchor in texts if text == "生存") == "rm"
+
+
+def test_header_statuses_are_plain_text_with_green_dots():
+    canvas = raster.Canvas(t.CANVAS_WIDTH, 80)
+    boxes = []
+    texts = []
+    canvas.rect = lambda box, **kwargs: boxes.append((box, kwargs.get("fill"), kwargs.get("outline")))  # type: ignore[assignment]
+    canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: (  # type: ignore[assignment]
+        texts.append(text) or canvas.measure(text, font)
+    )
+    ir._draw_header_statuses(
+        canvas, {"online": 3, "total": 5, "players_online": 12}, 800, 30,
+    )
+    assert texts == ["3/5服务器在线", "12人在线"]
+    dots = [box for box, fill, outline in boxes if fill == t.STATE_EXCELLENT and outline is None]
+    assert len(dots) == 2
+
+
+def test_auth_method_is_underlined_colored_text_not_a_badge():
+    from types import SimpleNamespace
+    from xducraft_bot.plugins.xducraft_mc_status import auth_mode as auth
+
+    resolved = SimpleNamespace(mode=auth.MODE_XDU, style=auth.style_for(auth.MODE_XDU))
+    card = ir.CardLayout(node={"children": []}, level=0, top=0)
+    canvas = raster.Canvas(t.CANVAS_WIDTH, t.CARD_HEIGHT)
+    segments = []
+    canvas.text = lambda text, xy, font, fill, anchor="lm", **kwargs: canvas.measure(text, font)  # type: ignore[assignment]
+    canvas.segments = lambda items, *args, **kwargs: segments.extend(items) or 0.0  # type: ignore[assignment]
+    ir._draw_meta_row(canvas, card, "mc.example.com", resolved)
+    assert len(segments) == 1
+    assert segments[0].text == resolved.style.short_label
+    assert segments[0].underline
+    assert segments[0].color == ir._auth_color(resolved)
 
 
 def test_config_only_auth_stripe_is_opaque_and_dashed():
@@ -643,25 +690,34 @@ def test_black_text_never_receives_a_shadow():
     assert np.array_equal(np.array(default_shadow.image), np.array(shadow_disabled.image))
 
 
-def test_comment_is_the_server_title_not_motd_fallback():
+@pytest.mark.parametrize(
+    "description",
+    [None, "", "A Minecraft Server", "A Minecraft Server (the default server motd)",
+     {"text": "A Minecraft Server"}],
+)
+def test_empty_or_default_motd_falls_back_to_configured_remark(description):
+    node = {"online": True, "comment": "配置备注名称", "description": description}
+    text = "".join(segment.text for segment in ir._motd_segments(node))
+    assert text == "配置备注名称"
+
+
+def test_real_motd_replaces_remark_and_keeps_two_lines():
     node = {
         "online": True,
-        "comment": "配置的服务器标题",
+        "comment": "配置备注名称",
         "description": {"text": "第一行 MOTD\n第二行 MOTD"},
     }
-    assert ir._server_title(node, "fallback.example.com") == "配置的服务器标题"
-    motd = "".join(segment.text for segment in ir._motd_segments(node))
-    assert "服务器标题" not in motd
-    assert motd == "第一行 MOTD\n第二行 MOTD"
+    text = "".join(segment.text for segment in ir._motd_segments(node))
+    assert text == "第一行 MOTD\n第二行 MOTD"
+    assert "配置备注" not in text
 
 
-
-def test_server_title_supports_legacy_and_gradient_rainbows():
-    legacy = ir._server_title_segments("§cR§6A§eI§aN§bB§9O§dW")
-    assert len({segment.color for segment in legacy}) >= 6
-
-    gradient = ir._server_title_segments(
-        "<gradient:#FF5555:#FFFF55:#55FF55:#5555FF>彩虹 RAINBOW</gradient>"
-    )
-    assert gradient and gradient[0].gradient is not None
-    assert len(gradient[0].gradient) == 4
+def test_rainbow_remark_survives_default_motd_fallback():
+    node = {
+        "online": True,
+        "description": "A Minecraft Server",
+        "comment": "<gradient:#FF5555:#FFFF55:#55FF55:#5555FF>彩虹备注</gradient>",
+    }
+    segments = ir._motd_segments(node)
+    assert segments and segments[0].gradient is not None
+    assert len(segments[0].gradient) == 4

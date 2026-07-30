@@ -3,10 +3,10 @@
 布局沿用 ``koishi-plugin-mcsm-portal`` 的信息骨架，但针对群聊图片做了收束：
 
 - 顶部左侧是品牌、标题和数据源，右侧是在线服务器 / 在线玩家概览胶片；
-- 每台服务器保持固定高度，图标 / 正文 / 数据栏三列严格共用 8px 内边距；
-- Tag 与服务器标题同行，下面保留两行 MOTD；地址与玩家名共享末行；
-- 右栏的延迟、人数、版本同字号、等间距；离线时只保留离线状态；
-- 验证方式颜色只出现在左边条与短标签：已实测为实线，仅配置为虚线；
+- 每台服务器回到紧凑固定高度；图标无边框，正文只保留两行 MOTD；
+- MOTD 为空或为默认 ``A Minecraft Server`` 时，改画配置里的备注名称；
+- Tag 在右上角、紧贴延迟左侧；延迟、人数、版本继续组成紧凑状态栈；
+- 验证方式颜色只留在左边条，实测为实线，仅配置为虚线；
 - 图例留在材质区，群公告与署名进入底部透明到黑色的渐变压角。
 
 所有文字默认由 :class:`.raster.Canvas` 做 Minecraft 式两遍投影。
@@ -39,7 +39,7 @@ from .constants import (
 from .data_manager import get_footer, get_group_default_auth_mode
 from .decode_image import decode_image
 from .drawing_utils import Segment, as_rgba, parse_minecraft_formatting, wrap_segments
-from .fonts import ADDRESS, CHIP, DATA, EYEBROW, LABEL, MICRO, MOTD, NAME, SUBTITLE, TITLE, VERSION
+from .fonts import ADDRESS, CHIP, DATA, EYEBROW, MICRO, MOTD, SUBTITLE, TITLE, VERSION
 from .raster import Canvas, TIER_BARS, TIER_COLORS, ink_for_background, list_textures, ping_tier
 from .settings import (
     NO_TEXTURE,
@@ -49,8 +49,8 @@ from .settings import (
     current as current_settings,
 )
 from .status_fetcher import prepare_data_for_display, preprocess_server_data, summarize
-from .utils import get_server_display_address
 
+from .utils import get_server_display_address
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 MAX_ICON_PIXELS = 2048 * 2048
@@ -62,12 +62,9 @@ HEADER_ROW_TITLE = 44
 HEADER_ROW_SUBTITLE = 20
 HEADER_RULE_GAP = 6
 
-# 固定卡片内的标题、两行 MOTD、底部元信息；右栏三项压在右上角。
-# Tag 高 24，中心在 20，正好从 y=8 开始，与图标顶边齐平；地址中心在 98，
-# 字形底部约落在 y=104，也与图标底边齐平。
-ROW_TITLE_Y = 20
-ROW_MOTD_Y = (48, 70)
-ROW_META_Y = 98
+# 精简卡片保留两行 MOTD 和一行底部地址；右侧是 Tag + 三项紧凑状态栈。
+ROW_MOTD_Y = (18, 40)
+ROW_META_Y = 68
 RAIL_ROW_Y = (16, 34, 52)
 LATENCY_SIGNAL_GAP = 4
 LATENCY_UNIT_GAP = 2
@@ -285,21 +282,34 @@ def resolve_texture(settings: RenderSettings, group_id: int) -> str:
 # ------------------------------------------------------------------------------
 
 
-def _chip_width(canvas: Canvas, text: str) -> float:
-    return canvas.measure(text, CHIP) + 2 * t.HEADER_CHIP_PADDING_X
+HEADER_STATUS_DOT = 4
+HEADER_STATUS_DOT_GAP = 6
 
 
-def _draw_header_chip(canvas: Canvas, text: str, right: float, center_y: float) -> float:
-    width = _chip_width(canvas, text)
-    canvas.rect(
-        (right - width, center_y - t.HEADER_CHIP_HEIGHT / 2,
-         right, center_y + t.HEADER_CHIP_HEIGHT / 2),
-        fill=t.CHIP,
-        outline=t.RULE,
-        width=1,
+def _draw_header_statuses(
+    canvas: Canvas, stats: Dict[str, int], right: float, center_y: float,
+) -> float:
+    """右对齐的纯文字概览；每项用一个绿色像素点引导，不再套胶片。"""
+    items = (
+        f"{stats['online']}/{stats['total']}服务器在线",
+        f"{stats['players_online']}人在线",
     )
-    canvas.text(text, (right - t.HEADER_CHIP_PADDING_X, center_y), CHIP, t.INK_STRONG, "rm")
-    return right - width
+    widths = [HEADER_STATUS_DOT + HEADER_STATUS_DOT_GAP + canvas.measure(text, CHIP) for text in items]
+    total = sum(widths) + t.HEADER_STATUS_GAP
+    cursor = right - total
+    start = cursor
+    for index, (text, width) in enumerate(zip(items, widths)):
+        dot_y = center_y - HEADER_STATUS_DOT / 2
+        canvas.rect(
+            (cursor, dot_y, cursor + HEADER_STATUS_DOT, dot_y + HEADER_STATUS_DOT),
+            fill=t.STATE_EXCELLENT,
+        )
+        canvas.text(
+            text, (cursor + HEADER_STATUS_DOT + HEADER_STATUS_DOT_GAP, center_y),
+            CHIP, t.INK_STRONG, "lm",
+        )
+        cursor += width + (t.HEADER_STATUS_GAP if index == 0 else 0)
+    return start
 
 
 def _draw_header(
@@ -311,14 +321,10 @@ def _draw_header(
 ) -> None:
     left = t.PAGE_PADDING_X
     right = t.CANVAS_WIDTH - t.PAGE_PADDING_X
-    chip_y = metrics.title_y or metrics.subtitle_y
+    status_y = metrics.title_y or metrics.subtitle_y
 
-    players = f"玩家 {stats['players_online']}/{stats['players_max']}"
-    servers = f"在线 {stats['online']}/{stats['total']}"
-    cursor = _draw_header_chip(canvas, players, right, chip_y)
-    cursor -= t.HEADER_CHIP_GAP
-    cursor = _draw_header_chip(canvas, servers, cursor, chip_y)
-    text_limit = max(0.0, cursor - t.HEADER_GAP - left)
+    status_left = _draw_header_statuses(canvas, stats, right, status_y)
+    text_limit = max(0.0, status_left - t.HEADER_GAP - left)
 
     if metrics.eyebrow_y is not None:
         canvas.segments(
@@ -485,16 +491,15 @@ def _builtin_icon(online: bool) -> Optional[Image.Image]:
 
 
 def _draw_icon(canvas: Canvas, icon: Optional[Image.Image], card: CardLayout, online: bool) -> None:
-    box = (
-        card.icon_left,
-        card.icon_top,
-        card.icon_left + t.ICON_SIZE,
-        card.icon_top + t.ICON_SIZE,
-    )
     if icon is not None:
-        # 离线 barrier 本身已经是明确的状态符号，不再额外降低不透明度。
+        # 图标本身已有清楚的像素轮廓；不再套一层与卡片重复的边框。
         canvas.paste(icon, card.icon_left, card.icon_top)
-    canvas.rect(box, outline=t.RULE)
+
+
+DEFAULT_MOTD_TEXTS = frozenset({
+    "a minecraft server",
+    "a minecraft server (the default server motd)",
+})
 
 
 def _tag_background(tag_color: str):
@@ -507,67 +512,43 @@ def _tag_background(tag_color: str):
         return t.CHIP
 
 
-def _server_title(server_data: Dict[str, Any], address: str) -> str:
-    """服务器标题来自配置里的 comment；未配置时用显示地址兜底。"""
-    return str(server_data.get("comment") or "").strip() or address
-
-
-def _motd_segments(server_data: Dict[str, Any]) -> List[Segment]:
-    if not server_data.get("online"):
-        return parse_minecraft_formatting("服务器离线", t.INK_GHOST)
-
-    description = server_data.get("description")
-    if isinstance(description, dict):
-        html = description.get("html")
-        raw = str(html or description.get("text") or "").replace("服务器已离线...", "").strip()
-        if raw and raw != "A Minecraft Server":
-            return parse_minecraft_formatting(raw, t.INK, is_html=bool(html))
-    elif isinstance(description, str) and description.strip():
-        return parse_minecraft_formatting(description, t.INK)
-    return parse_minecraft_formatting("未获取到 MOTD", t.INK_GHOST)
-
-
-def _draw_tag(canvas: Canvas, card: CardLayout, tag: str, x: float, center_y: float) -> float:
-    background = _tag_background(str(card.node.get("tag_color") or ""))
-    max_width = max(0.0, card.body_width * 0.38 - 2 * t.TAG_CHIP_PADDING_X)
-    label = canvas.fit_text(tag, CHIP, max_width)
-    width = canvas.measure(label, CHIP) + 2 * t.TAG_CHIP_PADDING_X
-    canvas.rect(
-        (x, center_y - t.TAG_CHIP_HEIGHT / 2,
-         x + width, center_y + t.TAG_CHIP_HEIGHT / 2),
-        fill=background,
-        outline=t.RULE,
-        width=1,
-    )
-    canvas.text(
-        label,
-        (x + t.TAG_CHIP_PADDING_X, center_y),
-        CHIP,
-        ink_for_background(background),
-        "lm",
-    )
-    return width
-
-
-def _server_title_segments(title: str) -> List[Segment]:
-    """解析服务器标题；支持 § 逐字彩虹、十六进制颜色和多色渐变标签。"""
-    lowered = title.lower()
-    rich_markup = any(
+def _rich_segments(text: str, color=t.INK, *, html: bool = False) -> List[Segment]:
+    lowered = text.lower()
+    rich_markup = html or any(
         marker in lowered
         for marker in ("<gradient:", "<font ", "<b>", "<strong>", "<i>", "<u>")
     )
-    return parse_minecraft_formatting(title, t.INK, is_html=rich_markup)
+    return parse_minecraft_formatting(text, color, is_html=rich_markup)
 
 
-def _draw_title_row(canvas: Canvas, card: CardLayout, title: str) -> None:
-    center_y = card.top + ROW_TITLE_Y
-    cursor = card.body_left
-    tag = str(card.node.get("tag") or "").strip()
-    if tag:
-        cursor += _draw_tag(canvas, card, tag, cursor, center_y) + t.CARD_COL_GAP
-    available = max(0.0, card.body_right - cursor)
-    segments = canvas.fit(_server_title_segments(title), NAME, available)
-    canvas.segments(segments, (cursor, center_y), NAME, "lm")
+def _is_default_motd(text: str) -> bool:
+    return text.strip().casefold() in DEFAULT_MOTD_TEXTS
+
+
+def _remark_segments(server_data: Dict[str, Any]) -> List[Segment]:
+    remark = str(server_data.get("comment") or "").strip()
+    if remark:
+        return _rich_segments(remark)
+    fallback = "服务器离线" if not server_data.get("online") else "未设置服务器备注"
+    return parse_minecraft_formatting(fallback, t.INK_GHOST)
+
+
+def _motd_segments(server_data: Dict[str, Any]) -> List[Segment]:
+    """正常画 MOTD；空值或默认 MOTD 改用配置备注，不再另画服务器标题。"""
+    description = server_data.get("description")
+    if isinstance(description, dict):
+        html = str(description.get("html") or "").strip()
+        plain = str(description.get("text") or "").strip()
+        raw = (html or plain).replace("服务器已离线...", "").strip()
+        probe = plain or raw
+        if raw and not _is_default_motd(probe):
+            return _rich_segments(raw, html=bool(html))
+        return _remark_segments(server_data)
+    if isinstance(description, str):
+        raw = description.strip()
+        if raw and not _is_default_motd(raw):
+            return _rich_segments(raw)
+    return _remark_segments(server_data)
 
 
 def _draw_motd_rows(canvas: Canvas, card: CardLayout) -> None:
@@ -580,76 +561,57 @@ def _draw_motd_rows(canvas: Canvas, card: CardLayout) -> None:
         )
 
 
-def _auth_chip_width(canvas: Canvas, resolved: Optional[auth.ResolvedAuth]) -> float:
-    if resolved is None or resolved.mode == auth.MODE_UNKNOWN:
-        return 0.0
-    return canvas.measure(resolved.style.short_label, MICRO) + 2 * t.AUTH_CHIP_PADDING_X
-
-
-def _draw_auth_chip(
-    canvas: Canvas,
-    resolved: Optional[auth.ResolvedAuth],
-    x: float,
-    center_y: float,
-) -> float:
-    width = _auth_chip_width(canvas, resolved)
-    if not width or resolved is None:
-        return 0.0
-    color = _auth_color(resolved)
-    canvas.rect(
-        (x, center_y - t.AUTH_CHIP_HEIGHT / 2, x + width, center_y + t.AUTH_CHIP_HEIGHT / 2),
-        fill=color,
-        outline=t.RULE,
-        width=1,
-    )
-    canvas.text(
-        resolved.style.short_label,
-        (x + t.AUTH_CHIP_PADDING_X, center_y),
-        MICRO,
-        ink_for_background(color),
-        "lm",
-    )
-    return width
-
-
-def _player_names(node: Dict[str, Any]) -> List[str]:
-    players = node.get("players") if isinstance(node.get("players"), dict) else {}
-    return [
-        str(player.get("name"))
-        for player in players.get("sample", [])
-        if isinstance(player, dict) and player.get("name")
-    ]
-
-
 def _draw_meta_row(
     canvas: Canvas,
     card: CardLayout,
     address: str,
     resolved: Optional[auth.ResolvedAuth],
 ) -> None:
-    """底部左侧：地址 + 验证方式。右下角留给正在游玩的玩家名。"""
+    """底部地址行；验证方式降级成紧随其后的彩色下划线文字。"""
     center_y = card.top + ROW_META_Y
-    auth_width = _auth_chip_width(canvas, resolved)
-    auth_gap = 8 if auth_width else 0
-    address_budget = max(0.0, card.body_width - auth_width - auth_gap)
+    label = ""
+    label_width = 0.0
+    if resolved is not None and resolved.mode != auth.MODE_UNKNOWN:
+        label = resolved.style.short_label
+        label_width = canvas.measure(label, ADDRESS)
+    gap = 8 if label else 0
+    address_budget = max(0.0, card.body_width - label_width - gap)
     address_text = canvas.fit_text(address, ADDRESS, address_budget)
     address_width = canvas.text(
         address_text, (card.body_left, center_y), ADDRESS, t.INK_FAINT, "lm",
     )
-    if auth_width:
-        _draw_auth_chip(canvas, resolved, card.body_left + address_width + auth_gap, center_y)
-
-
-def _draw_playing_players(canvas: Canvas, card: CardLayout) -> None:
-    """右下角：正在游玩的玩家名；只占用压缩状态栈释放出的右栏空间。"""
-    names = _player_names(card.node)
-    if not names:
-        return
-    text = canvas.fit_text(" · ".join(names), MICRO, t.RAIL_WIDTH)
-    if text:
-        canvas.text(
-            text, (card.rail_right, card.top + ROW_META_Y), MICRO, t.INK_FAINT, "rm",
+    if label:
+        canvas.segments(
+            [Segment(label, _auth_color(resolved), underline=True)],
+            (card.body_left + address_width + gap, center_y), ADDRESS, "lm",
         )
+
+
+def _draw_tag_right(
+    canvas: Canvas, card: CardLayout, right: float, center_y: float,
+) -> Optional[Tuple[float, float, float, float]]:
+    """把 Tag 胶片的右边缘锚在延迟文本左侧。"""
+    tag = str(card.node.get("tag") or "").strip()
+    if not tag:
+        return None
+    background = _tag_background(str(card.node.get("tag_color") or ""))
+    label_budget = t.TAG_CHIP_MAX_WIDTH - 2 * t.TAG_CHIP_PADDING_X
+    label = canvas.fit_text(tag, CHIP, label_budget)
+    width = min(
+        t.TAG_CHIP_MAX_WIDTH,
+        canvas.measure(label, CHIP) + 2 * t.TAG_CHIP_PADDING_X,
+    )
+    left = right - width
+    box = (
+        left, center_y - t.TAG_CHIP_HEIGHT / 2,
+        right, center_y + t.TAG_CHIP_HEIGHT / 2,
+    )
+    canvas.rect(box, fill=background, outline=t.RULE, width=1)
+    canvas.text(
+        label, (right - t.TAG_CHIP_PADDING_X, center_y), CHIP,
+        ink_for_background(background), "rm",
+    )
+    return box
 
 
 def _draw_signal(canvas: Canvas, right: float, center_y: float, tier: str) -> float:
@@ -669,7 +631,7 @@ def _draw_signal(canvas: Canvas, right: float, center_y: float, tier: str) -> fl
 
 
 def _draw_rail(canvas: Canvas, card: CardLayout) -> None:
-    """右上角紧凑状态栈：延迟、人数、版本；版本使用普通 Minecraft 字体。"""
+    """右侧状态栈；Tag 右对齐到延迟文字左侧。"""
     node = card.node
     online = bool(node.get("online"))
     ping = int(node.get("ping") or 0) if online else None
@@ -680,14 +642,20 @@ def _draw_rail(canvas: Canvas, card: CardLayout) -> None:
     bars = _draw_signal(canvas, right, ping_y, tier)
     unit_right = right - bars - LATENCY_SIGNAL_GAP
     if not online:
-        canvas.text("离线", (unit_right, ping_y), DATA, t.STATE_POOR, "rm")
+        label = "离线"
+        latency_left = unit_right - canvas.measure(label, DATA)
+        _draw_tag_right(canvas, card, latency_left - t.TAG_STATUS_GAP, ping_y)
+        canvas.text(label, (unit_right, ping_y), DATA, t.STATE_POOR, "rm")
         return
 
     color = TIER_COLORS[tier]
     unit_width = canvas.measure("ms", DATA)
-    canvas.text("ms", (unit_right, ping_y), DATA, color, "rm")
+    number = str(ping)
     number_right = unit_right - unit_width - LATENCY_UNIT_GAP
-    canvas.text(str(ping), (number_right, ping_y), DATA, color, "rm")
+    latency_left = number_right - canvas.measure(number, DATA)
+    _draw_tag_right(canvas, card, latency_left - t.TAG_STATUS_GAP, ping_y)
+    canvas.text("ms", (unit_right, ping_y), DATA, color, "rm")
+    canvas.text(number, (number_right, ping_y), DATA, color, "rm")
 
     players = node.get("players") if isinstance(node.get("players"), dict) else {}
     canvas.text(
@@ -726,14 +694,11 @@ def _draw_card(
     online = bool(card.node.get("online"))
     resolved = _resolve_rendered_auth(card.node, group_default)
     address = get_server_display_address(card.node, pixel_font=True)
-    title = _server_title(card.node, address)
     _draw_card_shell(canvas, card, resolved, online)
     _draw_icon(canvas, icons.get(id(card.node)), card, online)
-    _draw_title_row(canvas, card, title)
     _draw_motd_rows(canvas, card)
-    _draw_meta_row(canvas, card, "" if title == address else address, resolved)
+    _draw_meta_row(canvas, card, address, resolved)
     _draw_rail(canvas, card)
-    _draw_playing_players(canvas, card)
 
 
 # ------------------------------------------------------------------------------
