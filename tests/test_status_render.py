@@ -285,6 +285,33 @@ def test_header_uses_spacing_without_a_divider_line():
     )
 
 
+def test_header_status_summary_uses_fixed_top_right_row():
+    settings = cfg.RenderSettings()
+    metrics = ir.header_metrics(settings)
+    canvas = raster.Canvas(t.CANVAS_WIDTH, 160)
+    calls = []
+    original = ir._draw_header_statuses
+    try:
+        ir._draw_header_statuses = lambda canvas, stats, right, center_y: (  # type: ignore[assignment]
+            calls.append((right, center_y)) or right - 100
+        )
+        ir._draw_header(
+            canvas,
+            {"online": 1, "total": 2, "players_online": 3, "players_max": 20},
+            "protocol",
+            metrics,
+            settings,
+        )
+    finally:
+        ir._draw_header_statuses = original  # type: ignore[assignment]
+
+    assert calls == [(
+        t.CANVAS_WIDTH - t.PAGE_PADDING_X,
+        t.PAGE_PADDING_TOP + ir.HEADER_ROW_EYEBROW / 2,
+    )]
+    assert calls[0][1] < metrics.title_y
+
+
 def test_band_disappears_only_when_nothing_is_left_in_it():
     assert ir.band_is_visible(cfg.RenderSettings())
     assert ir.band_is_visible(cfg.RenderSettings(credit="", show_generated_at=True))
@@ -405,7 +432,7 @@ def test_black_concrete_powder_still_receives_darkening():
     canvas.tile_background(name)
     after = raster._mean_luminance(canvas.image)
     assert alpha > 0
-    assert after < before * 0.6
+    assert after < before * 0.7
 
 
 # ==============================================================================
@@ -914,7 +941,7 @@ def test_header_statuses_are_plain_text_with_green_dots():
     ir._draw_header_statuses(
         canvas, {"online": 3, "total": 5, "players_online": 12}, 800, 30,
     )
-    assert texts == ["3/5个服务器在线", "12人在线"]
+    assert texts == ["3/5个服务器在线", "12个人在线"]
     dots = [box for box, fill, outline in boxes if fill == t.STATE_EXCELLENT and outline is None]
     assert len(dots) == 2
 

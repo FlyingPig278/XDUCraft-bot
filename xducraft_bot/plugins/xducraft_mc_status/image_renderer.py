@@ -337,7 +337,7 @@ def _draw_header_statuses(
     """右对齐纯文字概览；有在线项用绿点，计数为零时对应点变红。"""
     items = (
         (f"{stats['online']}/{stats['total']}个服务器在线", stats["online"] > 0),
-        (f"{stats['players_online']}人在线", stats["players_online"] > 0),
+        (f"{stats['players_online']}个人在线", stats["players_online"] > 0),
     )
     widths = [
         HEADER_STATUS_DOT + HEADER_STATUS_DOT_GAP + canvas.measure(text, CHIP)
@@ -369,14 +369,15 @@ def _draw_header(
 ) -> None:
     left = t.PAGE_PADDING_X
     right = t.CANVAS_WIDTH - t.PAGE_PADDING_X
-    status_y = metrics.title_y or metrics.subtitle_y
-
+    # 概览固定在画布右上角，只与小号品牌行共享顶行，不再挤压大标题。
+    status_y = t.PAGE_PADDING_TOP + HEADER_ROW_EYEBROW / 2
     status_left = _draw_header_statuses(canvas, stats, right, status_y)
-    text_limit = max(0.0, status_left - t.HEADER_GAP - left)
+    eyebrow_limit = max(0.0, status_left - t.HEADER_GAP - left)
+    text_limit = max(0.0, right - left)
 
     if metrics.eyebrow_y is not None:
         canvas.segments(
-            canvas.fit(parse_minecraft_formatting(settings.brand, t.INK_MUTED), EYEBROW, text_limit),
+            canvas.fit(parse_minecraft_formatting(settings.brand, t.INK_MUTED), EYEBROW, eyebrow_limit),
             (left, metrics.eyebrow_y), EYEBROW, "lm",
         )
     if metrics.title_y is not None:
