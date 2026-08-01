@@ -64,10 +64,11 @@ FACE_DATA = "Monocraft.otf"
 #: 展示体与标签体的中日韩搭档：12px 点阵，唯一能在整数倍字号下做到纯像素的中文字体。
 FACE_CJK_PIXEL = "VONWAONBITMAP-12PX.TTF"
 
-#: Minecraft Ten 在相同 nominal size 下可见字高只有 Vonwaon 的约 70%。标题里单独
-#: 放大到 13/9，并下移半个逻辑像素网格，使拉丁与中文的可见上下边大致对齐。
+#: Minecraft Ten 在同字号下比 Vonwaon 矮；缩小整行后仍单独放大 Ten，使两种字形
+#: 保持接近的可见高度。Minecraft AE 回退体取 64px，继续落在自身 8px 网格上。
 TITLE_DISPLAY_SIZE = px(TYPE_TITLE * 13 / 9)
-TITLE_DISPLAY_BASELINE_OFFSET = px(3.5)
+TITLE_BODY_FALLBACK_SIZE = px(32)
+TITLE_DISPLAY_BASELINE_OFFSET = px(2.5)
 
 # 思源黑体（``SourceHanSansCN-Medium.otf``）还留在 resources/fonts 里，但状态图
 # 已经不用它了——一款平滑的无衬线体挨着像素字体，正是旧版最不像 Minecraft 的
@@ -265,7 +266,10 @@ TITLE = FontSet(
     "title",
     px(TYPE_TITLE),
     (FACE_DISPLAY, FACE_CJK_PIXEL, FACE_BODY),
-    face_sizes={FACE_DISPLAY: TITLE_DISPLAY_SIZE},
+    face_sizes={
+        FACE_DISPLAY: TITLE_DISPLAY_SIZE,
+        FACE_BODY: TITLE_BODY_FALLBACK_SIZE,
+    },
     baseline_offsets={FACE_DISPLAY: TITLE_DISPLAY_BASELINE_OFFSET},
     metrics_file=FACE_CJK_PIXEL,
 )
@@ -287,7 +291,7 @@ LABEL = FontSet("label", px(TYPE_LABEL), (FACE_LABEL, FACE_CJK_PIXEL, FACE_BODY)
 
 __all__ = [
     "FACE_BODY", "FACE_DISPLAY", "FACE_LABEL", "FACE_DATA", "FACE_CJK_PIXEL",
-    "TITLE_DISPLAY_SIZE", "TITLE_DISPLAY_BASELINE_OFFSET",
+    "TITLE_DISPLAY_SIZE", "TITLE_BODY_FALLBACK_SIZE", "TITLE_DISPLAY_BASELINE_OFFSET",
     "load_face", "covers", "FontSet",
     "EYEBROW", "TITLE", "SUBTITLE", "CHIP", "MOTD", "ADDRESS", "MICRO",
     "DATA", "VERSION", "LABEL",

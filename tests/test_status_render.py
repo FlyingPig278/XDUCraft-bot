@@ -101,6 +101,14 @@ def test_mixed_title_faces_have_matching_optical_height_and_center():
     assert fonts.TITLE.descent == cjk.getmetrics()[1]
 
 
+def test_smaller_title_keeps_header_row_occupancy():
+    assert t.TYPE_TITLE == 30
+    assert ir.HEADER_ROW_TITLE == 44
+    full = ir.header_metrics(cfg.RenderSettings())
+    no_title = ir.header_metrics(cfg.RenderSettings(title=""))
+    assert full.list_top - no_title.list_top == ir.HEADER_ROW_TITLE
+
+
 def test_latin1_punctuation_never_reaches_the_font_raw():
     """Minecraft AE 把 Latin-1 整块当成原版重音字符页，必须先改写。"""
     assert fonts.remap("A·B»C«D×E") == "A\u2027B>C<Dx E".replace(" ", "")
@@ -254,10 +262,11 @@ def test_scale_only_accepts_grid_safe_values():
     for bad in (0, 1, 3, 5, -2, "x", None):
         assert cfg.normalize_scale(bad) in (2, 4)
 
-    # 真正要守住的是这条：允许的倍率下，每个角色都还落在网格上。
+    # 常规角色的所有回退字体共享字号；标题的每个 face 有独立字号，由上面的
+    # test_role_sizes_land_on_the_pixel_grid 直接检查真实 face.size。
     for scale in (2, 4):
         for logical in (
-            t.TYPE_EYEBROW, t.TYPE_TITLE, t.TYPE_SUBTITLE, t.TYPE_CHIP,
+            t.TYPE_EYEBROW, t.TYPE_SUBTITLE, t.TYPE_CHIP,
             t.TYPE_MOTD, t.TYPE_ADDRESS, t.TYPE_MICRO, t.TYPE_LABEL, t.TYPE_DATA,
         ):
             assert (logical * scale) % 8 == 0, (logical, scale)
