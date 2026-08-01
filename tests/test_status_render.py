@@ -44,8 +44,8 @@ def test_role_sizes_land_on_the_pixel_grid(role):
         step = fonts._GRID.get(_face_name(face))
         if step is None:
             continue
-        assert role.size % step == 0, (
-            f"角色 {role.name} 的字号 {role.size}px 不是 {_face_name(face)} 的网格步长 "
+        assert face.size % step == 0, (
+            f"角色 {role.name} 的字体 {_face_name(face)} 字号 {face.size}px 不是网格步长 "
             f"{step} 的倍数，字形会被插值糊掉"
         )
 
@@ -73,6 +73,32 @@ def test_no_role_renders_cjk_as_tofu(role):
         assert fonts.covers(face, character), (
             f"角色 {role.name} 画不出 {character!r}，会出现豆腐块"
         )
+
+
+def test_title_only_enlarges_minecraft_ten_face():
+    display = fonts.TITLE.face_for("M")
+    cjk = fonts.TITLE.face_for("服")
+    assert _face_name(display) == fonts.FACE_DISPLAY
+    assert _face_name(cjk) == fonts.FACE_CJK_PIXEL
+    assert display.size == fonts.TITLE_DISPLAY_SIZE > fonts.TITLE.size
+    assert cjk.size == fonts.TITLE.size
+
+
+def test_mixed_title_faces_have_matching_optical_height_and_center():
+    display = fonts.TITLE.face_for("M")
+    cjk = fonts.TITLE.face_for("服")
+    display_box = display.getbbox("MINECRAFT", anchor="ls")
+    cjk_box = cjk.getbbox("服务器状态", anchor="ls")
+    display_shift = fonts.TITLE.baseline_offset(display)
+
+    display_height = display_box[3] - display_box[1]
+    cjk_height = cjk_box[3] - cjk_box[1]
+    display_center = (display_box[1] + display_box[3]) / 2 + display_shift
+    cjk_center = (cjk_box[1] + cjk_box[3]) / 2
+    assert abs(display_height - cjk_height) <= 2
+    assert abs(display_center - cjk_center) <= 2
+    assert fonts.TITLE.ascent == cjk.getmetrics()[0]
+    assert fonts.TITLE.descent == cjk.getmetrics()[1]
 
 
 def test_latin1_punctuation_never_reaches_the_font_raw():

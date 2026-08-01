@@ -386,16 +386,18 @@ class Canvas:
                 shifted = None if span is None else (span[0] + offset, span[1])
                 dimmed = shadow_of(segment)
                 for part, face in font_set.split(segment.text):
+                    face_baseline = baseline + font_set.baseline_offset(face)
                     cursor += self._draw_run(
-                        part, face, cursor + offset, baseline + offset,
+                        part, face, cursor + offset, face_baseline + offset,
                         dimmed, font_set, shifted,
                     )
 
         cursor = x
         for index, segment in enumerate(segments):
             for part, face in font_set.split(segment.text):
+                face_baseline = baseline + font_set.baseline_offset(face)
                 cursor += self._draw_run(
-                    part, face, cursor, baseline, segment, font_set, spans[index],
+                    part, face, cursor, face_baseline, segment, font_set, spans[index],
                 )
         return total / t.SCALE
 

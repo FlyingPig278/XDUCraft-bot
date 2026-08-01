@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from nonebot.log import logger
 from PIL import Image, ImageDraw, ImageFont
@@ -63,6 +63,11 @@ FACE_LABEL = "minecraft-five-bold.otf"
 FACE_DATA = "Monocraft.otf"
 #: 展示体与标签体的中日韩搭档：12px 点阵，唯一能在整数倍字号下做到纯像素的中文字体。
 FACE_CJK_PIXEL = "VONWAONBITMAP-12PX.TTF"
+
+#: Minecraft Ten 在相同 nominal size 下可见字高只有 Vonwaon 的约 70%。标题里单独
+#: 放大到 13/9，并下移半个逻辑像素网格，使拉丁与中文的可见上下边大致对齐。
+TITLE_DISPLAY_SIZE = px(TYPE_TITLE * 13 / 9)
+TITLE_DISPLAY_BASELINE_OFFSET = px(3.5)
 
 # 思源黑体（``SourceHanSansCN-Medium.otf``）还留在 resources/fonts 里，但状态图
 # 已经不用它了——一款平滑的无衬线体挨着像素字体，正是旧版最不像 Minecraft 的
@@ -160,19 +165,40 @@ def remap(text: str) -> str:
 # ==============================================================================
 
 class FontSet:
-    """一个排版角色：一串按优先级排列的字体，逐字挑第一个画得出来的。"""
+    """一个排版角色：逐字回退，并可为个别字体设置独立字号与基线校正。"""
 
-    __slots__ = ("name", "size", "faces")
+    __slots__ = ("name", "size", "faces", "_metric_face", "_baseline_offsets")
 
-    def __init__(self, name: str, size: int, files: Sequence[str]):
+    def __init__(
+        self,
+        name: str,
+        size: int,
+        files: Sequence[str],
+        *,
+        face_sizes: Optional[Mapping[str, int]] = None,
+        baseline_offsets: Optional[Mapping[str, float]] = None,
+        metrics_file: Optional[str] = None,
+    ):
         self.name = name
         self.size = size
-        faces = [face for face in (load_face(file, size) for file in files) if face is not None]
-        if not faces:
+        size_overrides = face_sizes or {}
+        loaded = [
+            (file, load_face(file, int(size_overrides.get(file, size))))
+            for file in files
+        ]
+        loaded = [(file, face) for file, face in loaded if face is not None]
+        if not loaded:
             fallback = ImageFont.load_default()
             logger.error("[MCStatus] 角色 {} 没有任何可用字体，回退到默认字体。", name)
-            faces = [fallback]
-        self.faces: Tuple[ImageFont.FreeTypeFont, ...] = tuple(faces)
+            loaded = [("", fallback)]
+        self.faces = tuple(face for _, face in loaded)
+        self._metric_face = next(
+            (face for file, face in loaded if file == metrics_file), self.faces[0],
+        )
+        offsets = baseline_offsets or {}
+        self._baseline_offsets = {
+            id(face): float(offsets.get(file, 0.0)) for file, face in loaded
+        }
 
     @property
     def primary(self) -> ImageFont.FreeTypeFont:
@@ -212,14 +238,18 @@ class FontSet:
     def char_length(self, character: str) -> float:
         return self.length(character)
 
+    def baseline_offset(self, face: ImageFont.FreeTypeFont) -> float:
+        """该字体相对角色公共基线的物理像素偏移。"""
+        return self._baseline_offsets.get(id(face), 0.0)
+
     @property
     def ascent(self) -> float:
         """角色基线高度。跨 unitsPerEm 混排时，所有分段都对齐到这条基线。"""
-        return max(face.getmetrics()[0] for face in self.faces)
+        return self._metric_face.getmetrics()[0]
 
     @property
     def descent(self) -> float:
-        return max(face.getmetrics()[1] for face in self.faces)
+        return self._metric_face.getmetrics()[1]
 
     @property
     def height(self) -> float:
@@ -230,9 +260,15 @@ class FontSet:
 
 #: 顶栏品牌行。
 EYEBROW = FontSet("eyebrow", px(TYPE_EYEBROW), (FACE_LABEL, FACE_CJK_PIXEL, FACE_BODY))
-#: 图片主标题。
-TITLE = FontSet("title", px(TYPE_TITLE), (FACE_DISPLAY, FACE_CJK_PIXEL, FACE_BODY))
-#: 顶栏概览行。
+#: 图片主标题。只放大 Minecraft Ten；Vonwaon / Minecraft AE 保持原字号。
+TITLE = FontSet(
+    "title",
+    px(TYPE_TITLE),
+    (FACE_DISPLAY, FACE_CJK_PIXEL, FACE_BODY),
+    face_sizes={FACE_DISPLAY: TITLE_DISPLAY_SIZE},
+    baseline_offsets={FACE_DISPLAY: TITLE_DISPLAY_BASELINE_OFFSET},
+    metrics_file=FACE_CJK_PIXEL,
+)
 SUBTITLE = FontSet("subtitle", px(TYPE_SUBTITLE), (FACE_BODY,))
 #: 卡片两行 MOTD。
 MOTD = FontSet("motd", px(TYPE_MOTD), (FACE_BODY,))
@@ -251,6 +287,7 @@ LABEL = FontSet("label", px(TYPE_LABEL), (FACE_LABEL, FACE_CJK_PIXEL, FACE_BODY)
 
 __all__ = [
     "FACE_BODY", "FACE_DISPLAY", "FACE_LABEL", "FACE_DATA", "FACE_CJK_PIXEL",
+    "TITLE_DISPLAY_SIZE", "TITLE_DISPLAY_BASELINE_OFFSET",
     "load_face", "covers", "FontSet",
     "EYEBROW", "TITLE", "SUBTITLE", "CHIP", "MOTD", "ADDRESS", "MICRO",
     "DATA", "VERSION", "LABEL",
