@@ -36,8 +36,9 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 DATA_FILE = os.path.join(DATA_DIR, "server_data.json")
 GLOBAL_CONFIG_KEY = "__global__"
 
-#: 允许的状态查询源。``auto`` 会按 protocol -> custom -> jsu -> sjtu 依次回退。
-VALID_API_SOURCES = frozenset({"protocol", "sjtu", "jsu", "custom", "auto"})
+#: 允许的状态查询源。``auto`` 会按 protocol -> custom -> jsu -> sjtu 依次回退，
+#: ``auto_api_first`` 按反向顺序回退（公共 API 优先，protocol 最后兜底）。
+VALID_API_SOURCES = frozenset({"protocol", "sjtu", "jsu", "custom", "auto", "auto_api_first"})
 
 #: 全局默认查询源。``auto`` 最稳：本机直连不通时会自动换成公共 API。
 DEFAULT_API_SOURCE = "auto"

@@ -299,45 +299,59 @@ async def get_single_server_status(ip: str, group_id: Optional[int] = None) -> D
         return await _fetch_via_sjtu(ip)
     if api_source == "protocol":
         return await _fetch_via_protocol(ip)
+    if api_source == "auto_api_first":
+        return await _fetch_with_fallback(ip, custom_api_url, api_first=True)
 
     return await _fetch_with_fallback(ip, custom_api_url)
 
 
-async def _fetch_with_fallback(ip: str, custom_api_url: str) -> Dict[str, Any]:
-    """``auto``：依次尝试各数据源，第一个在线的即返回。
+#: ``auto`` 的回退顺序。protocol 信息最全（含玩家样本 UUID），优先直连。
+FALLBACK_ORDER_PROTOCOL_FIRST = ("protocol", "custom", "jsu", "sjtu")
+#: ``auto_api_first`` 的回退顺序。公共 API 优先，protocol 最后兜底，
+#: 适合机器人网络直连质量差、想让公共 API 的 ping 上屏的部署。
+FALLBACK_ORDER_API_FIRST = ("sjtu", "jsu", "custom", "protocol")
 
-    全部失败时返回 protocol 的结果，但 ``error`` 里会汇总每个源的失败原因，
+
+async def _fetch_with_fallback(
+    ip: str, custom_api_url: str, *, api_first: bool = False,
+) -> Dict[str, Any]:
+    """``auto`` 族：依次尝试各数据源，第一个在线的即返回。
+
+    ``api_first=False`` 对应 ``auto``（protocol 优先）；
+    ``api_first=True`` 对应 ``auto_api_first``（公共 API 优先）。
+
+    全部失败时返回第一个尝试源的结果，但 ``error`` 里会汇总每个源的失败原因，
     方便管理员用 ``/mcs diag`` 定位是网络不通还是服务器真的挂了。
     """
+    order = FALLBACK_ORDER_API_FIRST if api_first else FALLBACK_ORDER_PROTOCOL_FIRST
     attempts: List[Tuple[str, Dict[str, Any]]] = []
+    first_result: Optional[Dict[str, Any]] = None
 
-    protocol_result = await _fetch_via_protocol(ip)
-    if _is_online(protocol_result):
-        return protocol_result
-    attempts.append(("protocol", protocol_result))
+    for name in order:
+        if name == "protocol":
+            result = await _fetch_via_protocol(ip)
+        elif name == "custom":
+            if not custom_api_url:
+                continue  # 未配置自建后端时直接跳过，attempts 里也不记录
+            result = await _fetch_via_custom(ip, custom_api_url)
+        elif name == "jsu":
+            result = await _fetch_via_jsu(ip)
+        else:
+            result = await _fetch_via_sjtu(ip)
 
-    if custom_api_url:
-        custom_result = await _fetch_via_custom(ip, custom_api_url)
-        if _is_online(custom_result):
-            return custom_result
-        attempts.append(("custom", custom_result))
-
-    jsu_result = await _fetch_via_jsu(ip)
-    if _is_online(jsu_result):
-        return jsu_result
-    attempts.append(("jsu", jsu_result))
-
-    sjtu_result = await _fetch_via_sjtu(ip)
-    if _is_online(sjtu_result):
-        return sjtu_result
-    attempts.append(("sjtu", sjtu_result))
+        if _is_online(result):
+            return result
+        attempts.append((name, result))
+        if first_result is None:
+            first_result = result
 
     summary = "; ".join(
         f"{name}: {result.get('error') or '无错误信息'}" for name, result in attempts
     )
-    protocol_result["error"] = _clamp_text(summary, MAX_TEXT_FIELD * 2)
-    protocol_result["source"] = "auto"
-    return protocol_result
+    # order 里 protocol 无条件会被尝试，first_result 一定不为 None。
+    first_result["error"] = _clamp_text(summary, MAX_TEXT_FIELD * 2)
+    first_result["source"] = "auto_api_first" if api_first else "auto"
+    return first_result
 
 
 def _merge_results_into_tree(

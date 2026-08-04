@@ -221,12 +221,13 @@ SOURCE_LABELS = {
     "jsu": "JSU API",
     "custom": "自定义后端 API",
     "auto": "自动回退（协议 → 自定义 → JSU → SJTU）",
+    "auto_api_first": "API 优先回退（SJTU → JSU → 自定义 → 协议）",
 }
 
 SOURCE_SETTING = ScopedSetting(
     command="source",
     title="状态查询源",
-    value_hint="protocol / sjtu / jsu / custom / auto",
+    value_hint="protocol / sjtu / jsu / custom / auto / auto_api_first",
     normalize=lambda value: value.strip().lower() if value.strip().lower() in VALID_API_SOURCES else None,
     describe=lambda value: f"{SOURCE_LABELS.get(value, value)}（{value}）",
     get_effective=get_effective_status_api_source,
