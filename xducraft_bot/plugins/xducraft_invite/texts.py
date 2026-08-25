@@ -18,19 +18,19 @@ SELF_PRECHECK_MESSAGE = "正在生成您的邀请码，请稍等。"
 
 SELF_NOT_INITIALIZED = "邀请码自助功能尚未开放。"
 SELF_DISABLED = "邀请码自助功能当前已暂停，请联系管理员。"
-SELF_MEMBER_UNKNOWN = "暂时无法确认你的群成员信息，请稍后重试。"
-SELF_LEGACY_MEMBER = "你在自助发码功能上线前已经加入本群，请联系管理员人工处理。"
-SELF_JOIN_TIME_UNKNOWN = "暂时无法确认你的入群时间，请联系管理员。"
-SELF_JOINED_TOO_EARLY = "你的入群时间早于自助功能上线时间，请联系管理员人工处理。"
-SELF_ALREADY_CLAIMED = "你已经申请过邀请码，不能重复自助领取。"
-SELF_IN_PROGRESS = "你的邀请码正在生成，请勿重复申请。"
+SELF_MEMBER_UNKNOWN = "暂时无法确认您的群成员信息，请稍后重试。"
+SELF_LEGACY_MEMBER = "您在自助发码功能上线前已经加入本群，请联系管理员人工处理。"
+SELF_JOIN_TIME_UNKNOWN = "暂时无法确认您的入群时间，请联系管理员。"
+SELF_JOINED_TOO_EARLY = "您的入群时间早于自助功能上线时间，请联系管理员人工处理。"
+SELF_ALREADY_CLAIMED = "您已经申请过邀请码，不能重复自助领取。"
+SELF_IN_PROGRESS = "您的邀请码正在生成，请勿重复申请。"
 SELF_BUSY = "暂时无法受理申请，请稍后重试。"
-SELF_PRIVATE_UNAVAILABLE = "无法向你发送私聊消息，请先添加机器人好友或开启临时会话后重试。"
+SELF_PRIVATE_UNAVAILABLE = "无法向您发送私聊消息，请先添加机器人好友或开启临时会话后重试。"
 SELF_GENERATE_FAILED = "邀请码生成失败，请稍后重新申请。"
 SELF_PERSIST_FAILED_RETRY = "邀请码状态保存失败，本次不会发送邀请码，请稍后重新申请。"
-SELF_DELIVERY_FAILED_LOCKED = "邀请码发送结果异常。为避免重复发码，你已不能再次自助申请，请联系管理员处理。"
+SELF_DELIVERY_FAILED_LOCKED = "邀请码发送结果异常。为避免重复发码，您已不能再次自助申请，请联系管理员处理。"
 SELF_SUCCESS_GROUP = "邀请码已发放，请查收私聊。"
-GROUP_ARGUMENTS_REJECTED = "成员自助请直接发送 /邀请码；管理发码请私聊机器人。"
+GROUP_ARGUMENTS_REJECTED = "获取邀请码请直接发送 “ /邀请码 ”；管理员命令请私聊机器人发送。"
 
 ADMIN_USAGE = (
     "用法：\n"
@@ -75,8 +75,7 @@ API_REQUEST_FAILED = "邀请码 API 请求失败"
 def self_service_guide(group_id: int) -> str:
     if group_id > 0:
         return (
-            f"请到 XDUCraft 大群（群号 {group_id}）发送 /邀请码。"
-            "邀请码只能在大群内核验入群资格后发放。"
+            f"请到 XDUCraft 大群（群号 {group_id}）发送 /邀请码 以获取邀请码。"
         )
     return "请到 XDUCraft 大群发送 /邀请码。当前机器人尚未配置大群号，请联系管理员。"
 
