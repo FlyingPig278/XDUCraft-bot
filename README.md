@@ -117,7 +117,15 @@ A Minecraft server status query plugin for NoneBot, specially designed for XDUCr
   `/功能 <群号> on|off|reset <功能名>` 进行管理；机器人会重新校验群主或管理员身份。
 - 被动响应或主动推送类功能默认关闭；MC 更新推送仍仅允许 SUPERUSER 修改。
 
-猪猪图查询/推送、词云、MC 更新、MC 状态、表情回应、关键词回复和反撤回均已接入此面板。
+猪猪图查询/推送、词云、MC 更新、MC 状态、表情回应、关键词回复、反撤回和自动加好友均已接入此面板。
+
+### 自动加好友（xducraft_auto_friend）
+
+- 在 `.env` 的 `AUTO_ACCEPT_FRIEND_GROUP_IDS` 中用 JSON 数组配置允许的群号，例如
+  `AUTO_ACCEPT_FRIEND_GROUP_IDS=[123456789,987654321]`。
+- 对应群还需由管理员执行 `/功能 on 自动加好友`；未配置或未开启的群不会触发。
+- OneBot v11 的好友申请事件不提供来源群号，插件会查询申请人当前是否为上述群成员，
+  仅在成员身份得到确认后自动接受；查询失败时保持申请待处理。
 
 ### 🧩 关键词回复（xducraft_keyword）
 
