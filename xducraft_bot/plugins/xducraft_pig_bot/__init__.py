@@ -4,6 +4,7 @@ import random
 import time
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
 from nonebot import get_bots, on_command, require
@@ -55,7 +56,7 @@ feature_gate.register(feature_gate.Feature(
 ))
 
 PIG_BASE_URL = "https://www.pighub.top"
-PIG_ALL_IMAGES_API = f"{PIG_BASE_URL}/api/all-images"
+PIG_ALL_IMAGES_API = f"{PIG_BASE_URL}/api/images?sort=0"
 AUTO_PUSH_INTERVAL_SECONDS = 6 * 60 * 60
 REQUEST_TIMEOUT_SECONDS = 15.0
 QUERY_COOLDOWN_SECONDS = 3.0
@@ -94,24 +95,27 @@ def normalize_switch_action(raw_arg: str) -> str:
 def build_image_url(path: str) -> str:
     if not path:
         return ""
+
     if path.startswith("http://") or path.startswith("https://"):
-        return path
-    if path.startswith("/"):
-        return f"{PIG_BASE_URL}{path}"
-    return f"{PIG_BASE_URL}/{path}"
+        parsed = urlsplit(path)
+        return urlunsplit((
+            parsed.scheme,
+            parsed.netloc,
+            quote(parsed.path, safe="/%"),
+            parsed.query,
+            parsed.fragment,
+        ))
+
+    relative_path = path if path.startswith("/") else f"/{path}"
+    return f"{PIG_BASE_URL}{quote(relative_path, safe='/%')}"
 
 
 def _normalize_image(item: Dict[str, Any]) -> Dict[str, str]:
-    title = str(item.get("title", "") or "")
-    filename = str(item.get("filename", "") or "")
-    image_id = str(item.get("id", "") or "")
-    thumbnail = str(item.get("thumbnail", "") or "")
     return {
-        "id": image_id,
-        "title": title,
-        "filename": filename,
-        "thumbnail": thumbnail,
-        "url": build_image_url(thumbnail),
+        "id": str(item.get("id", "") or ""),
+        "title": str(item.get("title", "") or ""),
+        "filename": str(item.get("filename", "") or ""),
+        "url": build_image_url(str(item.get("image_url", "") or "")),
     }
 
 
@@ -121,7 +125,12 @@ async def fetch_all_images() -> List[Dict[str, str]]:
         resp.raise_for_status()
         payload = resp.json()
 
-    images = payload.get("images", []) if isinstance(payload, dict) else []
+    if not isinstance(payload, dict) or payload.get("code") != 0:
+        raise ValueError("PigHub image API returned an invalid response")
+
+    images = payload.get("data")
+    if not isinstance(images, list):
+        raise ValueError("PigHub image API response does not contain an image list")
     normalized: List[Dict[str, str]] = []
     for item in images:
         if not isinstance(item, dict):
