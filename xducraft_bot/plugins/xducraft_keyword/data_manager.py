@@ -3,8 +3,8 @@
 规则同时支持**群级**和**全局**两层：全局规则（如“新手教程”）在所有启用的群里
 都生效，群级规则只在本群生效；同一关键词命中时群级优先。
 
-回复内容以 CQ 码字符串保存。里面的图片会在**添加时**就下载到本地——预设回复
-是长期使用的，直接存 QQ 的临时 URL 过几天就会变成裂图。
+回复内容按消息列表保存，每条消息以 CQ 码字符串表示。图片会在**添加时**下载到
+本地——预设回复是长期使用的，直接存 QQ 的临时 URL 过几天就会变成裂图。
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import os
 import re
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from xducraft_bot.shared.json_store import JsonStore, as_bool, as_int, as_str
 
@@ -39,6 +39,7 @@ MATCH_LABELS = {
 MAX_MATCH_LENGTH = 500
 MAX_KEYWORD_LENGTH = 64
 MAX_REPLY_LENGTH = 4096
+MAX_REPLIES_PER_TRIGGER = 8
 MAX_RULES_PER_SCOPE = 200
 
 
@@ -51,13 +52,23 @@ def _default_config() -> Dict[str, Any]:
     }
 
 
+def _normalize_replies(raw: Any) -> List[str]:
+    if not isinstance(raw, list):
+        return []
+
+    replies = []
+    for item in raw[:MAX_REPLIES_PER_TRIGGER]:
+        reply = as_str(item)[:MAX_REPLY_LENGTH]
+        if reply:
+            replies.append(reply)
+    return replies
+
+
 def _normalize_rule(raw: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(raw, dict):
         return None
 
     keywords = raw.get("keywords")
-    if isinstance(keywords, str):
-        keywords = [keywords]
     if not isinstance(keywords, list):
         return None
 
@@ -69,8 +80,8 @@ def _normalize_rule(raw: Any) -> Optional[Dict[str, Any]]:
     if not cleaned:
         return None
 
-    reply = as_str(raw.get("reply"))[:MAX_REPLY_LENGTH]
-    if not reply:
+    replies = _normalize_replies(raw.get("replies"))
+    if not replies:
         return None
 
     match = as_str(raw.get("match"), MATCH_CONTAINS).lower()
@@ -81,7 +92,7 @@ def _normalize_rule(raw: Any) -> Optional[Dict[str, Any]]:
         "id": as_str(raw.get("id")) or uuid.uuid4().hex[:8],
         "keywords": cleaned,
         "match": match,
-        "reply": reply,
+        "replies": replies,
         "enabled": as_bool(raw.get("enabled"), True),
         "cooldown": as_int(raw.get("cooldown"), 0, minimum=0, maximum=86400),
         "created_at": as_int(raw.get("created_at"), 0, minimum=0),
@@ -114,18 +125,21 @@ def _normalize_config(raw: Any) -> Dict[str, Any]:
                 key = str(int(group_id))
             except (TypeError, ValueError):
                 continue
-            rules = _normalize_rules(
-                group_data.get("rules") if isinstance(group_data, dict) else group_data
-            )
+            if not isinstance(group_data, dict):
+                continue
+            rules = _normalize_rules(group_data.get("rules"))
+            join_replies = _normalize_replies(group_data.get("join_replies"))
             group_config: Dict[str, Any] = {"rules": rules}
-            if isinstance(group_data, dict) and "default_cooldown" in group_data:
+            if join_replies:
+                group_config["join_replies"] = join_replies
+            if "default_cooldown" in group_data:
                 group_config["default_cooldown"] = as_int(
                     group_data.get("default_cooldown"),
                     config["default_cooldown"],
                     minimum=0,
                     maximum=3600,
                 )
-            if rules or "default_cooldown" in group_config:
+            if rules or join_replies or "default_cooldown" in group_config:
                 config["groups"][key] = group_config
 
     return config
@@ -176,19 +190,34 @@ def get_effective_rules(group_id: int) -> List[Dict[str, Any]]:
     return group_rules + global_rules
 
 
+def get_join_replies(group_id: int) -> List[str]:
+    """返回本群的入群欢迎消息；未配置时返回空列表。"""
+    group = _store.load()["groups"].get(str(int(group_id)))
+    if not isinstance(group, dict):
+        return []
+    return list(group.get("join_replies", []))
+
+
 def add_rule(
     keyword: str,
-    reply: str,
+    replies: Sequence[str],
     group_id: Optional[int] = None,
     match: str = MATCH_CONTAINS,
     cooldown: int = 0,
 ) -> Optional[Dict[str, Any]]:
-    """新增一条规则。关键词重复时返回 None。"""
+    """新增一条规则。关键词重复或回复不合法时返回 None。"""
     keyword = as_str(keyword)
-    reply = as_str(reply)
-    if not keyword or not reply:
+    if isinstance(replies, (str, bytes)):
         return None
-    if len(keyword) > MAX_KEYWORD_LENGTH or len(reply) > MAX_REPLY_LENGTH:
+    reply_list = list(replies)
+    cleaned_replies = [as_str(reply) for reply in reply_list]
+    if not keyword or not cleaned_replies:
+        return None
+    if (
+        len(keyword) > MAX_KEYWORD_LENGTH
+        or len(cleaned_replies) > MAX_REPLIES_PER_TRIGGER
+        or any(not reply or len(reply) > MAX_REPLY_LENGTH for reply in cleaned_replies)
+    ):
         return None
     if match not in MATCH_MODES:
         return None
@@ -199,7 +228,7 @@ def add_rule(
         "id": uuid.uuid4().hex[:8],
         "keywords": [keyword],
         "match": match,
-        "reply": reply,
+        "replies": cleaned_replies,
         "enabled": True,
         "cooldown": max(0, int(cooldown)),
         "created_at": int(time.time()),
@@ -267,10 +296,10 @@ def find_rule(keyword: str, group_id: Optional[int] = None) -> Optional[Dict[str
 
 
 def update_rule(keyword: str, group_id: Optional[int], **changes: Any) -> bool:
-    """修改规则的 match / enabled / cooldown / reply。"""
+    """修改规则的 match / enabled / cooldown / replies。"""
     target = as_str(keyword)
     folded = target.casefold()
-    allowed = {"match", "enabled", "cooldown", "reply"}
+    allowed = {"match", "enabled", "cooldown", "replies"}
 
     def mutate(config: Dict[str, Any]) -> bool:
         if group_id is None:
@@ -292,6 +321,41 @@ def update_rule(keyword: str, group_id: Optional[int], **changes: Any) -> bool:
                     rule[key] = value
             return True
         return False
+
+    return bool(_store.mutate(mutate))
+
+
+def set_join_replies(group_id: int, replies: Sequence[str]) -> bool:
+    """设置本群入群欢迎消息；内容不合法时不写入。"""
+    if isinstance(replies, (str, bytes)):
+        return False
+    reply_list = list(replies)
+    cleaned_replies = [as_str(reply) for reply in reply_list]
+    if (
+        not cleaned_replies
+        or len(cleaned_replies) > MAX_REPLIES_PER_TRIGGER
+        or any(not reply or len(reply) > MAX_REPLY_LENGTH for reply in cleaned_replies)
+    ):
+        return False
+
+    def mutate(config: Dict[str, Any]) -> bool:
+        group = config["groups"].setdefault(str(int(group_id)), {"rules": []})
+        if group.get("join_replies", []) == cleaned_replies:
+            return False
+        group["join_replies"] = cleaned_replies
+        return True
+
+    return bool(_store.mutate(mutate))
+
+
+def clear_join_replies(group_id: int) -> bool:
+    """清除本群入群欢迎消息。"""
+    def mutate(config: Dict[str, Any]) -> bool:
+        group = config["groups"].get(str(int(group_id)))
+        if not isinstance(group, dict) or "join_replies" not in group:
+            return False
+        del group["join_replies"]
+        return True
 
     return bool(_store.mutate(mutate))
 
@@ -369,8 +433,9 @@ def media_path(name: str) -> str:
 
 __all__ = [
     "MATCH_MODES", "MATCH_LABELS", "MATCH_CONTAINS", "MATCH_EXACT", "MATCH_PREFIX", "MATCH_REGEX",
-    "MEDIA_DIR", "MAX_MATCH_LENGTH",
+    "MEDIA_DIR", "MAX_MATCH_LENGTH", "MAX_REPLY_LENGTH", "MAX_REPLIES_PER_TRIGGER",
     "get_config", "get_group_rules", "get_global_rules", "get_effective_rules",
+    "get_join_replies", "set_join_replies", "clear_join_replies",
     "add_rule", "remove_rule", "find_rule", "update_rule", "match_rules",
     "get_default_cooldown", "set_default_cooldown", "is_valid_regex", "media_path",
 ]

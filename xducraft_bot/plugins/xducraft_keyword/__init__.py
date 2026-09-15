@@ -1,25 +1,19 @@
-"""关键词自动回复。
+"""关键词与入群事件自动回复。
 
-有人在群里发“新手教程”，机器人就把预设好的那段内容发出来。
+群级配置默认在私聊中完成，避免管理操作和回复录制刷屏。群管理员先发送
+``/关键词 <群号>`` 查看状态与完整操作菜单；不知道群号时，可以在目标群只发送
+一次 ``/关键词``，机器人会把该群的专用菜单私聊给管理员。
 
-三条设计约束（都来自实际会踩的坑）：
+常用指令::
 
-- **未启用的群完全不响应。** 监听器优先级低且 ``block=False``，
-  开关关掉时连匹配都不做。
-- **配置指令的回执默认走私聊。** 在几百人的大群里连着调十条关键词，
-  每条都回一句就是刷屏。
-- **每条规则有冷却时间。** 否则有人复读关键词，机器人就跟着复读。
-
-指令::
-
-    /关键词                      查看本群规则
-    /关键词 add <词> <回复>       添加本群规则（回复可带图片/表情）
-    /关键词 del <词>              删除
-    /关键词 show <词>             查看某条规则的完整回复
-    /关键词 mode <词> <匹配方式>   包含 / 完全 / 开头 / 正则
-    /关键词 on|off                开关本群关键词回复
-    /关键词 global add|del ...    全局规则（所有启用的群都生效，限 SUPERUSER）
-    /关键词 cooldown <秒>         设置默认冷却
+    /关键词 <群号>                         查看状态与菜单
+    /关键词 <群号> on|off                  开关该群全部自动回复
+    /关键词 <群号> add <词> [回复]           添加关键词
+    /关键词 <群号> del|show <词>             删除或查看关键词
+    /关键词 <群号> mode <词> <匹配方式>       包含 / 完全 / 开头 / 正则
+    /关键词 <群号> join set|show|clear       配置入群欢迎
+    /关键词 <群号> cooldown <秒>             设置默认冷却
+    /关键词 global add|del ...              全局规则（限 SUPERUSER）
 """
 
 from __future__ import annotations
@@ -28,28 +22,35 @@ import asyncio
 import os
 import re
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import httpx
-from nonebot import on_command, on_message
+from nonebot import on_command, on_message, on_notice
 from nonebot.adapters.onebot.v11 import (
-    Bot, GroupMessageEvent, Message, MessageEvent, MessageSegment,
+    Bot,
+    GroupIncreaseNoticeEvent,
+    GroupMessageEvent,
+    Message,
+    MessageEvent,
+    MessageSegment,
 )
 from nonebot.log import logger
+from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
+from nonebot.typing import T_State
 
 from xducraft_bot.shared import feature_gate
-from xducraft_bot.shared.onebot import reply_quietly, send_text_sections
-from xducraft_bot.shared.permissions import can_manage, is_superuser
+from xducraft_bot.shared.onebot import notify_privately, send_text_sections
+from xducraft_bot.shared.permissions import can_manage_group, is_superuser
 
 from . import data_manager as dm
 
 __plugin_meta__ = PluginMetadata(
     name="XDUCraft_keyword",
-    description="可配置的关键词自动回复",
-    usage="/关键词 — 查看与管理本群关键词回复",
+    description="可配置的关键词与入群事件自动回复",
+    usage="私聊 /关键词 <群号> — 查看与管理该群自动回复",
 )
 
 FEATURE_KEY = "keyword_reply"
@@ -57,7 +58,7 @@ FEATURE_KEY = "keyword_reply"
 feature_gate.register(feature_gate.Feature(
     key=FEATURE_KEY,
     name="关键词回复",
-    description="匹配到预设关键词时自动回复",
+    description="匹配关键词或有新成员入群时自动回复",
     default_enabled=False,
     passive=True,
 ))
@@ -68,6 +69,10 @@ MAX_MEDIA_BYTES = 10 * 1024 * 1024
 keyword_listener = on_message(
     priority=97, block=False,
     rule=Rule(lambda event: isinstance(event, GroupMessageEvent)),
+)
+join_listener = on_notice(
+    priority=97, block=False,
+    rule=Rule(lambda event: isinstance(event, GroupIncreaseNoticeEvent)),
 )
 keyword_command = on_command("关键词", aliases={"kw", "keyword"}, priority=10, block=True)
 
@@ -101,6 +106,23 @@ def _plain_text(message: Message) -> str:
     ).strip()
 
 
+async def _send_saved_replies(
+    bot: Bot,
+    event,
+    replies: Sequence[str],
+    *,
+    at_user_id: Optional[int] = None,
+) -> None:
+    """按顺序发送已保存的消息；入群欢迎的首条消息会提及新成员。"""
+    for index, reply in enumerate(replies):
+        message = Message()
+        if index == 0 and at_user_id is not None:
+            message += MessageSegment.at(at_user_id)
+            message += MessageSegment.text(" ")
+        message += Message(_restore_reply(reply))
+        await bot.send(event, message)
+
+
 # ==============================================================================
 # 触发
 # ==============================================================================
@@ -120,9 +142,26 @@ async def handle_keyword(bot: Bot, event: GroupMessageEvent):
         return
 
     try:
-        await bot.send(event, Message(_restore_reply(rule["reply"])))
+        await _send_saved_replies(bot, event, rule["replies"])
     except Exception as exc:
         logger.warning("[Keyword] 群 {} 发送关键词回复失败: {}", event.group_id, exc)
+
+
+@join_listener.handle()
+async def handle_member_join(bot: Bot, event: GroupIncreaseNoticeEvent):
+    if str(event.user_id) == str(bot.self_id):
+        return
+    if not feature_gate.is_enabled(FEATURE_KEY, event.group_id):
+        return
+
+    replies = dm.get_join_replies(event.group_id)
+    if not replies:
+        return
+
+    try:
+        await _send_saved_replies(bot, event, replies, at_user_id=event.user_id)
+    except Exception as exc:
+        logger.warning("[Keyword] 群 {} 发送入群欢迎失败: {}", event.group_id, exc)
 
 
 def _restore_reply(reply: str) -> str:
@@ -150,6 +189,9 @@ async def _persist_reply_media(message: Message) -> str:
     downloads: List[Tuple[int, str]] = []
 
     for segment in message:
+        if segment.type == "reply":
+            # 用户常会“回复”录制提示；旧消息引用不能作为长期回复重放。
+            continue
         if segment.type == "image":
             url = str(segment.data.get("url") or segment.data.get("file") or "")
             if url.startswith(("http://", "https://")):
@@ -194,103 +236,240 @@ def _describe_rule(rule: Dict, index: Optional[int] = None) -> str:
     scope_text = f"[{scope}] " if scope else ""
     keywords = " / ".join(rule["keywords"])
     mode = dm.MATCH_LABELS.get(rule["match"], rule["match"])
-    preview = re.sub(r"\[CQ:[^\]]+\]", "[图片]", rule["reply"]).replace("\n", " ")
+    previews = [
+        re.sub(r"\[CQ:[^\]]+\]", "[富文本]", reply).replace("\n", " ")
+        for reply in rule["replies"]
+    ]
+    preview = " | ".join(previews)
     if len(preview) > 40:
         preview = preview[:40] + "…"
-    return f"{prefix}{scope_text}{keywords}（{mode}）{state}\n   → {preview}"
+    count = f"，{len(previews)} 条消息" if len(previews) > 1 else ""
+    return f"{prefix}{scope_text}{keywords}（{mode}{count}）{state}\n   → {preview}"
+
+
+_CAPTURE_STATE_KEY = "_keyword_reply_capture"
+
+
+async def _start_capture(
+    state: T_State,
+    *,
+    kind: str,
+    group_id: Optional[int],
+    keyword: Optional[str] = None,
+) -> None:
+    state[_CAPTURE_STATE_KEY] = {
+        "kind": kind,
+        "group_id": group_id,
+        "keyword": keyword,
+        "replies": [],
+    }
+    scope = "全局" if group_id is None else f"群 {group_id}"
+    target = f"{scope}关键词「{keyword}」" if kind == "rule" else f"{scope}入群欢迎"
+    await keyword_command.pause(
+        f"开始录制{target}的回复。\n"
+        "现在请直接发送第 1 条回复。文字、图片、表情、@ 可以混排；"
+        f"最多 {dm.MAX_REPLIES_PER_TRIGGER} 条。\n"
+        "每发一条我都会确认；全部发完后单独发送“完成”，"
+        "不想保存则发送“取消”。"
+    )
+
+
+def _private_entry_help() -> str:
+    return (
+        "自动回复配置入口\n"
+        "所有设置和回复录制都能在当前私聊完成，不会把配置内容发到群里。\n\n"
+        "请发送：/关键词 <群号>\n"
+        "例如：/关键词 123456789\n\n"
+        "不知道群号时，只需在目标群发送一次 /关键词；"
+        "我会把该群的专用菜单私聊给你，群里不会显示菜单。\n"
+        "SUPERUSER 管理全局规则可发送：/关键词 global list"
+    )
+
+
+def _group_command_help(group_id: int) -> str:
+    prefix = f"/关键词 {group_id}"
+    return (
+        f"群 {group_id} 的私聊配置菜单\n"
+        "推荐首次按这个顺序操作：\n"
+        f"1. {prefix} on\n"
+        f"2. {prefix} add 新手教程\n"
+        "   收到录制提示后逐条发送回复，最后单独发送“完成”。\n"
+        f"3. {prefix} join set\n"
+        "   按同样方式录制入群欢迎；首条发送时会自动 @ 新成员。\n\n"
+        "其他操作：\n"
+        f"{prefix} show <关键词>       查看完整回复\n"
+        f"{prefix} mode <关键词> 完全  改为完全匹配\n"
+        f"{prefix} del <关键词>        删除关键词\n"
+        f"{prefix} join show          查看入群欢迎\n"
+        f"{prefix} join clear         清除入群欢迎\n"
+        f"{prefix} cooldown <秒>       设置关键词冷却\n"
+        f"{prefix} off                关闭该群全部自动回复\n"
+        f"{prefix}                    重新查看状态和菜单"
+    )
+
+
+async def _redirect_group_configuration(bot: Bot, event: GroupMessageEvent) -> None:
+    group_id = int(event.group_id)
+    if not await can_manage_group(bot, event, group_id):
+        await keyword_command.finish("只有群管理员可以配置自动回复。")
+
+    sent = await notify_privately(
+        bot,
+        event.user_id,
+        "为避免在大群刷屏，群内的配置命令不会执行；请在本私聊中操作。\n\n"
+        + _group_command_help(group_id),
+    )
+    if sent:
+        await keyword_command.finish()
+    await keyword_command.finish(
+        "无法向你发送私聊。请先添加机器人好友，然后再次发送 /关键词。"
+    )
 
 
 @keyword_command.handle()
-async def handle_command(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
-    raw_args = args.extract_plain_text().strip().split(maxsplit=2)
-    action = raw_args[0].lower() if raw_args else "list"
-
-    group_id = getattr(event, "group_id", None)
-    is_group = isinstance(event, GroupMessageEvent)
-
-    # 全局规则只有 SUPERUSER 能动，且可以在私聊里配置。
-    if action == "global":
-        await _handle_global(bot, event, args)
+async def handle_command(
+    bot: Bot,
+    event: MessageEvent,
+    state: T_State,
+    args: Message = CommandArg(),
+):
+    if isinstance(event, GroupMessageEvent):
+        await _redirect_group_configuration(bot, event)
         return
 
-    if not is_group:
+    head, _ = _split_message_head(args, 1)
+    if not head:
+        await keyword_command.finish(_private_entry_help())
+
+    if head[0].lower() == "global":
+        await _handle_global(bot, event, args, state)
+        return
+
+    try:
+        group_id = int(head[0])
+    except ValueError:
         await keyword_command.finish(
-            "请在需要配置的群里使用 /关键词。\n"
-            "配置全局规则（所有群生效）请发送 /关键词 global add <词> <回复>。"
+            "未识别目标群号。\n\n" + _private_entry_help()
+        )
+    if group_id <= 0:
+        await keyword_command.finish("群号必须是正整数。\n\n" + _private_entry_help())
+
+    if not await can_manage_group(bot, event, group_id):
+        await keyword_command.finish(
+            f"无法确认你是群 {group_id} 的群主或管理员。\n"
+            "请检查群号和管理员身份；SUPERUSER 不受此限制。"
         )
 
-    if action in {"list", "列表", ""} and len(raw_args) <= 1:
-        await _show_list(bot, event)
+    _, scoped_args = _split_message_head(args, 1)
+    await _handle_group_command(
+        bot,
+        event,
+        state,
+        scoped_args or Message(),
+        group_id,
+    )
+
+
+async def _handle_group_command(
+    bot: Bot,
+    event: MessageEvent,
+    state: T_State,
+    args: Message,
+    group_id: int,
+) -> None:
+    raw_args = args.extract_plain_text().strip().split(maxsplit=2)
+    action = raw_args[0].lower() if raw_args else "list"
+    prefix = f"/关键词 {group_id}"
+
+    if action in {"list", "列表", "help", "帮助", ""} and len(raw_args) <= 1:
+        await _show_list(bot, event, group_id)
         return
-
-    if not await can_manage(bot, event):
-        await keyword_command.finish("只有群管理员可以配置关键词回复。")
-
-    quiet = True  # 配置类回执一律尽量私聊，避免在大群里刷屏
 
     if action in {"on", "开", "开启"}:
         changed = feature_gate.set_enabled(FEATURE_KEY, group_id, True)
-        await reply_quietly(
-            bot,
-            event,
-            "已开启本群关键词回复。" if changed else "本群关键词回复已经是开启状态。",
-            quiet=quiet,
+        await keyword_command.finish(
+            f"已开启群 {group_id} 的自动回复。"
+            if changed else
+            f"群 {group_id} 的自动回复已经是开启状态。"
         )
-        await keyword_command.finish()
 
     if action in {"off", "关", "关闭"}:
         changed = feature_gate.set_enabled(FEATURE_KEY, group_id, False)
-        await reply_quietly(
-            bot,
-            event,
-            "已关闭本群关键词回复。" if changed else "本群关键词回复已经是关闭状态。",
-            quiet=quiet,
+        await keyword_command.finish(
+            f"已关闭群 {group_id} 的自动回复。"
+            if changed else
+            f"群 {group_id} 的自动回复已经是关闭状态。"
         )
-        await keyword_command.finish()
+
+    if action in {"join", "welcome", "入群", "欢迎"}:
+        await _handle_join(bot, event, args, state, group_id)
+        return
 
     if action in {"add", "添加"}:
-        keyword, reply_message = _split_add_arguments(args)
-        if not keyword or not reply_message:
+        if len(raw_args) < 2:
             await keyword_command.finish(
-                "用法：/关键词 add <关键词> <回复内容>\n"
-                "回复内容可以包含图片和表情，会一并保存。"
+                f"缺少关键词。请发送：{prefix} add <关键词>\n"
+                f"例如：{prefix} add 新手教程\n"
+                "随后我会等待你逐条发送回复内容。"
             )
-        reply = await _persist_reply_media(reply_message)
-        rule = dm.add_rule(keyword, reply, group_id=group_id)
-        if rule is None:
-            await keyword_command.finish(f"添加失败：关键词「{keyword}」已存在，或规则数量已达上限。")
+        keyword = raw_args[1]
+        if dm.find_rule(keyword, group_id=group_id) is not None:
+            await keyword_command.finish(
+                f"群 {group_id} 已有关键词「{keyword}」。\n"
+                f"查看：{prefix} show {keyword}\n"
+                f"重做时请先删除：{prefix} del {keyword}"
+            )
 
-        await reply_quietly(
-            bot, event,
-            f"已添加关键词「{keyword}」（{dm.MATCH_LABELS[rule['match']]}）\n"
-            f"现在群里有人发送包含它的消息就会自动回复。\n"
-            f"可用 /关键词 mode {keyword} 完全 改成精确匹配。",
-            quiet=quiet,
+        _, reply_message = _split_message_head(args, 2)
+        if reply_message is None:
+            await _start_capture(
+                state,
+                kind="rule",
+                group_id=group_id,
+                keyword=keyword,
+            )
+
+        reply = await _persist_reply_media(reply_message)
+        rule = dm.add_rule(keyword, [reply], group_id=group_id)
+        if rule is None:
+            await keyword_command.finish(
+                f"添加失败：关键词「{keyword}」的回复为空、过长，或规则数量已达上限。"
+            )
+
+        await keyword_command.finish(
+            f"已添加群 {group_id} 的关键词「{keyword}」"
+            f"（{dm.MATCH_LABELS[rule['match']]}）。\n"
+            f"改为完全匹配：{prefix} mode {keyword} 完全"
         )
-        await keyword_command.finish()
 
     if action in {"del", "delete", "remove", "删除"}:
         if len(raw_args) < 2:
-            await keyword_command.finish("用法：/关键词 del <关键词>")
+            await keyword_command.finish(f"缺少关键词。请发送：{prefix} del <关键词>")
         keyword = raw_args[1]
         if dm.remove_rule(keyword, group_id=group_id):
-            await reply_quietly(bot, event, f"已删除关键词「{keyword}」。", quiet=quiet)
-            await keyword_command.finish()
-        await keyword_command.finish(f"本群没有找到关键词「{keyword}」。用 /关键词 查看已有规则。")
+            await keyword_command.finish(f"已删除群 {group_id} 的关键词「{keyword}」。")
+        await keyword_command.finish(
+            f"群 {group_id} 没有找到关键词「{keyword}」。\n"
+            f"发送 {prefix} 查看已有规则。"
+        )
 
     if action in {"show", "查看"}:
         if len(raw_args) < 2:
-            await keyword_command.finish("用法：/关键词 show <关键词>")
+            await keyword_command.finish(f"缺少关键词。请发送：{prefix} show <关键词>")
         rule = dm.find_rule(raw_args[1], group_id=group_id) or dm.find_rule(raw_args[1], group_id=None)
         if rule is None:
             await keyword_command.finish(f"没有找到关键词「{raw_args[1]}」。")
-        await keyword_command.send(f"关键词「{' / '.join(rule['keywords'])}」的回复内容：")
-        await keyword_command.finish(Message(_restore_reply(rule["reply"])))
+        await keyword_command.send(
+            f"关键词「{' / '.join(rule['keywords'])}」的回复内容（{len(rule['replies'])} 条）："
+        )
+        await _send_saved_replies(bot, event, rule["replies"])
+        await keyword_command.finish()
 
     if action in {"mode", "匹配"}:
         if len(raw_args) < 3:
             await keyword_command.finish(
-                "用法：/关键词 mode <关键词> <包含|完全|开头|正则>"
+                f"参数不完整。请发送：{prefix} mode <关键词> <包含|完全|开头|正则>\n"
+                f"例如：{prefix} mode 新手教程 完全"
             )
         keyword, mode_text = raw_args[1], raw_args[2].strip().lower()
         mode = _parse_match_mode(mode_text)
@@ -299,33 +478,25 @@ async def handle_command(bot: Bot, event: MessageEvent, args: Message = CommandA
         if mode == dm.MATCH_REGEX and not dm.is_valid_regex(keyword):
             await keyword_command.finish(f"「{keyword}」不是合法的正则表达式。")
         if dm.update_rule(keyword, group_id, match=mode):
-            await reply_quietly(bot, event, f"已将「{keyword}」的匹配方式改为{dm.MATCH_LABELS[mode]}。", quiet=quiet)
-            await keyword_command.finish()
-        await keyword_command.finish(f"本群没有找到关键词「{keyword}」。")
+            await keyword_command.finish(
+                f"已将群 {group_id} 的「{keyword}」改为{dm.MATCH_LABELS[mode]}。"
+            )
+        await keyword_command.finish(f"群 {group_id} 没有找到关键词「{keyword}」。")
 
     if action in {"cooldown", "冷却"}:
         if len(raw_args) < 2 or not raw_args[1].isdigit():
             await keyword_command.finish(
-                f"用法：/关键词 cooldown <秒>\n本群默认冷却：{dm.get_default_cooldown(group_id)} 秒"
+                f"请发送：{prefix} cooldown <秒>\n"
+                f"群 {group_id} 当前默认冷却：{dm.get_default_cooldown(group_id)} 秒"
             )
         dm.set_default_cooldown(int(raw_args[1]), group_id=group_id)
-        await reply_quietly(
-            bot,
-            event,
-            f"已将本群默认冷却设为 {dm.get_default_cooldown(group_id)} 秒。",
-            quiet=quiet,
+        await keyword_command.finish(
+            f"已将群 {group_id} 的关键词默认冷却设为 "
+            f"{dm.get_default_cooldown(group_id)} 秒。"
         )
-        await keyword_command.finish()
 
     await keyword_command.finish(
-        "用法：\n"
-        "/关键词 — 查看本群规则\n"
-        "/关键词 add <词> <回复> — 添加\n"
-        "/关键词 del <词> — 删除\n"
-        "/关键词 show <词> — 查看完整回复\n"
-        "/关键词 mode <词> <包含|完全|开头|正则>\n"
-        "/关键词 cooldown <秒>\n"
-        "/关键词 on|off — 开关本群关键词回复"
+        f"没有识别操作「{action}」。\n\n" + _group_command_help(group_id)
     )
 
 
@@ -339,67 +510,211 @@ def _parse_match_mode(text: str) -> Optional[str]:
     return mapping.get(text)
 
 
-def _split_add_arguments(args: Message) -> Tuple[str, Optional[Message]]:
-    """从 ``add <关键词> <回复...>`` 里拆出关键词和剩下的富文本回复。
-
-    回复部分可能包含图片段，所以不能简单地对纯文本做 split——必须在
-    ``Message`` 层面切，才能把图片保留下来。
-    """
+def _split_message_head(
+    message: Message,
+    word_count: int,
+) -> Tuple[List[str], Optional[Message]]:
+    """取出开头的若干纯文本单词，同时完整保留后面的富文本消息段。"""
+    words: List[str] = []
     remaining = Message()
-    keyword = ""
-    consumed_action = False
 
-    for segment in args:
+    for segment in message:
+        if len(words) >= word_count:
+            remaining += segment
+            continue
         if segment.type != "text":
-            if keyword:
-                remaining += segment
             continue
 
         text = str(segment.data.get("text", ""))
-        if keyword:
-            remaining += MessageSegment.text(text)
-            continue
+        position = 0
+        while len(words) < word_count:
+            match = re.search(r"\S+", text[position:])
+            if match is None:
+                position = len(text)
+                break
+            start = position + match.start()
+            end = position + match.end()
+            words.append(text[start:end])
+            position = end
 
-        tokens = text.split(maxsplit=2 if not consumed_action else 1)
-        if not consumed_action:
-            # tokens[0] 是 "add"
-            if len(tokens) < 2:
-                consumed_action = True
-                continue
-            keyword = tokens[1]
-            consumed_action = True
-            if len(tokens) >= 3:
-                remaining += MessageSegment.text(tokens[2])
-        else:
-            if len(tokens) < 1:
-                continue
-            keyword = tokens[0]
-            if len(tokens) >= 2:
-                remaining += MessageSegment.text(tokens[1])
+        if len(words) >= word_count:
+            tail = text[position:].lstrip()
+            if tail:
+                remaining += MessageSegment.text(tail)
 
-    if not remaining:
-        return keyword, None
-    return keyword, remaining
+    return words, remaining if remaining else None
 
 
-async def _show_list(bot: Bot, event: GroupMessageEvent) -> None:
-    rules = dm.get_effective_rules(event.group_id)
-    enabled, _ = feature_gate.resolve(FEATURE_KEY, event.group_id)
+def _control_message_text(message: Message) -> Optional[str]:
+    if any(segment.type not in {"text", "reply"} for segment in message):
+        return None
+    return _plain_text(message)
 
-    header = [
-        f"本群关键词回复：{'开启' if enabled else '关闭'}",
-        f"本群默认冷却：{dm.get_default_cooldown(event.group_id)} 秒",
-    ]
-    if not rules:
-        header.append("\n还没有配置任何关键词。管理员可用 /关键词 add <词> <回复> 添加。")
-        await keyword_command.finish("\n".join(header))
 
-    body = [_describe_rule(rule, index + 1) for index, rule in enumerate(rules)]
-    await send_text_sections(bot, event, ["\n".join(header + [""] + body)], title="关键词回复")
+async def _finish_capture(state: T_State) -> None:
+    capture = state.pop(_CAPTURE_STATE_KEY, None)
+    if not isinstance(capture, dict):
+        await keyword_command.finish("录制状态已失效，请重新执行配置命令。")
+
+    replies = capture.get("replies", [])
+    if capture.get("kind") == "rule":
+        keyword = str(capture.get("keyword") or "")
+        group_id = capture.get("group_id")
+        rule = dm.add_rule(keyword, replies, group_id=group_id)
+        if rule is None:
+            await keyword_command.finish(
+                f"保存失败：关键词「{keyword}」已存在，回复不合法，或规则数量已达上限。"
+            )
+        if group_id is None:
+            await keyword_command.finish(
+                f"已保存全局关键词「{keyword}」的 {len(replies)} 条回复。\n"
+                "查看规则：/关键词 global list"
+            )
+        await keyword_command.finish(
+            f"已保存群 {group_id} 关键词「{keyword}」的 {len(replies)} 条回复。\n"
+            f"查看内容：/关键词 {group_id} show {keyword}"
+        )
+
+    group_id = capture.get("group_id")
+    if group_id is None:
+        await keyword_command.finish("录制状态已失效，请重新配置入群欢迎。")
+    changed = dm.set_join_replies(int(group_id), replies)
+    if not changed and dm.get_join_replies(int(group_id)) != replies:
+        await keyword_command.finish("入群欢迎保存失败：回复为空、过长或数量超限。")
+    await keyword_command.finish(
+        f"已保存群 {group_id} 的 {len(replies)} 条入群欢迎消息。\n"
+        f"查看内容：/关键词 {group_id} join show"
+    )
+
+
+@keyword_command.receive("configured_reply")
+async def receive_configured_reply(
+    event: MessageEvent,
+    state: T_State,
+    matcher: Matcher,
+) -> None:
+    capture = state.get(_CAPTURE_STATE_KEY)
+    if not isinstance(capture, dict):
+        await matcher.finish("录制状态已失效，请重新执行配置命令。")
+
+    message = event.get_message()
+    control = _control_message_text(message)
+    if control in {"取消", "/取消", "cancel", "/cancel"}:
+        state.pop(_CAPTURE_STATE_KEY, None)
+        await matcher.finish("已取消本次回复录制。")
+    if control in {"完成", "/完成", "done", "/done", "保存"}:
+        if not capture["replies"]:
+            await matcher.reject_receive(
+                "configured_reply",
+                "还没有录制任何消息。请先发送回复内容，或发送“取消”。",
+            )
+        await _finish_capture(state)
+
+    reply = await _persist_reply_media(message)
+    if not reply:
+        await matcher.reject_receive(
+            "configured_reply",
+            "这条消息没有可保存的内容，请重新发送；发送“取消”可退出。",
+        )
+    if len(reply) > dm.MAX_REPLY_LENGTH:
+        await matcher.reject_receive(
+            "configured_reply",
+            f"这条消息超过 {dm.MAX_REPLY_LENGTH} 个字符，请缩短后重发。",
+        )
+
+    capture["replies"].append(reply)
+    count = len(capture["replies"])
+    if count >= dm.MAX_REPLIES_PER_TRIGGER:
+        await _finish_capture(state)
+    await matcher.reject_receive(
+        "configured_reply",
+        f"已记录第 {count} 条。可继续发送下一条；发送“完成”保存，发送“取消”放弃。",
+    )
+
+
+async def _handle_join(
+    bot: Bot,
+    event: MessageEvent,
+    args: Message,
+    state: T_State,
+    group_id: int,
+) -> None:
+    tokens = args.extract_plain_text().strip().split(maxsplit=2)
+    sub_action = tokens[1].lower() if len(tokens) > 1 else "show"
+    prefix = f"/关键词 {group_id} join"
+
+    if sub_action in {"show", "status", "查看", "状态", "list", "列表"}:
+        replies = dm.get_join_replies(group_id)
+        enabled, _ = feature_gate.resolve(FEATURE_KEY, group_id)
+        if not replies:
+            await keyword_command.finish(
+                f"群 {group_id} 的自动回复当前{'开启' if enabled else '关闭'}，"
+                "尚未配置入群欢迎。\n"
+                f"发送 {prefix} set 开始录制。"
+            )
+        await keyword_command.send(
+            f"群 {group_id} 的入群欢迎（{len(replies)} 条，自动回复当前"
+            f"{'开启' if enabled else '关闭'}）："
+        )
+        await _send_saved_replies(bot, event, replies)
+        await keyword_command.finish()
+
+    if sub_action in {"set", "设置", "add", "添加"}:
+        _, reply_message = _split_message_head(args, 2)
+        if reply_message is None:
+            await _start_capture(state, kind="join", group_id=group_id)
+        reply = await _persist_reply_media(reply_message)
+        if not reply or len(reply) > dm.MAX_REPLY_LENGTH:
+            await keyword_command.finish("入群欢迎保存失败：回复为空或过长。")
+        changed = dm.set_join_replies(group_id, [reply])
+        if not changed and dm.get_join_replies(group_id) != [reply]:
+            await keyword_command.finish("入群欢迎保存失败。")
+        await keyword_command.finish(
+            f"已保存群 {group_id} 的 1 条入群欢迎消息。\n"
+            f"查看效果：{prefix} show"
+        )
+
+    if sub_action in {"clear", "del", "delete", "清除", "删除", "关闭"}:
+        if dm.clear_join_replies(group_id):
+            await keyword_command.finish(f"已清除群 {group_id} 的入群欢迎。")
+        await keyword_command.finish(f"群 {group_id} 尚未配置入群欢迎。")
+
+    await keyword_command.finish(
+        "没有识别入群欢迎操作。请使用：\n"
+        f"{prefix} set    开始录制\n"
+        f"{prefix} show   查看\n"
+        f"{prefix} clear  清除"
+    )
+
+
+async def _show_list(bot: Bot, event: MessageEvent, group_id: int) -> None:
+    rules = dm.get_effective_rules(group_id)
+    join_replies = dm.get_join_replies(group_id)
+    enabled, _ = feature_gate.resolve(FEATURE_KEY, group_id)
+
+    status = "\n".join([
+        f"群 {group_id} 当前状态",
+        f"自动回复总开关：{'开启' if enabled else '关闭'}",
+        f"入群欢迎：{'已配置 ' + str(len(join_replies)) + ' 条' if join_replies else '未配置'}",
+        f"关键词规则：{len(rules)} 条（含全局规则）",
+        f"关键词默认冷却：{dm.get_default_cooldown(group_id)} 秒",
+        "",
+        _group_command_help(group_id),
+    ])
+    await keyword_command.send(status)
+
+    if rules:
+        body = [_describe_rule(rule, index + 1) for index, rule in enumerate(rules)]
+        await send_text_sections(bot, event, ["\n".join(body)], title=f"群 {group_id} 自动回复规则")
     await keyword_command.finish()
 
 
-async def _handle_global(bot: Bot, event: MessageEvent, args: Message) -> None:
+async def _handle_global(
+    bot: Bot,
+    event: MessageEvent,
+    args: Message,
+    state: T_State,
+) -> None:
     """全局规则管理，只有 SUPERUSER 能用。"""
     if not await is_superuser(bot, event):
         await keyword_command.finish("全局关键词只有超级用户可以配置。")
@@ -415,28 +730,31 @@ async def _handle_global(bot: Bot, event: MessageEvent, args: Message) -> None:
         await keyword_command.finish(f"全局关键词（所有启用的群都生效）：\n{body}")
 
     if sub_action in {"add", "添加"}:
-        # 去掉前导的 "global"，复用群级的参数拆分逻辑。
-        trimmed = Message()
-        skipped = False
-        for segment in args:
-            if not skipped and segment.type == "text":
-                text = str(segment.data.get("text", ""))
-                parts = text.split(maxsplit=1)
-                if parts and parts[0].lower() == "global":
-                    skipped = True
-                    if len(parts) > 1:
-                        trimmed += MessageSegment.text(parts[1])
-                    continue
-            trimmed += segment
-
-        keyword, reply_message = _split_add_arguments(trimmed)
-        if not keyword or not reply_message:
-            await keyword_command.finish("用法：/关键词 global add <关键词> <回复内容>")
+        head, reply_message = _split_message_head(args, 3)
+        if len(head) < 3:
+            await keyword_command.finish(
+                "用法：/关键词 global add <关键词> [回复内容]\n"
+                "省略回复内容后可单独录制图文或多条消息。"
+            )
+        keyword = head[2]
+        if dm.find_rule(keyword, group_id=None) is not None:
+            await keyword_command.finish(f"添加失败：全局关键词「{keyword}」已存在。")
+        if reply_message is None:
+            await _start_capture(
+                state,
+                kind="rule",
+                group_id=None,
+                keyword=keyword,
+            )
 
         reply = await _persist_reply_media(reply_message)
-        if dm.add_rule(keyword, reply, group_id=None) is None:
-            await keyword_command.finish(f"添加失败：全局关键词「{keyword}」已存在。")
-        await keyword_command.finish(f"已添加全局关键词「{keyword}」，所有启用关键词回复的群都会生效。")
+        if dm.add_rule(keyword, [reply], group_id=None) is None:
+            await keyword_command.finish(
+                f"添加失败：全局关键词「{keyword}」的回复为空、过长，或规则数量已达上限。"
+            )
+        await keyword_command.finish(
+            f"已添加全局关键词「{keyword}」，所有启用自动回复的群都会生效。"
+        )
 
     if sub_action in {"del", "delete", "删除"}:
         if len(tokens) < 3:
@@ -448,6 +766,6 @@ async def _handle_global(bot: Bot, event: MessageEvent, args: Message) -> None:
     await keyword_command.finish(
         "用法：\n"
         "/关键词 global list\n"
-        "/关键词 global add <词> <回复>\n"
+        "/关键词 global add <词> [回复]\n"
         "/关键词 global del <词>"
     )
