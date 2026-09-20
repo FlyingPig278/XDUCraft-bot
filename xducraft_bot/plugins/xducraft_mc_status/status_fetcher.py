@@ -505,18 +505,45 @@ def get_active_server_count(display_data: List[Dict[str, Any]]) -> int:
     return sum(1 for node in _iter_nodes(display_data) if has_player_list(node))
 
 
+def _player_totals(node: Dict[str, Any]) -> Tuple[int, int]:
+    """汇总一个服务器分支，避免群组入口与其子服重复计数。"""
+    players = node.get("players")
+    has_own_snapshot = bool(node.get("online")) and isinstance(players, dict)
+    own_online = _coerce_int(players.get("online"), 0) if has_own_snapshot else 0
+    own_max = _coerce_int(players.get("max"), 0) if has_own_snapshot else 0
+
+    children = node.get("children")
+    if not isinstance(children, list) or not children:
+        return own_online, own_max
+
+    children_online = children_max = 0
+    for child in children:
+        if not isinstance(child, dict):
+            continue
+        child_online, child_max = _player_totals(child)
+        children_online += child_online
+        children_max += child_max
+
+    if has_own_snapshot:
+        # 有子服的在线节点是该分支的聚合入口。并发查询并非原子快照，
+        # 因此取入口与子服合计的较大值，而不是把两者重复相加。
+        return max(own_online, children_online), max(own_max, children_max)
+    return children_online, children_max
+
+
 def summarize(display_data: List[Dict[str, Any]]) -> Dict[str, int]:
     """整棵树的汇总数据，用于图片顶部的概览条。"""
-    total = online = players_online = players_max = 0
+    total = online = 0
     for node in _iter_nodes(display_data):
         total += 1
-        if not node.get("online"):
-            continue
-        online += 1
-        players = node.get("players")
-        if isinstance(players, dict):
-            players_online += _coerce_int(players.get("online"), 0)
-            players_max += _coerce_int(players.get("max"), 0)
+        if node.get("online"):
+            online += 1
+
+    players_online = players_max = 0
+    for node in display_data:
+        branch_online, branch_max = _player_totals(node)
+        players_online += branch_online
+        players_max += branch_max
 
     return {
         "total": total,

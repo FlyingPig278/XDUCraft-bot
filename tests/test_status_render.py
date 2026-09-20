@@ -15,6 +15,7 @@ from xducraft_bot.plugins.xducraft_mc_status import fonts, raster, tokens as t
 from xducraft_bot.plugins.xducraft_mc_status import drawing_utils as du
 from xducraft_bot.plugins.xducraft_mc_status import image_renderer as ir
 from xducraft_bot.plugins.xducraft_mc_status import settings as cfg
+from xducraft_bot.plugins.xducraft_mc_status import status_fetcher as sf
 from xducraft_bot.plugins.xducraft_mc_status import split_query_options
 
 ROLES = [
@@ -345,6 +346,75 @@ def test_header_status_summary_uses_fixed_top_right_row():
         t.PAGE_PADDING_TOP + ir.HEADER_ROW_EYEBROW / 2,
     )]
     assert calls[0][1] < metrics.title_y
+
+
+def test_summary_does_not_double_count_proxy_and_children():
+    tree = [{
+        "online": True,
+        "players": {"online": 23, "max": 200},
+        "children": [
+            {
+                "online": True,
+                "players": {"online": 12, "max": 80},
+                "children": [],
+            },
+            {
+                "online": True,
+                "players": {"online": 6, "max": 60},
+                "children": [],
+            },
+            {
+                "online": True,
+                "players": {"online": 5, "max": 60},
+                "children": [
+                    {
+                        "online": True,
+                        "players": {"online": 4, "max": 32},
+                        "children": [],
+                    },
+                    {
+                        "online": True,
+                        "players": {"online": 1, "max": 20},
+                        "children": [],
+                    },
+                ],
+            },
+        ],
+    }]
+
+    assert sf.summarize(tree) == {
+        "total": 6,
+        "online": 6,
+        "offline": 0,
+        "players_online": 23,
+        "players_max": 200,
+    }
+
+
+def test_summary_uses_children_when_proxy_is_offline():
+    tree = [{
+        "online": False,
+        "children": [
+            {
+                "online": True,
+                "players": {"online": 12, "max": 80},
+                "children": [],
+            },
+            {
+                "online": True,
+                "players": {"online": 6, "max": 60},
+                "children": [],
+            },
+        ],
+    }]
+
+    assert sf.summarize(tree) == {
+        "total": 3,
+        "online": 2,
+        "offline": 1,
+        "players_online": 18,
+        "players_max": 140,
+    }
 
 
 def test_band_disappears_only_when_nothing_is_left_in_it():
