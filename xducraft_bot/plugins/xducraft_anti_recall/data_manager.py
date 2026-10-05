@@ -42,6 +42,19 @@ CONFIG_FILE = os.path.join(DATA_DIR, "anti_recall_config.json")
 MEDIA_DIR = os.path.join(DATA_DIR, "media")
 
 
+def message_id_variants(message_id: int) -> List[int]:
+    """兼容 OneBot 实现把同一 32 位消息 ID 分别上报为有符号/无符号整数。"""
+    value = int(message_id)
+    variants = [value]
+    if -(1 << 31) <= value <= (1 << 32) - 1:
+        unsigned = value & 0xFFFFFFFF
+        signed = unsigned if unsigned < 1 << 31 else unsigned - (1 << 32)
+        for candidate in (signed, unsigned):
+            if candidate not in variants:
+                variants.append(candidate)
+    return variants
+
+
 def _default_config() -> Dict[str, Any]:
     return {
         # 消息缓存保留时长：只影响“还没被撤回”的消息，撤回记录另有保留期。
@@ -179,13 +192,24 @@ class AntiRecallStore:
             )
             connection.commit()
 
-    def take_cached_message(self, group_id: int, message_id: int) -> Optional[Dict[str, Any]]:
-        """取出缓存的消息（不删除，留给定期清理）。"""
+    def find_cached_message(
+        self,
+        group_id: int,
+        message_id: int,
+        user_id: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """查找缓存消息，并兼容撤回路径把消息 ID 上报成不同符号位。"""
+        row = None
         with closing(self._connect()) as connection:
-            row = connection.execute(
-                "SELECT * FROM cached_messages WHERE group_id = ? AND message_id = ?",
-                (int(group_id), int(message_id)),
-            ).fetchone()
+            for candidate in message_id_variants(message_id):
+                query = "SELECT * FROM cached_messages WHERE group_id = ? AND message_id = ?"
+                params: List[Any] = [int(group_id), candidate]
+                if user_id is not None:
+                    query += " AND user_id = ?"
+                    params.append(int(user_id))
+                row = connection.execute(query, params).fetchone()
+                if row is not None:
+                    break
 
         if row is None:
             return None
@@ -289,15 +313,22 @@ class AntiRecallStore:
             })
         return results
 
-    def list_recent_recall_groups(self, limit: int = 20) -> List[int]:
-        """最近有过撤回的群，用于私聊查询时缩小成员校验范围。"""
+    def list_recent_recall_group_stats(self, limit: int = 20) -> List[Dict[str, int]]:
+        """列出最近有撤回记录的群及记录数。"""
         with closing(self._connect()) as connection:
             rows = connection.execute(
-                "SELECT group_id, MAX(recalled_at) AS latest FROM recalls "
+                "SELECT group_id, COUNT(*) AS total, MAX(recalled_at) AS latest FROM recalls "
                 "GROUP BY group_id ORDER BY latest DESC LIMIT ?",
                 (max(1, int(limit)),),
             ).fetchall()
-        return [int(row["group_id"]) for row in rows]
+        return [
+            {
+                "group_id": int(row["group_id"]),
+                "count": int(row["total"]),
+                "latest": int(row["latest"]),
+            }
+            for row in rows
+        ]
 
     def count_recalls(self, group_id: Optional[int] = None) -> int:
         with closing(self._connect()) as connection:
@@ -394,4 +425,6 @@ def _iter_media_files(content: Any):
 
 store = AntiRecallStore()
 
-__all__ = ["AntiRecallStore", "store", "DATA_DIR", "DB_FILE", "MEDIA_DIR"]
+__all__ = [
+    "AntiRecallStore", "store", "DATA_DIR", "DB_FILE", "MEDIA_DIR", "message_id_variants",
+]

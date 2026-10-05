@@ -335,48 +335,27 @@ def decode_forward_nodes(content: Sequence[Dict[str, Any]], media_dir: str, self
                 body = decode_message(inner, media_dir)
                 if prefix:
                     body = MessageSegment.text(prefix) + body
-                nodes.append({
-                    "type": "node",
-                    "data": {
-                        "name": str(node.get("name", "未知用户")),
-                        "uin": str(node.get("uin") or self_id),
-                        "content": body,
-                    },
-                })
+                data = {
+                    "name": str(node.get("name", "未知用户")),
+                    "uin": str(node.get("uin") or self_id),
+                    "content": body,
+                }
+                try:
+                    timestamp = int(node.get("time", 0) or 0)
+                except (TypeError, ValueError):
+                    timestamp = 0
+                if timestamp > 0:
+                    data["time"] = timestamp
+                nodes.append({"type": "node", "data": data})
                 walk(inner, depth + 1)
 
     walk(list(content), 0)
     return nodes
 
 
-def summarize_content(content: Sequence[Dict[str, Any]], limit: int = 60) -> str:
-    """一行摘要，用于列表展示。"""
-    parts: List[str] = []
-    for item in content:
-        if not isinstance(item, dict):
-            continue
-        item_type = item.get("type")
-        if item_type == "text":
-            parts.append(str(item.get("text", "")).replace("\n", " "))
-        elif item_type == "image":
-            parts.append(str(item.get("summary", "[图片]")))
-        elif item_type == "face":
-            parts.append("[表情]")
-        elif item_type == "at":
-            parts.append(f"@{item.get('name') or item.get('qq')}")
-        elif item_type == "forward":
-            parts.append(f"[合并转发 {len(item.get('nodes') or [])} 条]")
-        elif item_type == "reply":
-            continue
-        else:
-            parts.append(str(item.get("summary", "[消息]")))
-
-    text = "".join(parts).strip() or "[空消息]"
-    return text[:limit] + ("…" if len(text) > limit else "")
 
 
 __all__ = [
     "encode_message", "decode_message", "decode_forward_nodes",
-    "download_media", "summarize_content", "MAX_FORWARD_DEPTH",
-    "MAX_DECODED_FORWARD_NODES",
+    "download_media", "MAX_FORWARD_DEPTH", "MAX_DECODED_FORWARD_NODES",
 ]

@@ -20,20 +20,27 @@ MAX_FORWARD_NODES = 100
 MessageLike = Union[str, Message, MessageSegment]
 
 
-def make_node(content: MessageLike, name: str, uin: Union[int, str]) -> Dict[str, Any]:
+def make_node(
+    content: MessageLike,
+    name: str,
+    uin: Union[int, str],
+    *,
+    timestamp: Optional[int] = None,
+) -> Dict[str, Any]:
     """构造一个合并转发节点。
 
-    ``name``/``uin`` 决定转发卡片里显示的发送者，反撤回插件靠这两个字段
-    保住“谁说的”这一信息。
+    ``name``/``uin`` 决定转发卡片里显示的发送者，``timestamp`` 是 NapCat /
+    go-cqhttp 支持的原始消息时间扩展。未提供时间时不发送扩展字段，避免影响普通
+    OneBot 实现。
     """
-    return {
-        "type": "node",
-        "data": {
-            "name": str(name),
-            "uin": str(uin),
-            "content": content,
-        },
+    data: Dict[str, Any] = {
+        "name": str(name),
+        "uin": str(uin),
+        "content": content,
     }
+    if timestamp is not None and int(timestamp) > 0:
+        data["time"] = int(timestamp)
+    return {"type": "node", "data": data}
 
 
 def chunk_nodes(nodes: Sequence[Dict[str, Any]], size: int = MAX_FORWARD_NODES) -> List[List[Dict[str, Any]]]:
