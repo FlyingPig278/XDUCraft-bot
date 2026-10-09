@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from xducraft_bot.shared.json_store import JsonStore, as_str
 
@@ -57,6 +57,25 @@ def get_emoji_id(group_id: Optional[int] = None) -> str:
             return group_value
     return _clean_emoji_id(data.get("emoji_id"))
 
+def get_group_emoji_id(group_id: int) -> Optional[str]:
+    """返回本群显式设置的表情 ID；未设置时不应用全局回退。"""
+    value = _store.load()["groups"].get(str(int(group_id)))
+    return value if isinstance(value, str) and value.isdigit() else None
+
+
+def list_configured_groups() -> List[int]:
+    """列出有独立表情设置的正整数群号。"""
+    groups: List[int] = []
+    for group_key in _store.load()["groups"]:
+        try:
+            group_id = int(group_key)
+        except (TypeError, ValueError):
+            continue
+        if group_id > 0:
+            groups.append(group_id)
+    return sorted(set(groups))
+
+
 
 def set_emoji_id(emoji_id: str, group_id: Optional[int] = None) -> None:
     """设置表情 ID。``group_id`` 为 None 时设置的是全局默认值。"""
@@ -82,4 +101,11 @@ def clear_group_emoji_id(group_id: int) -> bool:
     return bool(_store.mutate(mutate))
 
 
-__all__ = ["get_emoji_id", "set_emoji_id", "clear_group_emoji_id", "DEFAULT_EMOJI_ID"]
+__all__ = [
+    "get_emoji_id",
+    "get_group_emoji_id",
+    "list_configured_groups",
+    "set_emoji_id",
+    "clear_group_emoji_id",
+    "DEFAULT_EMOJI_ID",
+]

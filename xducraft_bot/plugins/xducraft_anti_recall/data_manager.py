@@ -163,6 +163,25 @@ class AntiRecallStore:
         self._config.mutate(mutate)
         return True
 
+    def update_config(self, changes: Dict[str, Any]) -> Dict[str, Any]:
+        """在一次存储事务中更新允许的反撤回全局参数。"""
+        allowed = set(_default_config())
+        if not isinstance(changes, dict):
+            raise ValueError("anti_recall_config_must_be_object")
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError("unknown_anti_recall_config_key")
+
+        def mutate(config: Dict[str, Any]) -> Dict[str, Any]:
+            candidate = dict(config)
+            candidate.update(changes)
+            normalized = _normalize_config(candidate)
+            config.update(normalized)
+            return dict(config)
+
+        return self._config.mutate(mutate)
+
+
     def is_user_exempt(self, user_id: int) -> bool:
         return int(user_id) in set(self.get_config().get("exempt_user_ids", []))
 

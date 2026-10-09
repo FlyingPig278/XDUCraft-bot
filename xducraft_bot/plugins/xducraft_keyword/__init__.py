@@ -18,13 +18,10 @@
 
 from __future__ import annotations
 
-import asyncio
-import os
 import re
 import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
-import httpx
 from nonebot import on_command, on_message, on_notice
 from nonebot.adapters.onebot.v11 import (
     Bot,
@@ -46,6 +43,7 @@ from xducraft_bot.shared.onebot import notify_privately, send_text_sections
 from xducraft_bot.shared.permissions import can_manage_group, is_superuser
 
 from . import data_manager as dm
+from .reply_codec import persist_reply_media, restore_reply
 
 __plugin_meta__ = PluginMetadata(
     name="XDUCraft_keyword",
@@ -63,8 +61,6 @@ feature_gate.register(feature_gate.Feature(
     passive=True,
 ))
 
-MEDIA_DOWNLOAD_TIMEOUT = 20.0
-MAX_MEDIA_BYTES = 10 * 1024 * 1024
 
 keyword_listener = on_message(
     priority=97, block=False,
@@ -119,7 +115,7 @@ async def _send_saved_replies(
         if index == 0 and at_user_id is not None:
             message += MessageSegment.at(at_user_id)
             message += MessageSegment.text(" ")
-        message += Message(_restore_reply(reply))
+        message += Message(restore_reply(reply))
         await bot.send(event, message)
 
 
@@ -163,70 +159,9 @@ async def handle_member_join(bot: Bot, event: GroupIncreaseNoticeEvent):
     except Exception as exc:
         logger.warning("[Keyword] 群 {} 发送入群欢迎失败: {}", event.group_id, exc)
 
-
-def _restore_reply(reply: str) -> str:
-    """把存的本地文件名还原成可发送的 ``file:///`` 地址。"""
-    def replace(match: re.Match) -> str:
-        name = match.group(1)
-        path = dm.media_path(name)
-        if os.path.exists(path):
-            return f"[CQ:image,file=file:///{path}]"
-        return "[图片已失效]"
-
-    return re.sub(r"\[CQ:image,file=kwlocal://([^\]]+)\]", replace, reply)
-
-
 # ==============================================================================
 # 配置
 # ==============================================================================
-
-async def _persist_reply_media(message: Message) -> str:
-    """把回复消息序列化成 CQ 串，其中的图片下载到本地。
-
-    预设回复是长期使用的，直接存 QQ 的临时 URL 过几天就会变成裂图。
-    """
-    parts: List[str] = []
-    downloads: List[Tuple[int, str]] = []
-
-    for segment in message:
-        if segment.type == "reply":
-            # 用户常会“回复”录制提示；旧消息引用不能作为长期回复重放。
-            continue
-        if segment.type == "image":
-            url = str(segment.data.get("url") or segment.data.get("file") or "")
-            if url.startswith(("http://", "https://")):
-                downloads.append((len(parts), url))
-                parts.append("")  # 占位，下载完再填
-                continue
-        parts.append(str(segment))
-
-    if downloads:
-        os.makedirs(dm.MEDIA_DIR, exist_ok=True)
-
-        async with httpx.AsyncClient(timeout=MEDIA_DOWNLOAD_TIMEOUT, follow_redirects=True) as client:
-            async def fetch(index: int, url: str) -> None:
-                try:
-                    async with client.stream("GET", url) as response:
-                        response.raise_for_status()
-                        chunks = bytearray()
-                        async for chunk in response.aiter_bytes():
-                            chunks.extend(chunk)
-                            if len(chunks) > MAX_MEDIA_BYTES:
-                                parts[index] = "[图片过大未保存]"
-                                return
-                    import hashlib
-
-                    name = hashlib.sha256(url.encode()).hexdigest()[:32] + ".img"
-                    with open(dm.media_path(name), "wb") as handle:
-                        handle.write(bytes(chunks))
-                    parts[index] = f"[CQ:image,file=kwlocal://{name}]"
-                except Exception as exc:
-                    logger.debug("[Keyword] 下载回复图片失败: {}", exc)
-                    parts[index] = "[图片保存失败]"
-
-            await asyncio.gather(*(fetch(index, url) for index, url in downloads), return_exceptions=True)
-
-    return "".join(parts)
 
 
 def _describe_rule(rule: Dict, index: Optional[int] = None) -> str:
@@ -429,7 +364,7 @@ async def _handle_group_command(
                 keyword=keyword,
             )
 
-        reply = await _persist_reply_media(reply_message)
+        reply = await persist_reply_media(reply_message)
         rule = dm.add_rule(keyword, [reply], group_id=group_id)
         if rule is None:
             await keyword_command.finish(
@@ -610,7 +545,7 @@ async def receive_configured_reply(
             )
         await _finish_capture(state)
 
-    reply = await _persist_reply_media(message)
+    reply = await persist_reply_media(message)
     if not reply:
         await matcher.reject_receive(
             "configured_reply",
@@ -663,7 +598,7 @@ async def _handle_join(
         _, reply_message = _split_message_head(args, 2)
         if reply_message is None:
             await _start_capture(state, kind="join", group_id=group_id)
-        reply = await _persist_reply_media(reply_message)
+        reply = await persist_reply_media(reply_message)
         if not reply or len(reply) > dm.MAX_REPLY_LENGTH:
             await keyword_command.finish("入群欢迎保存失败：回复为空或过长。")
         changed = dm.set_join_replies(group_id, [reply])
@@ -747,7 +682,7 @@ async def _handle_global(
                 keyword=keyword,
             )
 
-        reply = await _persist_reply_media(reply_message)
+        reply = await persist_reply_media(reply_message)
         if dm.add_rule(keyword, [reply], group_id=None) is None:
             await keyword_command.finish(
                 f"添加失败：全局关键词「{keyword}」的回复为空、过长，或规则数量已达上限。"

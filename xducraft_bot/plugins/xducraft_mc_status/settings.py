@@ -26,6 +26,11 @@ from nonebot.log import logger
 # 所以这里不做 try/except——假兜底只会把真正的错误藏到更靠后的地方。
 from pydantic import BaseModel
 
+from xducraft_bot.shared.deployment_config import (
+    DeploymentConfigError,
+    apply_startup_overrides,
+)
+
 #: ``texture`` 填这个值时每次出图随机换一张方块材质，对齐参考项目的 ``__random__``。
 RANDOM_TEXTURE = "random"
 #: ``texture`` 填这个值时不铺材质，只留纯黑底。
@@ -131,6 +136,13 @@ def load() -> RenderSettings:
         config = nonebot.get_plugin_config(Config)
     except Exception as exc:  # NoneBot 未初始化，或配置项写错类型
         logger.opt(exception=False).debug("[MCStatus] 未能读取插件配置（{}），使用默认外观。", exc)
+
+    try:
+        config = apply_startup_overrides(config)
+    except DeploymentConfigError:
+        logger.warning(
+            "[MCStatus] deployment_config_invalid，继续使用进程启动配置。"
+        )
 
     return RenderSettings(
         brand=config.mcs_brand,

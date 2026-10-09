@@ -7,6 +7,11 @@ from dataclasses import dataclass
 from nonebot.log import logger
 from pydantic import BaseModel
 
+from xducraft_bot.shared.deployment_config import (
+    DeploymentConfigError,
+    apply_startup_overrides,
+)
+
 from . import texts as text
 
 DEFAULT_API_URL = "https://www.xducraft.cn/api/invitation-codes/generate"
@@ -45,6 +50,13 @@ def load() -> InviteSettings:
     except Exception as exc:
         logger.opt(exception=False).debug("[Invite] 读取配置失败（{}），使用空配置。", exc)
 
+    try:
+        config = apply_startup_overrides(config)
+    except DeploymentConfigError:
+        logger.warning(
+            "[Invite] deployment_config_invalid，继续使用进程启动配置。"
+        )
+
     return InviteSettings(
         group_id=int(config.invite_group_id or 0),
         api_url=str(config.invite_api_url or DEFAULT_API_URL).strip(),
@@ -55,4 +67,15 @@ def load() -> InviteSettings:
 SETTINGS = load()
 
 
-__all__ = ["Config", "InviteSettings", "SETTINGS", "DEFAULT_API_URL", "load"]
+def current() -> InviteSettings:
+    return SETTINGS
+
+
+__all__ = [
+    "Config",
+    "InviteSettings",
+    "SETTINGS",
+    "DEFAULT_API_URL",
+    "current",
+    "load",
+]

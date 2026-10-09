@@ -227,6 +227,31 @@ def set_default(key: str, enabled: bool) -> bool:
 
     return bool(_store.mutate(_mutate))
 
+def get_default(key: str) -> bool:
+    """返回已注册功能的全局默认值；共享配置中的显式值优先。"""
+    feature = _registry.get(key)
+    if feature is None:
+        raise KeyError(key)
+
+    state = _store.load()
+    if key in state["defaults"]:
+        return bool(state["defaults"][key])
+    return bool(feature.default_enabled)
+
+
+def list_configured_groups() -> List[int]:
+    """列出共享存储里出现过显式功能配置的正整数群号。"""
+    groups: List[int] = []
+    for group_key in _store.load()["groups"]:
+        try:
+            group_id = int(group_key)
+        except (TypeError, ValueError):
+            continue
+        if group_id > 0:
+            groups.append(group_id)
+    return sorted(set(groups))
+
+
 
 def list_enabled_groups(key: str) -> List[int]:
     """列出显式启用了该功能的群。
@@ -289,6 +314,8 @@ __all__ = [
     "set_enabled",
     "clear_override",
     "set_default",
+    "get_default",
+    "list_configured_groups",
     "list_enabled_groups",
     "describe_group",
     "SOURCE_GROUP",

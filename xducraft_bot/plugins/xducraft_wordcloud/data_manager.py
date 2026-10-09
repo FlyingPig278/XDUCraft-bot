@@ -1,4 +1,3 @@
-import json
 import os
 import sqlite3
 from datetime import date, datetime, timedelta
@@ -6,6 +5,8 @@ from threading import Lock
 from typing import Any, Dict, List, Optional, Set
 
 from nonebot.log import logger
+
+from xducraft_bot.shared.json_store import JsonStore
 
 DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 DEFAULT_DB_FILE = os.path.join(DEFAULT_DATA_DIR, "chat_logs.db")
@@ -22,6 +23,11 @@ class ChatLogDataManager:
         self.data_dir = data_dir or DEFAULT_DATA_DIR
         self.db_file = db_file or DEFAULT_DB_FILE
         self.config_file = config_file or DEFAULT_CONFIG_FILE
+        self._config_store = JsonStore(
+            self.config_file,
+            self._default_config,
+            self._normalize_config,
+        )
         self._lock = Lock()
         self._ensure_storage()
 
@@ -113,8 +119,7 @@ class ChatLogDataManager:
         os.makedirs(os.path.join(self.data_dir, "group_avatar_cache"), exist_ok=True)
 
         if not os.path.exists(self.config_file):
-            with open(self.config_file, "w", encoding="utf-8") as f:
-                json.dump(self._default_config(), f, ensure_ascii=False, indent=4)
+            self._config_store.save(self._default_config())
 
         with self._connect() as conn:
             conn.execute(
@@ -142,17 +147,10 @@ class ChatLogDataManager:
             conn.commit()
 
     def load_config(self) -> Dict[str, Any]:
-        try:
-            with open(self.config_file, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-        except Exception:
-            raw = self._default_config()
-        return self._normalize_config(raw)
+        return self._config_store.load()
 
     def save_config(self, config: Dict[str, Any]) -> None:
-        normalized = self._normalize_config(config)
-        with open(self.config_file, "w", encoding="utf-8") as f:
-            json.dump(normalized, f, ensure_ascii=False, indent=4)
+        self._config_store.save(config)
 
     def get_enabled_groups(self) -> List[int]:
         return self.load_config().get("enabled_groups", [])
@@ -161,23 +159,22 @@ class ChatLogDataManager:
         return int(group_id) in set(self.get_enabled_groups())
 
     def set_group_enabled(self, group_id: int, enabled: bool) -> bool:
-        cfg = self.load_config()
-        groups = [int(g) for g in cfg.get("enabled_groups", [])]
         gid = int(group_id)
 
-        if enabled and gid in groups:
-            return False
-        if (not enabled) and gid not in groups:
-            return False
+        def mutate(cfg: Dict[str, Any]) -> bool:
+            groups = [int(g) for g in cfg.get("enabled_groups", [])]
+            if enabled and gid in groups:
+                return False
+            if (not enabled) and gid not in groups:
+                return False
+            if enabled:
+                groups.append(gid)
+            else:
+                groups = [g for g in groups if g != gid]
+            cfg["enabled_groups"] = groups
+            return True
 
-        if enabled:
-            groups.append(gid)
-        else:
-            groups = [g for g in groups if g != gid]
-
-        cfg["enabled_groups"] = groups
-        self.save_config(cfg)
-        return True
+        return bool(self._config_store.mutate(mutate))
 
     def get_wordcloud_options(self) -> Dict[str, int]:
         cfg = self.load_config()
@@ -194,23 +191,51 @@ class ChatLogDataManager:
         return int(user_id) in set(self.get_ban_user_ids())
 
     def set_user_banned(self, user_id: int, banned: bool) -> bool:
-        cfg = self.load_config()
-        users = [int(uid) for uid in cfg.get("ban_user_ids", [])]
         uid = int(user_id)
 
-        if banned and uid in users:
-            return False
-        if (not banned) and uid not in users:
-            return False
+        def mutate(cfg: Dict[str, Any]) -> bool:
+            users = [int(item) for item in cfg.get("ban_user_ids", [])]
+            if banned and uid in users:
+                return False
+            if (not banned) and uid not in users:
+                return False
+            if banned:
+                users.append(uid)
+            else:
+                users = [item for item in users if item != uid]
+            cfg["ban_user_ids"] = users
+            return True
 
-        if banned:
-            users.append(uid)
-        else:
-            users = [item for item in users if item != uid]
+        return bool(self._config_store.mutate(mutate))
 
-        cfg["ban_user_ids"] = users
-        self.save_config(cfg)
-        return True
+    def update_global_config(self, changes: Dict[str, Any]) -> Dict[str, Any]:
+        """原子更新全局词云参数，并始终保留群启用列表。"""
+        allowed = {
+            "ban_user_ids",
+            "min_word_length",
+            "max_words",
+            "retention_days",
+            "additional_stopwords",
+            "footer_subtitle",
+            "footer_branding_enabled",
+            "footer_branding_text",
+        }
+        if not isinstance(changes, dict):
+            raise ValueError("wordcloud_config_must_be_object")
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError("unknown_wordcloud_config_key")
+
+        def mutate(cfg: Dict[str, Any]) -> Dict[str, Any]:
+            candidate = dict(cfg)
+            candidate.update(changes)
+            normalized = self._normalize_config(candidate)
+            for key in allowed:
+                cfg[key] = normalized[key]
+            return {key: cfg[key] for key in allowed}
+
+        return self._config_store.mutate(mutate)
+
 
     def get_blacklist_user_ids(self) -> List[int]:
         return self.get_ban_user_ids()

@@ -572,6 +572,55 @@ def export_group_data(group_id: int) -> Dict[str, Any]:
         return _default_group_data()
     return group
 
+def list_configured_groups() -> List[int]:
+    """列出存储中已有配置块的正整数群号。"""
+    groups: List[int] = []
+    for key in _store.load():
+        if key == GLOBAL_CONFIG_KEY:
+            continue
+        try:
+            group_id = int(key)
+        except (TypeError, ValueError):
+            continue
+        if group_id > 0:
+            groups.append(group_id)
+    return sorted(set(groups))
+
+
+def export_global_data() -> Dict[str, Any]:
+    """导出网页可编辑的完整全局配置。"""
+    data = _store.load()
+    config = data.get(GLOBAL_CONFIG_KEY)
+    if not isinstance(config, dict):
+        return _default_global_config()
+    return {
+        "status_api_source": _normalize_source(
+            config.get("status_api_source"), DEFAULT_API_SOURCE
+        ),
+        "status_api_url": as_str(config.get("status_api_url")),
+    }
+
+
+def import_global_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    """在一次原子写入中替换网页可编辑的全局配置。"""
+    if not isinstance(data, dict):
+        raise ValueError("global_config_must_be_object")
+
+    source = _normalize_source(data.get("status_api_source"), DEFAULT_API_SOURCE)
+    url = as_str(data.get("status_api_url"))
+
+    def mutate(stored: Dict[str, Any]) -> Dict[str, Any]:
+        config = _global(stored)
+        config["status_api_source"] = source
+        config["status_api_url"] = url
+        return {
+            "status_api_source": source,
+            "status_api_url": url,
+        }
+
+    return _store.mutate(mutate)
+
+
 
 __all__ = [
     "DATA_DIR", "DATA_FILE", "GLOBAL_CONFIG_KEY", "VALID_API_SOURCES", "DEFAULT_API_SOURCE",
@@ -590,4 +639,5 @@ __all__ = [
     "get_global_status_api_url", "set_global_status_api_url", "clear_global_status_api_url",
     "get_effective_status_api_url",
     "import_group_data", "export_group_data",
+    "list_configured_groups", "export_global_data", "import_global_data",
 ]

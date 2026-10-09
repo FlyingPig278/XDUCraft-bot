@@ -104,7 +104,10 @@ class DataManager:
         return groups[group_key]
 
     def get_group_config(self, group_id: int) -> Dict[str, bool]:
-        cfg = self._ensure_group(group_id)
+        self.reload()
+        cfg = self.data.get("groups", {}).get(str(group_id))
+        if not isinstance(cfg, dict):
+            cfg = self._default_group_config()
         return {
             "auto_push_enabled": bool(cfg.get("auto_push_enabled", False)),
             "query_enabled": bool(cfg.get("query_enabled", True)),
@@ -140,11 +143,34 @@ class DataManager:
                 continue
         return groups
 
+    def list_configured_groups(self) -> list[int]:
+        self.reload()
+        groups: list[int] = []
+        for group_key in self.data.get("groups", {}):
+            try:
+                group_id = int(group_key)
+            except (TypeError, ValueError):
+                continue
+            if group_id > 0:
+                groups.append(group_id)
+        return sorted(set(groups))
+
+
     def get_max_forward_results(self) -> int:
         self.reload()
         return self._normalize_max_forward_results(
             self.data.get("max_forward_results", DEFAULT_MAX_FORWARD_RESULTS)
         )
+
+    def set_max_forward_results(self, value: int) -> bool:
+        normalized = self._normalize_max_forward_results(value)
+        self.reload()
+        if self.data.get("max_forward_results") == normalized:
+            return False
+        self.data["max_forward_results"] = normalized
+        self._save(self.data)
+        return True
+
 
 
 # singleton export

@@ -304,6 +304,24 @@ async def _handle_init(bot: Bot, event: PrivateMessageEvent) -> None:
         for member in members
         if isinstance(member, dict) and _safe_int(member.get("user_id")) > 0
     }
+    # The member-list await permits a web deployment edit. Recheck immediately
+    # before the SQLite snapshot so eligibility cannot move on the next restart.
+    from xducraft_bot.shared import deployment_config
+    from .settings import Config
+
+    try:
+        overrides = deployment_config.read_overrides()
+        pending_group = SETTINGS.group_id
+        if "invite_group_id" in overrides:
+            pending_group = overrides["invite_group_id"]
+        elif "invite_group_id" in deployment_config.get_startup_overrides():
+            base = deployment_config.get_startup_base(Config)
+            if base is not None:
+                pending_group = base.invite_group_id
+    except deployment_config.DeploymentConfigError:
+        await admin_command.finish("部署覆盖文件损坏，请先修复后再初始化邀请码。")
+    if pending_group != SETTINGS.group_id:
+        await admin_command.finish("邀请码绑定群已有待生效修改，请先重启或恢复原群号，再初始化。")
     initialized_at = int(time.time())
     if not store.initialize(legacy_ids, initialized_at, int(event.user_id)):
         await admin_command.finish(text.ADMIN_ALREADY_INITIALIZED)

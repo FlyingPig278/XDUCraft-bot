@@ -8,6 +8,11 @@ from typing import List, Tuple
 from nonebot.log import logger
 from pydantic import BaseModel, Field
 
+from xducraft_bot.shared.deployment_config import (
+    DeploymentConfigError,
+    apply_startup_overrides,
+)
+
 
 class Config(BaseModel):
     """字段名对应 ``.env`` 中的同名大写配置。"""
@@ -38,10 +43,27 @@ def load() -> AutoFriendSettings:
             "[AutoFriend] 读取配置失败（{}），禁用自动接受。", exc
         )
 
+    try:
+        config = apply_startup_overrides(config)
+    except DeploymentConfigError:
+        logger.warning(
+            "[AutoFriend] deployment_config_invalid，继续使用进程启动配置。"
+        )
+
     return AutoFriendSettings(group_ids=_normalize_group_ids(config.auto_accept_friend_group_ids))
 
 
 SETTINGS = load()
 
 
-__all__ = ["AutoFriendSettings", "Config", "SETTINGS", "load"]
+def current() -> AutoFriendSettings:
+    return SETTINGS
+
+
+__all__ = [
+    "AutoFriendSettings",
+    "Config",
+    "SETTINGS",
+    "current",
+    "load",
+]

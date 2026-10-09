@@ -6,6 +6,7 @@ mcstatus~=12.0.6
 nonebot-adapter-onebot~=2.4.6
 nonebot2[fastapi]~=2.4.3
 nonebot-plugin-apscheduler~=0.5.0
+uvicorn~=0.38.0
 jieba~=0.42.1
 wordcloud~=1.9.4
 stopwordsiso~=0.6.1

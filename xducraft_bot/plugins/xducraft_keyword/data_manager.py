@@ -13,7 +13,7 @@ import os
 import re
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from xducraft_bot.shared.json_store import JsonStore, as_bool, as_int, as_str
 
@@ -196,6 +196,257 @@ def get_join_replies(group_id: int) -> List[str]:
     if not isinstance(group, dict):
         return []
     return list(group.get("join_replies", []))
+
+_RULE_INPUT_KEYS = frozenset(
+    {"id", "keywords", "match", "enabled", "cooldown", "replies"}
+)
+
+
+def export_scope_config(group_id: Optional[int]) -> Dict[str, Any]:
+    """导出一个群或全局规则 scope 的完整可编辑配置。"""
+    config = _store.load()
+    if group_id is None:
+        return {
+            "rules": list(config["global_rules"]),
+            "default_cooldown": int(config["default_cooldown"]),
+        }
+
+    group_key = str(int(group_id))
+    group = config["groups"].get(group_key)
+    if not isinstance(group, dict):
+        return {
+            "rules": [],
+            "join_replies": [],
+            "default_cooldown": None,
+        }
+    return {
+        "rules": list(group.get("rules", [])),
+        "join_replies": list(group.get("join_replies", [])),
+        "default_cooldown": (
+            int(group["default_cooldown"])
+            if "default_cooldown" in group
+            else None
+        ),
+    }
+
+
+def _validate_reply_list(raw: Any, *, allow_empty: bool) -> List[str]:
+    if not isinstance(raw, list):
+        raise ValueError("replies_must_be_array")
+    if len(raw) > MAX_REPLIES_PER_TRIGGER:
+        raise ValueError("too_many_replies")
+    if not allow_empty and not raw:
+        raise ValueError("replies_required")
+
+    replies: List[str] = []
+    for value in raw:
+        if not isinstance(value, str):
+            raise ValueError("reply_must_be_string")
+        reply = as_str(value)
+        if not reply:
+            raise ValueError("reply_must_not_be_empty")
+        if len(reply) > MAX_REPLY_LENGTH:
+            raise ValueError("reply_too_long")
+        replies.append(reply)
+    return replies
+
+
+def _validate_scope_payload(
+    group_id: Optional[int],
+    data: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], List[str], Optional[int]]:
+    if not isinstance(data, dict):
+        raise ValueError("scope_config_must_be_object")
+
+    expected = (
+        {"rules", "default_cooldown"}
+        if group_id is None
+        else {"rules", "join_replies", "default_cooldown"}
+    )
+    if set(data) != expected:
+        raise ValueError("invalid_scope_config_fields")
+
+    raw_rules = data["rules"]
+    if not isinstance(raw_rules, list):
+        raise ValueError("rules_must_be_array")
+    if len(raw_rules) > MAX_RULES_PER_SCOPE:
+        raise ValueError("too_many_rules")
+
+    rules: List[Dict[str, Any]] = []
+    seen_keywords: set[str] = set()
+    seen_ids: set[str] = set()
+    for raw_rule in raw_rules:
+        if not isinstance(raw_rule, dict) or set(raw_rule) != _RULE_INPUT_KEYS:
+            raise ValueError("invalid_rule_fields")
+
+        raw_id = raw_rule["id"]
+        if raw_id is None:
+            rule_id: Optional[str] = None
+        elif isinstance(raw_id, str) and as_str(raw_id):
+            rule_id = as_str(raw_id)
+            if rule_id in seen_ids:
+                raise ValueError("duplicate_rule_id")
+            seen_ids.add(rule_id)
+        else:
+            raise ValueError("invalid_rule_id")
+
+        raw_keywords = raw_rule["keywords"]
+        if not isinstance(raw_keywords, list) or not raw_keywords:
+            raise ValueError("keywords_required")
+        keywords: List[str] = []
+        for raw_keyword in raw_keywords:
+            if not isinstance(raw_keyword, str):
+                raise ValueError("keyword_must_be_string")
+            keyword = as_str(raw_keyword)
+            if not keyword:
+                raise ValueError("keyword_must_not_be_empty")
+            if len(keyword) > MAX_KEYWORD_LENGTH:
+                raise ValueError("keyword_too_long")
+            folded = keyword.casefold()
+            if folded in seen_keywords:
+                raise ValueError("duplicate_keyword")
+            seen_keywords.add(folded)
+            keywords.append(keyword)
+
+        match = raw_rule["match"]
+        if match not in MATCH_MODES:
+            raise ValueError("invalid_match_mode")
+        if match == MATCH_REGEX and any(
+            not is_valid_regex(keyword) for keyword in keywords
+        ):
+            raise ValueError("invalid_regex")
+
+        enabled = raw_rule["enabled"]
+        if not isinstance(enabled, bool):
+            raise ValueError("enabled_must_be_boolean")
+
+        cooldown = raw_rule["cooldown"]
+        if (
+            isinstance(cooldown, bool)
+            or not isinstance(cooldown, int)
+            or not 0 <= cooldown <= 86400
+        ):
+            raise ValueError("invalid_rule_cooldown")
+
+        rules.append(
+            {
+                "id": rule_id,
+                "keywords": keywords,
+                "match": match,
+                "enabled": enabled,
+                "cooldown": cooldown,
+                "replies": _validate_reply_list(
+                    raw_rule["replies"],
+                    allow_empty=False,
+                ),
+            }
+        )
+
+    join_replies = (
+        []
+        if group_id is None
+        else _validate_reply_list(data["join_replies"], allow_empty=True)
+    )
+    default_cooldown = data["default_cooldown"]
+    if group_id is not None and default_cooldown is None:
+        return rules, join_replies, None
+    if (
+        isinstance(default_cooldown, bool)
+        or not isinstance(default_cooldown, int)
+        or not 0 <= default_cooldown <= 3600
+    ):
+        raise ValueError("invalid_default_cooldown")
+    return rules, join_replies, default_cooldown
+
+
+def replace_scope_config(
+    group_id: Optional[int],
+    data: Dict[str, Any],
+) -> Dict[str, Any]:
+    """严格校验并在一次 mutate 中完整替换一个规则 scope。"""
+    if group_id is not None and int(group_id) <= 0:
+        raise ValueError("invalid_group_id")
+    rules, join_replies, default_cooldown = _validate_scope_payload(
+        group_id,
+        data,
+    )
+    group_key = str(int(group_id)) if group_id is not None else None
+
+    def mutate(config: Dict[str, Any]) -> Dict[str, Any]:
+        if group_key is None:
+            old_rules = config["global_rules"]
+        else:
+            old_group = config["groups"].get(group_key)
+            old_rules = (
+                old_group.get("rules", [])
+                if isinstance(old_group, dict)
+                else []
+            )
+
+        existing_by_id: Dict[str, Dict[str, Any]] = {}
+        all_existing_ids: set[str] = set()
+        for old_rule in old_rules:
+            old_id = str(old_rule.get("id", ""))
+            if not old_id:
+                continue
+            if old_id in existing_by_id:
+                raise ValueError("ambiguous_existing_rule_id")
+            existing_by_id[old_id] = old_rule
+            all_existing_ids.add(old_id)
+
+        used_ids = set(all_existing_ids)
+        replacement: List[Dict[str, Any]] = []
+        now = int(time.time())
+        for rule in rules:
+            rule_id = rule["id"]
+            if rule_id is None:
+                for _ in range(100):
+                    rule_id = uuid.uuid4().hex[:8]
+                    if rule_id not in used_ids:
+                        break
+                else:
+                    raise ValueError("rule_id_generation_failed")
+                created_at = now
+            else:
+                old_rule = existing_by_id.get(rule_id)
+                if old_rule is None:
+                    raise ValueError("unknown_rule_id")
+                created_at = int(old_rule.get("created_at", 0))
+            used_ids.add(rule_id)
+            replacement.append(
+                {
+                    **rule,
+                    "id": rule_id,
+                    "created_at": created_at,
+                }
+            )
+
+        if group_key is None:
+            config["global_rules"] = replacement
+            config["default_cooldown"] = default_cooldown
+            return {
+                "rules": replacement,
+                "default_cooldown": default_cooldown,
+            }
+
+        group: Dict[str, Any] = {"rules": replacement}
+        if join_replies:
+            group["join_replies"] = join_replies
+        if default_cooldown is not None:
+            group["default_cooldown"] = default_cooldown
+
+        if replacement or join_replies or default_cooldown is not None:
+            config["groups"][group_key] = group
+        else:
+            config["groups"].pop(group_key, None)
+        return {
+            "rules": replacement,
+            "join_replies": join_replies,
+            "default_cooldown": default_cooldown,
+        }
+
+    return _store.mutate(mutate)
+
 
 
 def add_rule(
@@ -433,9 +684,11 @@ def media_path(name: str) -> str:
 
 __all__ = [
     "MATCH_MODES", "MATCH_LABELS", "MATCH_CONTAINS", "MATCH_EXACT", "MATCH_PREFIX", "MATCH_REGEX",
-    "MEDIA_DIR", "MAX_MATCH_LENGTH", "MAX_REPLY_LENGTH", "MAX_REPLIES_PER_TRIGGER",
+    "MEDIA_DIR", "MAX_MATCH_LENGTH", "MAX_KEYWORD_LENGTH", "MAX_REPLY_LENGTH",
+    "MAX_REPLIES_PER_TRIGGER", "MAX_RULES_PER_SCOPE",
     "get_config", "get_group_rules", "get_global_rules", "get_effective_rules",
     "get_join_replies", "set_join_replies", "clear_join_replies",
+    "export_scope_config", "replace_scope_config",
     "add_rule", "remove_rule", "find_rule", "update_rule", "match_rules",
     "get_default_cooldown", "set_default_cooldown", "is_valid_regex", "media_path",
 ]
