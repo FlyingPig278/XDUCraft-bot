@@ -1,18 +1,8 @@
-"""群级功能开关（功能隔离）。
+"""Registered feature preferences and total plugin gates.
 
-要求很明确：**未启用的群里不应该触发任何反应**。
-
-难点在于各插件的“启用状态”存放位置本来就不一样（词云在自己的 config、
-猪猪图在自己的 json、MC 更新推送是一个订阅群号列表）。强行把它们迁移到
-一份新文件既有丢配置的风险，也没必要。
-
-所以这里做的是一个**注册表 + 可插拔后端**：
-
-- 没有自带存储的功能（新插件、happy_bot、mc_status）直接用共享 JSON 存储；
-- 已有存储的功能（词云 / 猪猪图 / MC 更新）注册自己的 getter/setter，
-  开关状态仍然落在原文件里，但对外暴露统一的查询接口。
-
-这样 ``/功能`` 指令能一次列出所有插件在本群的状态，而各插件内部实现不用动。
+Shared feature preferences use the unified SQLite configuration database.
+Plugin-owned feature backends remain authoritative for business state such as
+subscriptions. Total plugin stop gates execution without discarding preferences.
 """
 
 from __future__ import annotations
@@ -23,7 +13,9 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from nonebot.log import logger
 
-from .json_store import JsonStore, as_bool
+from .config_store import ConfigDocumentStore
+from .configuration import is_plugin_enabled, owner_of_feature
+from .json_store import as_bool
 
 SHARED_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 FEATURE_STATE_FILE = os.path.join(SHARED_DATA_DIR, "feature_gate.json")
@@ -70,7 +62,7 @@ def _normalize_state(raw: Any) -> Dict[str, Any]:
     return state
 
 
-_store: JsonStore = JsonStore(FEATURE_STATE_FILE, _default_state, _normalize_state)
+_store = ConfigDocumentStore("feature_gate", _default_state, _normalize_state, legacy_path=FEATURE_STATE_FILE)
 
 
 @dataclass
@@ -165,6 +157,9 @@ def resolve(key: str, group_id: int) -> Tuple[bool, str]:
 def is_enabled(key: str, group_id: Optional[int]) -> bool:
     """本群是否启用了该功能。``group_id`` 为 None（私聊）时一律视为未启用。"""
     if group_id is None:
+        return False
+    owner = owner_of_feature(key)
+    if owner is not None and not is_plugin_enabled(owner.key, group_id):
         return False
     enabled, _ = resolve(key, group_id)
     return enabled
@@ -299,9 +294,8 @@ def describe_group(group_id: int) -> List[Dict[str, Any]]:
 
 
 def reset_for_tests() -> None:
-    """仅供测试：清空注册表与缓存。"""
+    """仅供测试：清空功能注册表；SQLite 不维护配置读缓存。"""
     _registry.clear()
-    _store.invalidate()
 
 
 __all__ = [
@@ -311,6 +305,7 @@ __all__ = [
     "all_features",
     "resolve",
     "is_enabled",
+    "is_plugin_enabled",
     "set_enabled",
     "clear_override",
     "set_default",

@@ -3,10 +3,10 @@ import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
   darkTheme, dateZhCN, NButton, NConfigProvider, NDialogProvider, NDrawer, NDrawerContent,
-  NLayout, NLayoutContent, NLayoutHeader, NLayoutSider, NMenu, NMessageProvider, NSpace, NTag,
+  NLayout, NLayoutContent, NLayoutHeader, NLayoutSider, NMenu, NMessageProvider, NSpace,
   zhCN, type MenuOption
 } from 'naive-ui'
-import { authState, clearDrafts, connectionState, hasDirtyForms, intendedRoute } from './state'
+import { authState, clearDrafts, confirmDiscardDrafts, connectionState, hasDirtyForms, intendedRoute } from './state'
 import { apiGet, clearSessionToken, logout } from './api/client'
 import type { Overview } from './api/types'
 
@@ -23,9 +23,9 @@ const connectionChecked = ref(false)
 const activeMenu = computed(() => route.path.startsWith('/groups') ? 'groups' : route.path.startsWith('/settings') ? 'settings' : 'overview')
 
 const menuOptions: MenuOption[] = [
-  { label: () => h(RouterLink, { to: '/overview' }, { default: () => '概览' }), key: 'overview' },
-  { label: () => h(RouterLink, { to: '/groups' }, { default: () => '群管理' }), key: 'groups' },
-  { label: () => h(RouterLink, { to: '/settings' }, { default: () => '全局设置' }), key: 'settings' }
+  { label: () => h(RouterLink, { to: '/overview' }, { default: () => '运行概况' }), key: 'overview' },
+  { label: () => h(RouterLink, { to: '/groups' }, { default: () => '群工作台' }), key: 'groups' },
+  { label: () => h(RouterLink, { to: '/settings' }, { default: () => '全局与系统设置' }), key: 'settings' }
 ]
 
 function resize(): void { narrow.value = window.innerWidth < 800 }
@@ -35,11 +35,13 @@ function cycleTheme(): void {
   localStorage.setItem('xducraft-theme', themeMode.value)
 }
 async function signOut(): Promise<void> {
+  if (!confirmDiscardDrafts()) return
   try { await logout() } catch { /* server expiry still means local logout */ }
   clearSessionToken()
   clearDrafts()
   authState.authenticated = false
   authState.expiresAt = null
+  authState.sessionExpired = false
   await router.replace('/login')
 }
 function closeDrawer(): void { drawerOpen.value = false }
@@ -49,10 +51,13 @@ function beforeUnload(event: BeforeUnloadEvent): void {
   event.returnValue = ''
 }
 function sessionExpired(): void {
+  if (!authState.authenticated) return
   intendedRoute.value = route.fullPath
+  clearSessionToken()
   authState.authenticated = false
   authState.expiresAt = null
-  router.replace('/login')
+  authState.sessionExpired = true
+  void router.replace('/login')
 }
 
 watch(authenticatedLayout, async (authenticated, _previous, onCleanup) => {
@@ -88,8 +93,8 @@ onUnmounted(() => {
     <NMessageProvider>
       <NDialogProvider>
         <NLayout v-if="authenticatedLayout" has-sider class="app-layout">
-          <NLayoutSider v-if="!narrow" bordered :width="220" content-style="padding: 18px 10px">
-            <div class="brand">XDUCraft</div>
+          <NLayoutSider v-if="!narrow" bordered :width="208" content-style="padding: 18px 10px">
+            <div class="brand"><span>XDUCraft</span><small>Bot 管理</small></div>
             <NMenu :value="activeMenu" :options="menuOptions" />
           </NLayoutSider>
           <NLayout>
@@ -97,14 +102,14 @@ onUnmounted(() => {
               <NSpace align="center" justify="space-between" :wrap="false">
                 <NSpace align="center" :wrap="false">
                   <NButton v-if="narrow" quaternary aria-label="打开导航" @click="drawerOpen = true">☰</NButton>
-                  <strong v-if="!narrow">管理面板</strong>
-                  <NTag size="small" :type="!connectionChecked ? 'default' : connectionState.connectedBots > 0 ? 'success' : 'warning'">
-                    {{ !connectionChecked ? (narrow ? '待确认' : '连接待确认') : connectionState.connectedBots > 0 ? (narrow ? `${connectionState.connectedBots} 在线` : `${connectionState.connectedBots} 个 Bot 在线`) : (narrow ? '离线' : 'Bot 未连接') }}
-                  </NTag>
-                  <NTag v-if="connectionState.restartRequired" size="small" type="warning">{{ narrow ? '待重启' : '设置待重启' }}</NTag>
+                  <span class="header-status">
+                    <span class="header-dot" :class="{ online: connectionChecked && connectionState.connectedBots > 0 }" />
+                    {{ !connectionChecked ? (narrow ? '待确认' : '连接状态待确认') : connectionState.connectedBots > 0 ? (narrow ? `${connectionState.connectedBots} 在线` : `${connectionState.connectedBots} 个 Bot 在线`) : (narrow ? '未连接' : 'Bot 未连接') }}
+                  </span>
+                  <RouterLink v-if="connectionState.restartRequired" class="restart-link" to="/settings/startup">{{ narrow ? '待重启' : '有设置等待重启' }}</RouterLink>
                 </NSpace>
                 <NSpace :wrap="false">
-                  <NButton quaternary @click="cycleTheme">{{ narrow ? '主题' : `主题：${themeMode === 'system' ? '跟随系统' : themeMode === 'light' ? '浅色' : '深色'}` }}</NButton>
+                  <NButton quaternary :aria-label="`切换主题，当前${themeMode === 'system' ? '跟随系统' : themeMode === 'light' ? '浅色' : '深色'}`" @click="cycleTheme">{{ narrow ? '主题' : `主题：${themeMode === 'system' ? '跟随系统' : themeMode === 'light' ? '浅色' : '深色'}` }}</NButton>
                   <NButton quaternary @click="signOut">退出</NButton>
                 </NSpace>
               </NSpace>
@@ -116,7 +121,7 @@ onUnmounted(() => {
         </NLayout>
         <div v-else class="public-layout"><RouterView /></div>
         <NDrawer v-model:show="drawerOpen" placement="left" :width="250">
-          <NDrawerContent title="XDUCraft">
+          <NDrawerContent title="XDUCraft Bot 管理">
             <NMenu :value="activeMenu" :options="menuOptions" @update:value="closeDrawer" />
           </NDrawerContent>
         </NDrawer>

@@ -12,9 +12,8 @@ import os
 from copy import deepcopy
 from pathlib import Path
 from threading import RLock
-from typing import Any, Dict, List, Mapping, Optional, Tuple, Type, TypeVar
-from urllib.parse import urlsplit
 
+from typing import Any, Dict, List, Mapping, Optional, Type, TypeVar
 from nonebot.compat import model_dump, type_validate_python
 from pydantic import BaseModel
 
@@ -25,21 +24,6 @@ T = TypeVar("T", bound=BaseModel)
 DEPLOYMENT_CONFIG_INVALID = "deployment_config_invalid"
 DEPLOYMENT_CONFIG_WRITE_FAILED = "deployment_config_write_failed"
 
-DEPLOYMENT_OVERRIDE_KEYS: Tuple[str, ...] = (
-    "mcs_brand",
-    "mcs_title",
-    "mcs_credit",
-    "mcs_show_generated_at",
-    "mcs_texture",
-    "mcs_width",
-    "mcs_scale",
-    "mcs_min_height",
-    "invite_group_id",
-    "invite_api_url",
-    "invite_api_secret",
-    "auto_accept_friend_group_ids",
-)
-ALLOWED_KEYS = frozenset(DEPLOYMENT_OVERRIDE_KEYS)
 
 DEPLOYMENT_OVERRIDES_PATH = (
     Path(__file__).resolve().parent / "data" / "deployment_overrides.json"
@@ -68,97 +52,19 @@ def _invalid() -> DeploymentConfigError:
     return DeploymentConfigError(DEPLOYMENT_CONFIG_INVALID)
 
 
-def _is_plain_int(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool)
+def _validate_overrides(raw: Any) -> Dict[str, Any]:
+    """Validate document structure; field semantics belong to plugin schemas.
 
-
-def _validate_https_url(value: str) -> str:
-    normalized = value.strip()
-    if not normalized or any(character.isspace() for character in normalized):
+    Unknown persisted fields are retained for temporarily unloaded plugins.
+    Only a discovered declaration may authorize a WebUI write to those fields.
+    """
+    if not isinstance(raw, dict) or any(not isinstance(key, str) or not key for key in raw):
         raise _invalid()
     try:
-        parsed = urlsplit(normalized)
-        port = parsed.port
-    except (TypeError, ValueError):
+        json.dumps(raw, allow_nan=False, ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError):
         raise _invalid() from None
-    if parsed.scheme.lower() != "https" or not parsed.hostname:
-        raise _invalid()
-    if port is not None and not 1 <= port <= 65535:
-        raise _invalid()
-    return normalized
-
-
-def _validate_texture(value: str) -> str:
-    normalized = value.strip()
-    if normalized in {"", "random", "none"}:
-        return normalized
-    if (
-        "/" in normalized
-        or "\\" in normalized
-        or "\x00" in normalized
-        or Path(normalized).name != normalized
-        or not normalized.lower().endswith(".png")
-        or normalized in {".png", "..png"}
-    ):
-        raise _invalid()
-    return normalized
-
-
-def _validate_overrides(raw: Any) -> Dict[str, Any]:
-    if not isinstance(raw, dict):
-        raise _invalid()
-    if any(not isinstance(key, str) or key not in ALLOWED_KEYS for key in raw):
-        raise _invalid()
-
-    validated: Dict[str, Any] = {}
-    for key, value in raw.items():
-        if key in {"mcs_brand", "mcs_title", "mcs_credit", "invite_api_secret"}:
-            if not isinstance(value, str):
-                raise _invalid()
-            validated[key] = value
-        elif key == "mcs_texture":
-            if not isinstance(value, str):
-                raise _invalid()
-            validated[key] = _validate_texture(value)
-        elif key == "invite_api_url":
-            if not isinstance(value, str):
-                raise _invalid()
-            validated[key] = _validate_https_url(value)
-        elif key == "mcs_show_generated_at":
-            if not isinstance(value, bool):
-                raise _invalid()
-            validated[key] = value
-        elif key == "mcs_width":
-            if not _is_plain_int(value) or not 480 <= value <= 1600:
-                raise _invalid()
-            validated[key] = value
-        elif key == "mcs_scale":
-            if not _is_plain_int(value) or value not in {2, 4}:
-                raise _invalid()
-            validated[key] = value
-        elif key == "mcs_min_height":
-            if not _is_plain_int(value) or value < 0:
-                raise _invalid()
-            validated[key] = value
-        elif key == "invite_group_id":
-            if not _is_plain_int(value) or value < 0:
-                raise _invalid()
-            validated[key] = value
-        elif key == "auto_accept_friend_group_ids":
-            if not isinstance(value, list):
-                raise _invalid()
-            group_ids: List[int] = []
-            seen = set()
-            for group_id in value:
-                if not _is_plain_int(group_id) or group_id <= 0:
-                    raise _invalid()
-                if group_id not in seen:
-                    seen.add(group_id)
-                    group_ids.append(group_id)
-            validated[key] = group_ids
-        else:  # Kept as a guard if the allowlist and validator drift apart.
-            raise _invalid()
-    return validated
+    return deepcopy(raw)
 
 
 def _store_path() -> Path:
@@ -210,7 +116,7 @@ def update_overrides(values: Dict[str, Any], unset: List[str]) -> Dict[str, Any]
 
     if not isinstance(values, dict) or not isinstance(unset, list):
         raise _invalid()
-    if any(not isinstance(key, str) or key not in ALLOWED_KEYS for key in unset):
+    if any(not isinstance(key, str) or not key for key in unset):
         raise _invalid()
     if len(set(unset)) != len(unset) or set(values).intersection(unset):
         raise _invalid()
@@ -310,10 +216,8 @@ def get_startup_overrides() -> Mapping[str, Any]:
 
 
 __all__ = [
-    "ALLOWED_KEYS",
     "DEPLOYMENT_CONFIG_INVALID",
     "DEPLOYMENT_CONFIG_WRITE_FAILED",
-    "DEPLOYMENT_OVERRIDE_KEYS",
     "DEPLOYMENT_OVERRIDES_PATH",
     "DeploymentConfigError",
     "apply_startup_overrides",

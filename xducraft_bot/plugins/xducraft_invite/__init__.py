@@ -21,17 +21,21 @@ from nonebot.rule import Rule
 
 from xducraft_bot.shared.onebot import notify_privately
 from xducraft_bot.shared.permissions import can_manage_group, is_superuser
+from xducraft_bot.shared.configuration import PROTOCOL_KEY
+from xducraft_bot.shared import feature_gate
 
 
 from . import texts as text
 from .api_client import GeneratedInvite, InviteApiClient, InviteApiError
 from .data_manager import ACQUIRED, ALREADY_CLAIMED, IN_PROGRESS, InviteStore, store
 from .settings import SETTINGS, InviteSettings
+from .configuration import DECLARATION
 
 __plugin_meta__ = PluginMetadata(
     name="XDUCraft_invite",
     description=text.PLUGIN_DESCRIPTION,
     usage=text.PLUGIN_USAGE,
+    extra={PROTOCOL_KEY: DECLARATION},
 )
 
 SELF_REMARK_PREFIX = text.SELF_REMARK_PREFIX
@@ -94,6 +98,8 @@ def _self_service_guide() -> str:
 
 
 async def _send_group_notice(bot: Bot, group_id: int, user_id: int, text: str) -> None:
+    if not feature_gate.is_plugin_enabled("invite", group_id):
+        return
     try:
         await bot.send_group_msg(
             group_id=int(group_id),
@@ -156,6 +162,8 @@ async def _generate(remark: str) -> GeneratedInvite:
 async def handle_self_service(bot: Bot, event: GroupMessageEvent) -> None:
     user_id = int(event.user_id)
     group_id = int(event.group_id)
+    if group_id != SETTINGS.group_id or not feature_gate.is_plugin_enabled("invite", group_id):
+        return
     state = store.get_state()
 
     if not state.initialized:
@@ -166,6 +174,8 @@ async def handle_self_service(bot: Bot, event: GroupMessageEvent) -> None:
         return
 
     member = await _get_member_info(bot, user_id)
+    if not feature_gate.is_plugin_enabled("invite", group_id):
+        return
     if member is None:
         await _send_group_notice(bot, group_id, user_id, text.SELF_MEMBER_UNKNOWN)
         return
@@ -215,6 +225,9 @@ async def handle_self_service(bot: Bot, event: GroupMessageEvent) -> None:
             text.SELF_PRIVATE_UNAVAILABLE,
         )
         return
+    if not feature_gate.is_plugin_enabled("invite", group_id) or not store.get_state().self_service_enabled:
+        store.release_lease(user_id)
+        return
 
     try:
         generated = await _generate(f"{SELF_REMARK_PREFIX}{user_id}")
@@ -247,6 +260,10 @@ async def handle_self_service(bot: Bot, event: GroupMessageEvent) -> None:
         except Exception:
             pass
         await _send_group_notice(bot, group_id, user_id, text.SELF_PERSIST_FAILED_RETRY)
+        return
+
+    # 生成完成后领取记录必须仍落库，防止重复发码；停用时不再发送。
+    if not feature_gate.is_plugin_enabled("invite", group_id):
         return
 
     delivered = await notify_privately(

@@ -16,7 +16,8 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to, from) => {
-  if (from.name && to.fullPath !== from.fullPath && !confirmDiscardDrafts()) return false
+  const authenticationRedirect = to.name === 'login' && authState.checked && !authState.authenticated
+  if (!authenticationRedirect && from.name && to.fullPath !== from.fullPath && !confirmDiscardDrafts()) return false
   if (!authState.checked) {
     try {
       applySession(await restoreSession())

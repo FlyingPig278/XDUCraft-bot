@@ -15,14 +15,17 @@ from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
 
 from xducraft_bot.shared import feature_gate
+from xducraft_bot.shared.configuration import PROTOCOL_KEY
 
 from .settings import SETTINGS
+from .configuration import DECLARATION
 
 
 __plugin_meta__ = PluginMetadata(
     name="XDUCraft_auto_friend",
     description="自动接受配置白名单群成员发来的好友申请",
     usage="在 .env 配置群号，再由群管理员使用 /功能 on 自动加好友 开启",
+    extra={PROTOCOL_KEY: DECLARATION},
 )
 
 FEATURE_KEY = "auto_accept_friend"
@@ -45,7 +48,7 @@ friend_request = on_request(
 async def _find_source_group(bot: Bot, user_id: int) -> Optional[int]:
     """返回申请人所属的首个已配置且已启用群；查询失败时保持拒绝。"""
     for group_id in SETTINGS.group_ids:
-        if not feature_gate.is_enabled(FEATURE_KEY, group_id):
+        if not feature_gate.is_plugin_enabled("auto_friend", group_id) or not feature_gate.is_enabled(FEATURE_KEY, group_id):
             continue
         try:
             member = await bot.get_group_member_info(
@@ -67,7 +70,7 @@ async def _find_source_group(bot: Bot, user_id: int) -> Optional[int]:
             member_user_id = int(member["user_id"])
         except (KeyError, TypeError, ValueError):
             continue
-        if member_user_id == int(user_id):
+        if member_user_id == int(user_id) and feature_gate.is_plugin_enabled("auto_friend", group_id) and feature_gate.is_enabled(FEATURE_KEY, group_id):
             return group_id
     return None
 
@@ -75,7 +78,7 @@ async def _find_source_group(bot: Bot, user_id: int) -> Optional[int]:
 @friend_request.handle()
 async def handle_friend_request(bot: Bot, event: FriendRequestEvent) -> None:
     group_id = await _find_source_group(bot, event.user_id)
-    if group_id is None:
+    if group_id is None or not feature_gate.is_plugin_enabled("auto_friend", group_id) or not feature_gate.is_enabled(FEATURE_KEY, group_id):
         return
 
     try:

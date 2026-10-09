@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import time
+from contextvars import ContextVar
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from nonebot import on_command, on_message, on_notice, require
@@ -39,11 +40,13 @@ from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
 
 from xducraft_bot.shared import feature_gate
+from xducraft_bot.shared.configuration import PROTOCOL_KEY
 from xducraft_bot.shared.onebot import MAX_FORWARD_NODES, make_node
 from xducraft_bot.shared.permissions import can_manage, is_superuser
 
 from .data_manager import MEDIA_DIR, message_id_variants, store
 from .message_codec import decode_forward_nodes, decode_message, download_media, encode_message
+from .configuration import DECLARATION
 
 require("nonebot_plugin_apscheduler")
 from nonebot_plugin_apscheduler import scheduler  # noqa: E402
@@ -52,9 +55,11 @@ __plugin_meta__ = PluginMetadata(
     name="XDUCraft_anti_recall",
     description="记录群消息撤回，支持图片/表情包/合并转发，私聊查询",
     usage="群内：/反撤回 on|off|status|clear\n私聊：/撤回 [群号] [条数]",
+    extra={PROTOCOL_KEY: DECLARATION},
 )
 
 FEATURE_KEY = "anti_recall"
+_retrieval_group: ContextVar[Optional[int]] = ContextVar("anti_recall_retrieval_group", default=None)
 
 feature_gate.register(feature_gate.Feature(
     key=FEATURE_KEY,
@@ -66,7 +71,7 @@ feature_gate.register(feature_gate.Feature(
 
 
 def _group_enabled(event: GroupMessageEvent) -> bool:
-    return feature_gate.is_enabled(FEATURE_KEY, event.group_id)
+    return feature_gate.is_plugin_enabled("anti_recall", event.group_id) and feature_gate.is_enabled(FEATURE_KEY, event.group_id)
 
 
 # 记录器必须先于会 block 的命令运行，否则命令消息被撤回时永远不在缓存里。
@@ -110,7 +115,7 @@ async def handle_record(bot: Bot, event: GroupMessageEvent):
         logger.debug("[AntiRecall] 编码消息失败 {}: {}", event.message_id, exc)
         return
 
-    if not content:
+    if not content or not _group_enabled(event):
         return
 
     try:
@@ -215,7 +220,7 @@ async def _recover_recalled_message(
 @recall_listener.handle()
 async def handle_recall(bot: Bot, event: GroupRecallNoticeEvent):
     """收到撤回通知：固化记录，并趁 URL 还没失效把图片抓下来。"""
-    if not feature_gate.is_enabled(FEATURE_KEY, event.group_id):
+    if not feature_gate.is_plugin_enabled("anti_recall", event.group_id) or not feature_gate.is_enabled(FEATURE_KEY, event.group_id):
         return
 
     cached = await _recover_recalled_message(bot, event)
@@ -229,6 +234,8 @@ async def handle_recall(bot: Bot, event: GroupRecallNoticeEvent):
         )
         return
 
+    if not feature_gate.is_plugin_enabled("anti_recall", event.group_id) or not feature_gate.is_enabled(FEATURE_KEY, event.group_id):
+        return
     if store.is_user_exempt(cached["user_id"]):
         return
 
@@ -340,13 +347,14 @@ async def _is_group_member(bot: Bot, user_id: int, group_id: int) -> bool:
 
 async def _visible_group_stats(bot: Bot, user_id: int, allow_all: bool) -> List[Dict[str, int]]:
     """该用户能查看的群及其撤回记录数，按最近撤回时间排序。"""
-    candidates = store.list_recent_recall_group_stats(limit=30)
+    candidates = [item for item in store.list_recent_recall_group_stats(limit=30)
+                  if feature_gate.is_plugin_enabled("anti_recall", item["group_id"])]
     if allow_all:
         return candidates
 
     visible = []
     for item in candidates:
-        if await _is_group_member(bot, user_id, item["group_id"]):
+        if await _is_group_member(bot, user_id, item["group_id"]) and feature_gate.is_plugin_enabled("anti_recall", item["group_id"]):
             visible.append(item)
     return visible
 
@@ -430,11 +438,15 @@ async def _send_forward_once(
         "source": source,
     }
     try:
+        if not feature_gate.is_plugin_enabled("anti_recall", _retrieval_group.get()):
+            return False
         await bot.call_api("send_private_forward_msg", **payload)
         return True
     except Exception:
         payload.pop("source")
         try:
+            if not feature_gate.is_plugin_enabled("anti_recall", _retrieval_group.get()):
+                return False
             await bot.call_api("send_private_forward_msg", **payload)
             return True
         except Exception as exc:
@@ -472,10 +484,14 @@ async def _send_direct_part(
     message = Message(MessageSegment.text(f"{name}（撤回记录）\n"))
     message += content
     try:
+        if not feature_gate.is_plugin_enabled("anti_recall", _retrieval_group.get()):
+            return False
         await bot.send_private_msg(user_id=int(user_id), message=message)
         return True
     except Exception:
         try:
+            if not feature_gate.is_plugin_enabled("anti_recall", _retrieval_group.get()):
+                return False
             await bot.send_private_msg(
                 user_id=int(user_id),
                 message=f"{name}（撤回记录）\n{_failed_segment_label(content)}",
@@ -574,6 +590,8 @@ async def _send_group_records(
     group_id: int,
     limit: int,
 ) -> None:
+    if not feature_gate.is_plugin_enabled("anti_recall", group_id):
+        return
     records = store.list_recalls(group_ids=[group_id], limit=limit)
     if not records:
         await bot.send_private_msg(user_id=event.user_id, message=f"群 {group_id} 最近没有撤回记录。")
@@ -582,13 +600,16 @@ async def _send_group_records(
     group_names = await _resolve_group_names(bot, {group_id})
     group_label = group_names.get(group_id, str(group_id))
     bundles = [_record_nodes(record, event.self_id) for record in records]
-    delivered = await _send_records_resilient(
-        bot,
-        event.user_id,
-        bundles,
-        source=f"{group_label}的撤回记录",
-    )
-    if not delivered:
+    if not feature_gate.is_plugin_enabled("anti_recall", group_id):
+        return
+    token = _retrieval_group.set(group_id)
+    try:
+        delivered = await _send_records_resilient(
+            bot, event.user_id, bundles, source=f"{group_label}的撤回记录",
+        )
+    finally:
+        _retrieval_group.reset(token)
+    if not delivered and feature_gate.is_plugin_enabled("anti_recall", group_id):
         try:
             await bot.send_private_msg(
                 user_id=event.user_id,
@@ -603,8 +624,15 @@ async def _send_group_menu(
     event: PrivateMessageEvent,
     stats: Sequence[Dict[str, int]],
 ) -> None:
+    stats = [item for item in stats if feature_gate.is_plugin_enabled("anti_recall", item["group_id"])]
+    if not stats:
+        return
     group_ids = [item["group_id"] for item in stats]
     group_names = await _resolve_group_names(bot, set(group_ids))
+    stats = [item for item in stats if feature_gate.is_plugin_enabled("anti_recall", item["group_id"])]
+    group_ids = [item["group_id"] for item in stats]
+    if not stats:
+        return
     lines = ["可查看的撤回记录："]
     for index, item in enumerate(stats, start=1):
         group_id = item["group_id"]
@@ -641,7 +669,7 @@ async def handle_selection_reply(bot: Bot, event: PrivateMessageEvent):
         bot,
         event,
         group_ids[choice - 1],
-        store.get_config()["max_query_results"],
+        store.get_effective_group_config(group_ids[choice - 1])["max_query_results"],
     )
     await selection_reply.finish()
 
@@ -653,10 +681,10 @@ async def handle_query(bot: Bot, event: MessageEvent, args: Message = CommandArg
         await query_command.finish()
     if not isinstance(event, PrivateMessageEvent):
         return
+    if not feature_gate.is_plugin_enabled("anti_recall"):
+        return
 
     raw_args = args.extract_plain_text().strip().split()
-    config = store.get_config()
-    limit = config["max_query_results"]
     allow_all = await is_superuser(bot, event)
 
     if not raw_args:
@@ -667,7 +695,8 @@ async def handle_query(bot: Bot, event: MessageEvent, args: Message = CommandArg
                 "可能是：你所在的群还没开启反撤回，或者最近没有人撤回消息。"
             )
         if len(stats) == 1:
-            await _send_group_records(bot, event, stats[0]["group_id"], limit)
+            group_id = stats[0]["group_id"]
+            await _send_group_records(bot, event, group_id, store.get_effective_group_config(group_id)["max_query_results"])
         else:
             await _send_group_menu(bot, event, stats)
         await query_command.finish()
@@ -687,8 +716,9 @@ async def handle_query(bot: Bot, event: MessageEvent, args: Message = CommandArg
     if target_group is None:
         await query_command.finish("请先发送 /撤回 选择群，或使用 /撤回 <群号> [条数]。")
 
+    limit = store.get_effective_group_config(target_group)["max_query_results"]
     if len(raw_args) == 2:
-        limit = max(1, min(config["max_query_results"], int(raw_args[1])))
+        limit = max(1, min(limit, int(raw_args[1])))
     if not allow_all and not await _is_group_member(bot, event.user_id, target_group):
         await query_command.finish(f"你不在群 {target_group} 里，无法查看该群的撤回记录。")
 
@@ -703,6 +733,8 @@ async def handle_query(bot: Bot, event: MessageEvent, args: Message = CommandArg
 
 @scheduler.scheduled_job("cron", hour=4, minute=17, id="anti_recall_cleanup", max_instances=1, coalesce=True)
 async def cleanup_job() -> None:
+    if not feature_gate.is_plugin_enabled("anti_recall"):
+        return
     try:
         stats = store.cleanup()
     except Exception as exc:

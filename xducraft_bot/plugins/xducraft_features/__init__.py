@@ -25,11 +25,15 @@ from nonebot.plugin import PluginMetadata
 
 from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.permissions import can_manage, can_manage_group, is_superuser
+from xducraft_bot.shared.configuration import PROTOCOL_KEY
+
+from .configuration import DECLARATION
 
 __plugin_meta__ = PluginMetadata(
     name="XDUCraft_features",
     description="集中查看与开关本群的各项机器人功能",
     usage="/功能 — 查看本群功能开关；私聊 /功能 <群号> on|off <名字> — 开关",
+    extra={PROTOCOL_KEY: DECLARATION},
 )
 
 feature_command = on_command("功能", aliases={"features", "feature", "开关"}, priority=10, block=True)

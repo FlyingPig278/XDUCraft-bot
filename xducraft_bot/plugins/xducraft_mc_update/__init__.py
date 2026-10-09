@@ -11,8 +11,10 @@ from nonebot.plugin import PluginMetadata
 from nonebot.log import logger
 
 from xducraft_bot.shared import feature_gate
+from xducraft_bot.shared.configuration import PROTOCOL_KEY
 
 from .data_manager import data_manager
+from .configuration import DECLARATION
 
 require("nonebot_plugin_apscheduler")
 from nonebot_plugin_apscheduler import scheduler  # noqa: E402
@@ -20,7 +22,8 @@ from nonebot_plugin_apscheduler import scheduler  # noqa: E402
 __plugin_meta__ = PluginMetadata(
     name="MC更新推送",
     description="监控 Minecraft 官方版本更新并推送到群",
-    usage="推荐指令：/MC更新 订阅 或 /MC更新 取消订阅（兼容 /mcup on|off）"
+    usage="推荐指令：/MC更新 订阅 或 /MC更新 取消订阅（兼容 /mcup on|off）",
+    extra={PROTOCOL_KEY: DECLARATION},
 )
 
 FEATURE_KEY = "mc_update"
@@ -227,12 +230,18 @@ def build_update_messages(manifest: Dict[str, Any]) -> List[str]:
 
 @scheduler.scheduled_job("interval", seconds=CHECK_INTERVAL, id="mc_update_checker", max_instances=1, coalesce=True)
 async def check_update():
+    if not feature_gate.is_plugin_enabled("mc_update"):
+        return
     if _check_lock.locked():
         logger.warning("[MC-Push] Previous update check is still running, skip this round.")
         return
 
     async with _check_lock:
-        groups = data_manager.get_subscribed_groups()
+        groups = [
+            gid for gid in data_manager.get_subscribed_groups()
+            if feature_gate.is_plugin_enabled("mc_update", gid)
+            and feature_gate.is_enabled(FEATURE_KEY, gid)
+        ]
         if not groups:
             return
 
@@ -244,6 +253,14 @@ async def check_update():
                     return
 
                 manifest = resp.json()
+                # 网络准备期间可能已停用；没有可推送群时不推进版本游标。
+                groups = [
+                    gid for gid in groups
+                    if feature_gate.is_plugin_enabled("mc_update", gid)
+                    and feature_gate.is_enabled(FEATURE_KEY, gid)
+                ]
+                if not groups:
+                    return
                 messages = build_update_messages(manifest)
 
                 if not messages:
@@ -255,6 +272,8 @@ async def check_update():
                 bots = get_bots()
                 for bot in bots.values():
                     for gid in groups:
+                        if not feature_gate.is_plugin_enabled("mc_update", gid) or not feature_gate.is_enabled(FEATURE_KEY, gid):
+                            continue
                         try:
                             await bot.send_group_msg(group_id=gid, message=push_msg)
                         except Exception as e:

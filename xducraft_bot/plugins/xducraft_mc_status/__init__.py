@@ -13,14 +13,17 @@ from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 
 from xducraft_bot.shared import feature_gate
+from xducraft_bot.shared.configuration import PROTOCOL_KEY
 
 from .data_manager import get_show_offline_by_default
 from .handlers import SUBCOMMAND_HANDLERS, handle_private_import, handle_query_all, handle_query_single
+from .configuration import DECLARATION
 
 __plugin_meta__ = PluginMetadata(
     name="XDUCraft_mc_status",
     description="Minecraft 服务器状态查询，支持多线服务器树、MOTD 彩色渲染与登录验证方式展示",
     usage="/mcs 查询状态 · /mcs help 查看完整帮助",
+    extra={PROTOCOL_KEY: DECLARATION},
 )
 
 FEATURE_KEY = "mc_status"
@@ -66,7 +69,7 @@ async def handle_entry(bot: Bot, event: MessageEvent, args: Message = CommandArg
         return
 
     # 功能隔离：没启用的群里一声不吭地退出，不做任何回复。
-    if not feature_gate.is_enabled(FEATURE_KEY, event.group_id):
+    if not feature_gate.is_plugin_enabled("mc_status", event.group_id) or not feature_gate.is_enabled(FEATURE_KEY, event.group_id):
         return
 
     if not arg_list:

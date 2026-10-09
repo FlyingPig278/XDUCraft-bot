@@ -40,7 +40,7 @@ def load() -> AutoFriendSettings:
         config = nonebot.get_plugin_config(Config)
     except Exception as exc:
         logger.opt(exception=False).debug(
-            "[AutoFriend] 读取配置失败（{}），禁用自动接受。", exc
+            "[AutoFriend] 读取配置失败（{}），禁用自动接受。", type(exc).__name__
         )
 
     try:

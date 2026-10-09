@@ -21,14 +21,17 @@ from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
 
 from xducraft_bot.shared import feature_gate
+from xducraft_bot.shared.configuration import PROTOCOL_KEY
 from xducraft_bot.shared.permissions import can_manage, is_superuser
 
 from .data_manager import DEFAULT_EMOJI_ID, clear_group_emoji_id, get_emoji_id, set_emoji_id
+from .configuration import DECLARATION
 
 __plugin_meta__ = PluginMetadata(
     name="xducraft_happy_bot",
     description="被 @ 或被回复时自动贴表情回应",
     usage="/ans — 查看；/ans set <emoji_id> — 设置本群表情",
+    extra={PROTOCOL_KEY: DECLARATION},
 )
 
 FEATURE_KEY = "emoji_reaction"
@@ -62,7 +65,7 @@ async def _should_react(event: MessageEvent) -> bool:
     """只在启用的群里、且确实被 @ 或被回复时才响应。"""
     if not isinstance(event, GroupMessageEvent):
         return False
-    if not feature_gate.is_enabled(FEATURE_KEY, event.group_id):
+    if not feature_gate.is_plugin_enabled("happy_bot", event.group_id) or not feature_gate.is_enabled(FEATURE_KEY, event.group_id):
         return False
     return event.is_tome() or await _is_reply_to_bot(event)
 
@@ -120,6 +123,8 @@ async def handle_answer_command(bot: Bot, event: MessageEvent, args: Message = C
 async def handle_at_me(bot: Bot, event: GroupMessageEvent):
     """贴表情。失败只记日志——协议端不支持这个 API 是很常见的情况，
     不能让它把一条正常消息的处理链打断。"""
+    if not feature_gate.is_plugin_enabled("happy_bot", event.group_id) or not feature_gate.is_enabled(FEATURE_KEY, event.group_id):
+        return
     try:
         await bot.call_api(
             "set_msg_emoji_like",

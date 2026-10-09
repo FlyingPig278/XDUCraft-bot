@@ -6,11 +6,21 @@ from typing import Any, Dict, List, Optional, Set
 
 from nonebot.log import logger
 
-from xducraft_bot.shared.json_store import JsonStore
+from xducraft_bot.shared.config_store import ConfigDocumentStore
 
 DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 DEFAULT_DB_FILE = os.path.join(DEFAULT_DATA_DIR, "chat_logs.db")
 DEFAULT_CONFIG_FILE = os.path.join(DEFAULT_DATA_DIR, "wordcloud_config.json")
+
+GROUP_CONFIG_KEYS = (
+    "min_word_length",
+    "max_words",
+    "additional_stopwords",
+    "footer_subtitle",
+    "footer_branding_enabled",
+    "footer_branding_text",
+    "ban_user_ids",
+)
 
 
 class ChatLogDataManager:
@@ -18,15 +28,16 @@ class ChatLogDataManager:
         self,
         data_dir: Optional[str] = None,
         db_file: Optional[str] = None,
-        config_file: Optional[str] = None,
+        *,
+        legacy_config_path: Optional[str] = None,
+        configuration_db_path: Optional[str] = None,
     ):
         self.data_dir = data_dir or DEFAULT_DATA_DIR
         self.db_file = db_file or DEFAULT_DB_FILE
-        self.config_file = config_file or DEFAULT_CONFIG_FILE
-        self._config_store = JsonStore(
-            self.config_file,
-            self._default_config,
-            self._normalize_config,
+        self._config_store = ConfigDocumentStore(
+            "wordcloud", self._default_config, self._normalize_config,
+            legacy_path=legacy_config_path or DEFAULT_CONFIG_FILE,
+            database_path=configuration_db_path,
         )
         self._lock = Lock()
         self._ensure_storage()
@@ -43,12 +54,52 @@ class ChatLogDataManager:
             "footer_subtitle": "",
             "footer_branding_enabled": True,
             "footer_branding_text": "Powered by FlyingPig278",
+            "group_overrides": {},
         }
+
+    @staticmethod
+    def _normalize_ids(value: Any) -> List[int]:
+        if not isinstance(value, list):
+            raise ValueError("wordcloud_user_ids_must_be_list")
+        normalized: List[int] = []
+        seen: Set[int] = set()
+        for item in value:
+            try:
+                item_id = int(item)
+            except (TypeError, ValueError):
+                continue
+            if item_id in seen:
+                continue
+            normalized.append(item_id)
+            seen.add(item_id)
+        return normalized
+
+    @staticmethod
+    def _normalize_stopwords(value: Any) -> List[str]:
+        if not isinstance(value, list):
+            raise ValueError("wordcloud_stopwords_must_be_list")
+        return [str(word).strip().lower() for word in value if str(word).strip()]
+
+    @classmethod
+    def _normalize_group_value(cls, key: str, value: Any) -> Any:
+        if key == "ban_user_ids":
+            return cls._normalize_ids(value)
+        if key == "additional_stopwords":
+            return cls._normalize_stopwords(value)
+        if key == "min_word_length" and isinstance(value, int):
+            return max(1, int(value))
+        if key == "max_words" and isinstance(value, int):
+            return max(20, int(value))
+        if key in {"footer_subtitle", "footer_branding_text"} and isinstance(value, str):
+            return value.strip()
+        if key == "footer_branding_enabled" and isinstance(value, bool):
+            return value
+        raise ValueError("invalid_wordcloud_group_config_value")
 
     def _normalize_config(self, raw: Any) -> Dict[str, Any]:
         cfg = self._default_config()
         if not isinstance(raw, dict):
-            return cfg
+            raise ValueError("wordcloud_config_must_be_object")
 
         groups = raw.get("enabled_groups", [])
         if isinstance(groups, list):
@@ -65,20 +116,12 @@ class ChatLogDataManager:
                 seen.add(gid)
             cfg["enabled_groups"] = normalized_groups
 
-        ban_user_ids = raw.get("ban_user_ids", raw.get("blacklist_user_ids", []))
-        if isinstance(ban_user_ids, list):
-            normalized_blacklist = []
-            seen = set()
-            for user_id in ban_user_ids:
-                try:
-                    uid = int(user_id)
-                except (TypeError, ValueError):
-                    continue
-                if uid in seen:
-                    continue
-                normalized_blacklist.append(uid)
-                seen.add(uid)
-            cfg["ban_user_ids"] = normalized_blacklist
+        try:
+            cfg["ban_user_ids"] = self._normalize_ids(
+                raw.get("ban_user_ids", raw.get("blacklist_user_ids", []))
+            )
+        except ValueError:
+            pass
 
         min_word_length = raw.get("min_word_length", cfg["min_word_length"])
         max_words = raw.get("max_words", cfg["max_words"])
@@ -90,9 +133,10 @@ class ChatLogDataManager:
         if isinstance(retention_days, int):
             cfg["retention_days"] = max(30, int(retention_days))
 
-        additional_stopwords = raw.get("additional_stopwords", [])
-        if isinstance(additional_stopwords, list):
-            cfg["additional_stopwords"] = [str(word).strip().lower() for word in additional_stopwords if str(word).strip()]
+        try:
+            cfg["additional_stopwords"] = self._normalize_stopwords(raw.get("additional_stopwords", []))
+        except ValueError:
+            pass
 
         footer_subtitle = raw.get("footer_subtitle", "")
         if isinstance(footer_subtitle, str):
@@ -106,6 +150,28 @@ class ChatLogDataManager:
         if isinstance(footer_branding_text, str):
             cfg["footer_branding_text"] = footer_branding_text.strip()
 
+        normalized_overrides: Dict[str, Dict[str, Any]] = {}
+        raw_overrides = raw.get("group_overrides", {})
+        if isinstance(raw_overrides, dict):
+            for raw_group_id, raw_override in raw_overrides.items():
+                try:
+                    group_id = int(raw_group_id)
+                except (TypeError, ValueError):
+                    continue
+                if group_id <= 0 or not isinstance(raw_override, dict):
+                    continue
+                normalized_override: Dict[str, Any] = {}
+                for key in GROUP_CONFIG_KEYS:
+                    if key not in raw_override or raw_override[key] is None:
+                        continue
+                    try:
+                        normalized_override[key] = self._normalize_group_value(key, raw_override[key])
+                    except ValueError:
+                        continue
+                if normalized_override:
+                    normalized_overrides[str(group_id)] = normalized_override
+        cfg["group_overrides"] = normalized_overrides
+
         return cfg
 
     def _connect(self) -> sqlite3.Connection:
@@ -118,8 +184,7 @@ class ChatLogDataManager:
         os.makedirs(os.path.join(self.data_dir, "avatars"), exist_ok=True)
         os.makedirs(os.path.join(self.data_dir, "group_avatar_cache"), exist_ok=True)
 
-        if not os.path.exists(self.config_file):
-            self._config_store.save(self._default_config())
+        self._config_store.load()
 
         with self._connect() as conn:
             conn.execute(
@@ -155,6 +220,18 @@ class ChatLogDataManager:
     def get_enabled_groups(self) -> List[int]:
         return self.load_config().get("enabled_groups", [])
 
+    def list_configured_groups(self) -> List[int]:
+        cfg = self.load_config()
+        groups = {int(group_id) for group_id in cfg.get("enabled_groups", []) if int(group_id) > 0}
+        for raw_group_id in cfg.get("group_overrides", {}):
+            try:
+                group_id = int(raw_group_id)
+            except (TypeError, ValueError):
+                continue
+            if group_id > 0:
+                groups.add(group_id)
+        return sorted(groups)
+
     def is_group_enabled(self, group_id: int) -> bool:
         return int(group_id) in set(self.get_enabled_groups())
 
@@ -176,19 +253,75 @@ class ChatLogDataManager:
 
         return bool(self._config_store.mutate(mutate))
 
-    def get_wordcloud_options(self) -> Dict[str, int]:
+    @staticmethod
+    def _export_group_config_from(cfg: Dict[str, Any], group_id: int) -> Dict[str, Any]:
+        override = cfg.get("group_overrides", {}).get(str(int(group_id)), {})
+        if not isinstance(override, dict):
+            override = {}
+        return {key: override.get(key) for key in GROUP_CONFIG_KEYS}
+
+    def export_group_config(self, group_id: int) -> Dict[str, Any]:
+        return self._export_group_config_from(self.load_config(), group_id)
+
+    def get_effective_group_config(self, group_id: int) -> Dict[str, Any]:
         cfg = self.load_config()
+        raw_override = self._export_group_config_from(cfg, group_id)
+        effective = {key: cfg[key] for key in GROUP_CONFIG_KEYS}
+        for key, value in raw_override.items():
+            if value is not None:
+                effective[key] = value
+
+        global_bans = [int(item) for item in cfg.get("ban_user_ids", [])]
+        local_bans = [int(item) for item in (raw_override.get("ban_user_ids") or [])]
+        effective["ban_user_ids"] = list(dict.fromkeys([*global_bans, *local_bans]))
+        return effective
+
+    def update_group_config(self, group_id: int, changes: Dict[str, Any]) -> Dict[str, Any]:
+        gid = int(group_id)
+        if gid <= 0:
+            raise ValueError("wordcloud_group_id_must_be_positive")
+        if not isinstance(changes, dict):
+            raise ValueError("wordcloud_group_config_must_be_object")
+        unknown = set(changes) - set(GROUP_CONFIG_KEYS)
+        if unknown:
+            raise ValueError("unknown_wordcloud_group_config_key")
+
+        normalized_changes: Dict[str, Any] = {}
+        for key, value in changes.items():
+            normalized_changes[key] = None if value is None else self._normalize_group_value(key, value)
+
+        def mutate(cfg: Dict[str, Any]) -> Dict[str, Any]:
+            overrides = cfg.setdefault("group_overrides", {})
+            current = dict(overrides.get(str(gid), {}))
+            for key, value in normalized_changes.items():
+                if value is None:
+                    current.pop(key, None)
+                else:
+                    current[key] = value
+            if current:
+                overrides[str(gid)] = current
+            else:
+                overrides.pop(str(gid), None)
+            return self._export_group_config_from(cfg, gid)
+
+        return self._config_store.mutate(mutate)
+
+    def get_wordcloud_options(self, group_id: Optional[int] = None) -> Dict[str, int]:
+        cfg = self.load_config() if group_id is None else self.get_effective_group_config(group_id)
         return {
             "min_word_length": int(cfg.get("min_word_length", 2)),
             "max_words": int(cfg.get("max_words", 200)),
         }
 
-    def get_ban_user_ids(self) -> List[int]:
-        cfg = self.load_config()
+    def get_ban_user_ids(self, group_id: Optional[int] = None) -> List[int]:
+        cfg = self.load_config() if group_id is None else self.get_effective_group_config(group_id)
         return [int(uid) for uid in cfg.get("ban_user_ids", [])]
 
-    def is_user_banned(self, user_id: int) -> bool:
-        return int(user_id) in set(self.get_ban_user_ids())
+    def get_group_ban_user_ids(self, group_id: int) -> List[int]:
+        return [int(uid) for uid in (self.export_group_config(group_id).get("ban_user_ids") or [])]
+
+    def is_user_banned(self, user_id: int, group_id: Optional[int] = None) -> bool:
+        return int(user_id) in set(self.get_ban_user_ids(group_id))
 
     def set_user_banned(self, user_id: int, banned: bool) -> bool:
         uid = int(user_id)
@@ -208,18 +341,31 @@ class ChatLogDataManager:
 
         return bool(self._config_store.mutate(mutate))
 
+    def set_group_user_banned(self, group_id: int, user_id: int, banned: bool) -> bool:
+        gid = int(group_id)
+        if gid <= 0:
+            raise ValueError("wordcloud_group_id_must_be_positive")
+        uid = int(user_id)
+
+        def mutate(cfg: Dict[str, Any]) -> bool:
+            overrides = cfg.setdefault("group_overrides", {})
+            current = dict(overrides.get(str(gid), {}))
+            users = [int(item) for item in current.get("ban_user_ids", [])]
+            if banned and uid in users:
+                return False
+            if (not banned) and uid not in users:
+                return False
+            current["ban_user_ids"] = (
+                [*users, uid] if banned else [item for item in users if item != uid]
+            )
+            overrides[str(gid)] = current
+            return True
+
+        return bool(self._config_store.mutate(mutate))
+
     def update_global_config(self, changes: Dict[str, Any]) -> Dict[str, Any]:
         """原子更新全局词云参数，并始终保留群启用列表。"""
-        allowed = {
-            "ban_user_ids",
-            "min_word_length",
-            "max_words",
-            "retention_days",
-            "additional_stopwords",
-            "footer_subtitle",
-            "footer_branding_enabled",
-            "footer_branding_text",
-        }
+        allowed = {*GROUP_CONFIG_KEYS, "retention_days"}
         if not isinstance(changes, dict):
             raise ValueError("wordcloud_config_must_be_object")
         unknown = set(changes) - allowed
@@ -237,11 +383,11 @@ class ChatLogDataManager:
         return self._config_store.mutate(mutate)
 
 
-    def get_blacklist_user_ids(self) -> List[int]:
-        return self.get_ban_user_ids()
+    def get_blacklist_user_ids(self, group_id: Optional[int] = None) -> List[int]:
+        return self.get_ban_user_ids(group_id)
 
-    def is_user_blacklisted(self, user_id: int) -> bool:
-        return self.is_user_banned(user_id)
+    def is_user_blacklisted(self, user_id: int, group_id: Optional[int] = None) -> bool:
+        return self.is_user_banned(user_id, group_id)
 
     def set_user_blacklisted(self, user_id: int, blacklisted: bool) -> bool:
         return self.set_user_banned(user_id, blacklisted)
@@ -250,15 +396,15 @@ class ChatLogDataManager:
         cfg = self.load_config()
         return max(30, int(cfg.get("retention_days", 1095)))
 
-    def get_footer_subtitle(self) -> str:
-        cfg = self.load_config()
+    def get_footer_subtitle(self, group_id: Optional[int] = None) -> str:
+        cfg = self.load_config() if group_id is None else self.get_effective_group_config(group_id)
         subtitle = cfg.get("footer_subtitle", "")
         if isinstance(subtitle, str):
             return subtitle.strip()
         return ""
 
-    def get_footer_branding_options(self) -> Dict[str, Any]:
-        cfg = self.load_config()
+    def get_footer_branding_options(self, group_id: Optional[int] = None) -> Dict[str, Any]:
+        cfg = self.load_config() if group_id is None else self.get_effective_group_config(group_id)
         enabled = cfg.get("footer_branding_enabled", True)
         text = cfg.get("footer_branding_text", "Powered by FlyingPig278")
         return {
@@ -384,7 +530,7 @@ class ChatLogDataManager:
                 conn.commit()
                 return int(cursor.rowcount or 0)
 
-    def get_stopwords(self) -> Set[str]:
+    def get_stopwords(self, group_id: Optional[int] = None) -> Set[str]:
         words: Set[str] = set()
 
         # stopwordsiso is a widely used multilingual stopwords corpus.
@@ -396,7 +542,7 @@ class ChatLogDataManager:
         except Exception as e:
             logger.warning("[WordCloud] Failed to load stopwordsiso: %s", e)
 
-        cfg = self.load_config()
+        cfg = self.load_config() if group_id is None else self.get_effective_group_config(group_id)
         for w in cfg.get("additional_stopwords", []):
             if isinstance(w, str) and w.strip():
                 words.add(w.strip().lower())

@@ -29,9 +29,11 @@ from PIL import Image, ImageDraw, ImageFont
 from wordcloud import WordCloud
 
 from xducraft_bot.shared import feature_gate
+from xducraft_bot.shared.configuration import PROTOCOL_KEY
 from xducraft_bot.shared.permissions import is_admin
 
 from .data_manager import chat_log_data_manager
+from .configuration import DECLARATION
 
 require("nonebot_plugin_apscheduler")
 from nonebot_plugin_apscheduler import scheduler
@@ -45,6 +47,7 @@ __plugin_meta__ = PluginMetadata(
         "封禁命令: /wc ban add|del|list [QQ号|@用户]\n"
         "清理命令: /wc clear [QQ号|@用户]"
     ),
+    extra={PROTOCOL_KEY: DECLARATION},
 )
 
 FEATURE_KEY = "wordcloud"
@@ -267,7 +270,7 @@ def _build_wordcloud_image(group_id: int, output_label: str, words: List[str]) -
 
     output_path = os.path.join(output_dir, f"wordcloud_{group_id}_{output_label}.png")
     frequencies = Counter(words)
-    options = chat_log_data_manager.get_wordcloud_options()
+    options = chat_log_data_manager.get_wordcloud_options(group_id)
 
     wordcloud = WordCloud(
         width=1200,
@@ -285,7 +288,7 @@ def _build_wordcloud_image(group_id: int, output_label: str, words: List[str]) -
     side_padding = 48
     top_padding = 48
     cloud_footer_gap = 24
-    branding_options = chat_log_data_manager.get_footer_branding_options()
+    branding_options = chat_log_data_manager.get_footer_branding_options(group_id)
     branding_enabled = bool(branding_options.get("enabled", True))
     branding_text = str(branding_options.get("text", "")).strip()
     branding_height = 58 if branding_enabled else 0
@@ -315,7 +318,7 @@ def _build_wordcloud_image(group_id: int, output_label: str, words: List[str]) -
         branding_font = ImageFont.load_default()
 
     title_text, date_text = _resolve_footer_texts(output_label)
-    subtitle_text = chat_log_data_manager.get_footer_subtitle()
+    subtitle_text = chat_log_data_manager.get_footer_subtitle(group_id)
     group_text = f"群 {group_id}"
 
     footer_top = top_padding + cloud_image.height + cloud_footer_gap
@@ -407,8 +410,12 @@ def _parse_gen_target(raw_arg: str) -> Optional[Tuple[str, Optional[date]]]:
         return None
 
 
-async def _generate_and_send_for_group(group_id: int, target_kind: str, target: Optional[date], bot: Bot) -> bool:
-    excluded_user_ids = set(chat_log_data_manager.get_ban_user_ids())
+async def _generate_and_send_for_group(group_id: int, target_kind: str, target: Optional[date], bot: Bot, *, scheduled: bool = False) -> bool:
+    if not feature_gate.is_plugin_enabled("wordcloud", group_id):
+        return False
+    if scheduled and not feature_gate.is_enabled(FEATURE_KEY, group_id):
+        return False
+    excluded_user_ids = set(chat_log_data_manager.get_ban_user_ids(group_id))
     if target_kind == "month":
         if target is None:
             return False
@@ -431,13 +438,17 @@ async def _generate_and_send_for_group(group_id: int, target_kind: str, target: 
     if not messages:
         return False
 
-    stopwords = chat_log_data_manager.get_stopwords()
-    options = chat_log_data_manager.get_wordcloud_options()
+    stopwords = chat_log_data_manager.get_stopwords(group_id)
+    options = chat_log_data_manager.get_wordcloud_options(group_id)
     words = _tokenize_messages(messages, stopwords, options.get("min_word_length", 2))
     # 分词后的绘图、头像下载和 Pillow 合成都属于阻塞工作，放到线程里避免
     # 每次生成词云时卡住机器人的整个事件循环。
     image_path = await asyncio.to_thread(_build_wordcloud_image, group_id, output_label, words)
     if not image_path:
+        return False
+    if not feature_gate.is_plugin_enabled("wordcloud", group_id):
+        return False
+    if scheduled and not feature_gate.is_enabled(FEATURE_KEY, group_id):
         return False
 
     await bot.send_group_msg(group_id=group_id, message=f"[CQ:image,file=file:///{image_path}]")
@@ -447,10 +458,10 @@ async def _generate_and_send_for_group(group_id: int, target_kind: str, target: 
 @record_group_message.handle()
 async def handle_group_message_record(event: GroupMessageEvent):
     group_id = int(event.group_id)
-    if not chat_log_data_manager.is_group_enabled(group_id):
+    if not feature_gate.is_plugin_enabled("wordcloud", group_id) or not chat_log_data_manager.is_group_enabled(group_id):
         return
 
-    if chat_log_data_manager.is_user_banned(int(event.user_id)):
+    if chat_log_data_manager.is_user_banned(int(event.user_id), group_id):
         return
 
     text = _extract_clean_text(event.message)
@@ -540,13 +551,19 @@ async def handle_wordcloud_command(bot: Bot, event: GroupMessageEvent, args: Mes
 
         sub_action = arg_list[1].lower()
         if sub_action == "list":
-            blocked = chat_log_data_manager.get_ban_user_ids()
-            if not blocked:
-                await wordcloud_command.finish("当前封禁列表为空")
+            global_blocked = chat_log_data_manager.get_ban_user_ids()
+            local_blocked = chat_log_data_manager.get_group_ban_user_ids(group_id)
+            effective_blocked = chat_log_data_manager.get_ban_user_ids(group_id)
+            if not effective_blocked:
+                await wordcloud_command.finish("本群有效封禁列表为空（全局与本群额外封禁均为空）")
                 return
-            preview = "\n".join(str(uid) for uid in blocked[:30])
-            suffix = "\n...(仅展示前30项)" if len(blocked) > 30 else ""
-            await wordcloud_command.finish(f"当前封禁列表({len(blocked)}):\n{preview}{suffix}")
+            global_preview = "\n".join(str(uid) for uid in global_blocked[:30]) or "无"
+            local_preview = "\n".join(str(uid) for uid in local_blocked[:30]) or "无"
+            await wordcloud_command.finish(
+                f"全局封禁({len(global_blocked)}):\n{global_preview}\n"
+                f"本群额外封禁({len(local_blocked)}):\n{local_preview}\n"
+                f"本群有效封禁共 {len(effective_blocked)} 人（每项最多展示30个）"
+            )
             return
 
         if sub_action not in {"add", "del"}:
@@ -558,18 +575,25 @@ async def handle_wordcloud_command(bot: Bot, event: GroupMessageEvent, args: Mes
             await wordcloud_command.finish("请提供 QQ号 或 @用户")
             return
 
-        changed = chat_log_data_manager.set_user_banned(target_user_id, banned=(sub_action == "add"))
+        changed = chat_log_data_manager.set_group_user_banned(
+            group_id, target_user_id, banned=(sub_action == "add")
+        )
         if sub_action == "add":
             if changed:
-                await wordcloud_command.finish(f"已封禁: {target_user_id}")
+                await wordcloud_command.finish(f"已添加本群额外封禁: {target_user_id}")
                 return
-            await wordcloud_command.finish(f"该QQ已在封禁列表中: {target_user_id}")
+            await wordcloud_command.finish(f"该QQ已在本群额外封禁列表中: {target_user_id}")
             return
 
         if changed:
-            await wordcloud_command.finish(f"已解封: {target_user_id}")
+            if target_user_id in chat_log_data_manager.get_ban_user_ids():
+                await wordcloud_command.finish(
+                    f"已移除本群额外封禁: {target_user_id}；该QQ仍受全局封禁"
+                )
+                return
+            await wordcloud_command.finish(f"已移除本群额外封禁: {target_user_id}")
             return
-        await wordcloud_command.finish(f"该QQ不在封禁列表中: {target_user_id}")
+        await wordcloud_command.finish(f"该QQ不在本群额外封禁列表中: {target_user_id}")
         return
 
     if action == "clear":
@@ -588,6 +612,8 @@ async def handle_wordcloud_command(bot: Bot, event: GroupMessageEvent, args: Mes
 
 @scheduler.scheduled_job("cron", hour=0, minute=0, id="xducraft_daily_wordcloud", max_instances=1, coalesce=True)
 async def daily_wordcloud_push() -> None:
+    if not feature_gate.is_plugin_enabled("wordcloud"):
+        return
     target_date = date.today() - timedelta(days=1)
     retention_days = chat_log_data_manager.get_retention_days()
     enabled_groups = chat_log_data_manager.get_enabled_groups()
@@ -604,12 +630,14 @@ async def daily_wordcloud_push() -> None:
 
     for group_id in enabled_groups:
         try:
-            ok = await _generate_and_send_for_group(group_id, "day", target_date, bot)
+            ok = await _generate_and_send_for_group(group_id, "day", target_date, bot, scheduled=True)
             if not ok:
                 logger.info("[WordCloud] Group %s has no valid tokens on %s.", group_id, target_date.isoformat())
         except Exception as e:
             logger.error("[WordCloud] Failed to send group %s: %s", group_id, e)
 
+    if not feature_gate.is_plugin_enabled("wordcloud"):
+        return
     deleted = chat_log_data_manager.cleanup_old_messages(keep_days=retention_days, ref_date=date.today())
     if deleted:
         logger.info("[WordCloud] Cleanup old chat rows: %s", deleted)

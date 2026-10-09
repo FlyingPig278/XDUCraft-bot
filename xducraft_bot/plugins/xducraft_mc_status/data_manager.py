@@ -17,8 +17,8 @@
    旧代码的群默认值里写着 ``"jsu"``，而 ``setdefault`` 会把它当成“这个群显式
    配置过 jsu”写进去，导致 ``/mcs source global set`` 对任何群都不生效——
    全局默认值形同虚设。现在群级默认是空串（= 未配置 = 回退全局）。
-2. **写入是原子的、读取是带缓存的。**  统一走 :class:`~xducraft_bot.shared.json_store.JsonStore`。
-   旧实现一次 ``/mcs`` 会把整个文件反复读几十遍，且写到一半被杀就是一个坏 JSON。
+2. **配置读写统一走 SQLite 原子事务。** 旧 JSON 仅作为首次导入来源；
+   已导入后，QQ 指令和声明式配置接口读取同一个配置文档。
 3. **群级/全局的 getter-setter 不再手抄四遍。**  统一由 ``_scoped_*`` 系列生成。
 """
 
@@ -27,7 +27,8 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from xducraft_bot.shared.json_store import JsonStore, as_bool, as_str
+from xducraft_bot.shared.config_store import ConfigDocumentStore
+from xducraft_bot.shared.json_store import as_bool, as_str
 
 from .auth_mode import CONFIGURABLE_MODES
 from .constants import DEFAULT_SERVER_PRIORITY
@@ -166,15 +167,19 @@ def _normalize_server_tree(nodes: Any, _depth: int = 0) -> List[Dict[str, Any]]:
     return normalized
 
 
-_store: JsonStore = JsonStore(DATA_FILE, lambda: {GLOBAL_CONFIG_KEY: _default_global_config()}, _normalize_data)
+_store = ConfigDocumentStore(
+    "mc_status", lambda: {GLOBAL_CONFIG_KEY: _default_global_config()},
+    _normalize_data, legacy_path=DATA_FILE,
+)
 
 
-def configure_storage(path: str) -> None:
-    """把存储切到另一个文件。测试用来做隔离，运行时不要调用。"""
-    global DATA_FILE, DATA_DIR, _store
-    DATA_FILE = os.path.abspath(path)
-    DATA_DIR = os.path.dirname(DATA_FILE)
-    _store = JsonStore(DATA_FILE, lambda: {GLOBAL_CONFIG_KEY: _default_global_config()}, _normalize_data)
+def configure_storage(database_path: str, *, legacy_path: Optional[str] = None) -> None:
+    """注入隔离配置数据库；旧 JSON 只允许用作首次导入来源。"""
+    global _store
+    _store = ConfigDocumentStore(
+        "mc_status", lambda: {GLOBAL_CONFIG_KEY: _default_global_config()},
+        _normalize_data, database_path=database_path, legacy_path=legacy_path,
+    )
 
 
 # --- 内部访问器 ---

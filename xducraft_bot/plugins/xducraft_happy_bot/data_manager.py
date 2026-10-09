@@ -8,7 +8,8 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional
 
-from xducraft_bot.shared.json_store import JsonStore, as_str
+from xducraft_bot.shared.config_store import ConfigDocumentStore
+from xducraft_bot.shared.json_store import as_str
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 DATA_FILE = os.path.join(DATA_DIR, "emoji_like_config.json")
@@ -27,7 +28,7 @@ def _clean_emoji_id(value: Any, fallback: str = DEFAULT_EMOJI_ID) -> str:
 def _normalize(raw: Any) -> Dict[str, Any]:
     data = _default_data()
     if not isinstance(raw, dict):
-        return data
+        raise ValueError("happy_config_must_be_object")
 
     data["emoji_id"] = _clean_emoji_id(raw.get("emoji_id"))
 
@@ -45,7 +46,7 @@ def _normalize(raw: Any) -> Dict[str, Any]:
     return data
 
 
-_store = JsonStore(DATA_FILE, _default_data, _normalize)
+_store = ConfigDocumentStore("happy_bot", _default_data, _normalize, legacy_path=DATA_FILE)
 
 
 def get_emoji_id(group_id: Optional[int] = None) -> str:

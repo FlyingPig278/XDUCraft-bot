@@ -406,8 +406,27 @@ def segments_to_replies(
     return converted
 
 
+class MediaProvider:
+    """本插件的本地图片能力，供通用资产接口调用，不暴露目录。"""
+
+    max_bytes = MAX_MEDIA_BYTES
+    mime_types = tuple(_ALLOWED_IMAGE_MIMES.values())
+
+    @staticmethod
+    def upload(content: bytes) -> str:
+        return store_uploaded_image(content)
+
+    @staticmethod
+    def resolve(name: str) -> tuple[Path, str]:
+        path = media_path_checked(name)
+        if not path.is_file():
+            raise FileNotFoundError("media_not_found")
+        return path, image_mime(path)
+
+
 __all__ = [
     "MAX_MEDIA_BYTES",
+    "MediaProvider",
     "MEDIA_DOWNLOAD_TIMEOUT",
     "image_mime",
     "media_path_checked",

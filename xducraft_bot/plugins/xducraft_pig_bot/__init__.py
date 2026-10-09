@@ -15,9 +15,11 @@ from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 
 from xducraft_bot.shared import feature_gate
+from xducraft_bot.shared.configuration import PROTOCOL_KEY
 from xducraft_bot.shared.permissions import is_admin
 
 from .data_manager import pig_data_manager
+from .configuration import DECLARATION
 
 require("nonebot_plugin_apscheduler")
 from nonebot_plugin_apscheduler import scheduler  # noqa: E402
@@ -29,6 +31,7 @@ __plugin_meta__ = PluginMetadata(
         "用户命令: /pig [关键词]\n"
         "管理员命令: /pig auto on|off, /pig query on|off, /pig status"
     ),
+    extra={PROTOCOL_KEY: DECLARATION},
 )
 
 PIG_QUERY_FEATURE_KEY = "pig_query"
@@ -200,6 +203,15 @@ def pick_random_image(images: List[Dict[str, str]]) -> Optional[Dict[str, str]]:
     return random.choice(images)
 
 
+def _select_forward_images(
+    images: List[Dict[str, str]], group_id: Optional[int] = None
+) -> List[Dict[str, str]]:
+    max_forward_results = pig_data_manager.get_max_forward_results(group_id)
+    if len(images) <= max_forward_results:
+        return images
+    return random.sample(images, max_forward_results)
+
+
 async def _can_manage(bot: Bot, event: GroupMessageEvent) -> bool:
     return await is_admin(bot, event) or await SUPERUSER(bot, event)
 
@@ -219,6 +231,9 @@ async def _send_merged_pig_images(
     images: List[Dict[str, str]],
     total_count: Optional[int] = None,
 ) -> bool:
+    group_id = event.group_id if isinstance(event, GroupMessageEvent) else None
+    if not feature_gate.is_plugin_enabled("pig_bot", group_id):
+        return False
     valid_images = [image for image in images if image.get("url")]
     if not valid_images:
         return False
@@ -241,6 +256,10 @@ async def _send_merged_pig_images(
         await pig_command.send(f"查询到 {shown_count} 张匹配的猪猪图，正在发送合并转发。")
 
     try:
+        if not feature_gate.is_plugin_enabled("pig_bot", group_id):
+            return False
+        if group_id is not None and not feature_gate.is_enabled(PIG_QUERY_FEATURE_KEY, group_id):
+            return False
         if isinstance(event, GroupMessageEvent):
             await bot.send_group_forward_msg(group_id=event.group_id, messages=nodes)
         elif isinstance(event, PrivateMessageEvent):
@@ -320,6 +339,9 @@ async def handle_pig_command(bot: Bot, event: MessageEvent, args: Message = Comm
         await _finish_status(pig_command, f"本群猪猪图查询已是{'开启' if enabled else '关闭'}状态")
         return
 
+    group_id = event.group_id if isinstance(event, GroupMessageEvent) else None
+    if not feature_gate.is_plugin_enabled("pig_bot", group_id):
+        return
     if isinstance(event, GroupMessageEvent):
         cfg = pig_data_manager.get_group_config(event.group_id)
         if not cfg["query_enabled"]:
@@ -339,6 +361,10 @@ async def handle_pig_command(bot: Bot, event: MessageEvent, args: Message = Comm
         await _finish_status(pig_command, "获取猪猪图失败，请稍后再试。")
         return
 
+    if not feature_gate.is_plugin_enabled("pig_bot", group_id):
+        return
+    if group_id is not None and not feature_gate.is_enabled(PIG_QUERY_FEATURE_KEY, group_id):
+        return
     if not keyword:
         selected = pick_random_image(all_images)
         if not selected:
@@ -353,11 +379,8 @@ async def handle_pig_command(bot: Bot, event: MessageEvent, args: Message = Comm
         return
 
     if len(matched) > 1:
-        max_forward_results = pig_data_manager.get_max_forward_results()
-        if len(matched) > max_forward_results:
-            limited = random.sample(matched, max_forward_results)
-        else:
-            limited = matched
+        group_id = event.group_id if isinstance(event, GroupMessageEvent) else None
+        limited = _select_forward_images(matched, group_id)
         sent = await _send_merged_pig_images(bot, event, limited, total_count=len(matched))
         if sent:
             await pig_command.finish()
@@ -381,12 +404,16 @@ async def handle_pig_command(bot: Bot, event: MessageEvent, args: Message = Comm
     coalesce=True,
 )
 async def push_random_pig_job() -> None:
+    if not feature_gate.is_plugin_enabled("pig_bot"):
+        return
     if _push_lock.locked():
         logger.warning("[Pig-Bot] Previous push job still running, skip this round.")
         return
 
     async with _push_lock:
-        groups = pig_data_manager.list_auto_push_groups()
+        groups = [gid for gid in pig_data_manager.list_auto_push_groups()
+                  if feature_gate.is_plugin_enabled("pig_bot", gid)
+                  and feature_gate.is_enabled(PIG_AUTO_PUSH_FEATURE_KEY, gid)]
         if not groups:
             return
 
@@ -415,6 +442,10 @@ async def push_random_pig_job() -> None:
         for bot_instance in bots.values():
             for group_id in groups:
                 try:
+                    if not feature_gate.is_plugin_enabled("pig_bot", group_id):
+                        continue
+                    if not feature_gate.is_enabled(PIG_AUTO_PUSH_FEATURE_KEY, group_id):
+                        continue
                     await bot_instance.send_group_msg(group_id=group_id, message=push_msg)
                 except Exception as e:
                     logger.error("[Pig-Bot] Failed to send group %s: %s", group_id, e)

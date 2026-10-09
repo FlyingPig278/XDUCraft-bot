@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from nonebot.log import logger
 from pydantic import BaseModel
@@ -29,7 +29,7 @@ class Config(BaseModel):
 class InviteSettings:
     group_id: int = 0
     api_url: str = DEFAULT_API_URL
-    api_secret: str = ""
+    api_secret: str = field(default="", repr=False)
 
     def configuration_error(self) -> str:
         if self.group_id <= 0:
@@ -48,7 +48,7 @@ def load() -> InviteSettings:
 
         config = nonebot.get_plugin_config(Config)
     except Exception as exc:
-        logger.opt(exception=False).debug("[Invite] 读取配置失败（{}），使用空配置。", exc)
+        logger.opt(exception=False).debug("[Invite] 读取配置失败（{}），使用空配置。", type(exc).__name__)
 
     try:
         config = apply_startup_overrides(config)

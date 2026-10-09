@@ -39,16 +39,19 @@ from nonebot.rule import Rule
 from nonebot.typing import T_State
 
 from xducraft_bot.shared import feature_gate
+from xducraft_bot.shared.configuration import PROTOCOL_KEY
 from xducraft_bot.shared.onebot import notify_privately, send_text_sections
 from xducraft_bot.shared.permissions import can_manage_group, is_superuser
 
 from . import data_manager as dm
 from .reply_codec import persist_reply_media, restore_reply
+from .configuration import DECLARATION
 
 __plugin_meta__ = PluginMetadata(
     name="XDUCraft_keyword",
     description="可配置的关键词与入群事件自动回复",
     usage="私聊 /关键词 <群号> — 查看与管理该群自动回复",
+    extra={PROTOCOL_KEY: DECLARATION},
 )
 
 FEATURE_KEY = "keyword_reply"
@@ -108,9 +111,15 @@ async def _send_saved_replies(
     replies: Sequence[str],
     *,
     at_user_id: Optional[int] = None,
+    passive: bool = False,
 ) -> None:
     """按顺序发送已保存的消息；入群欢迎的首条消息会提及新成员。"""
     for index, reply in enumerate(replies):
+        if passive and (
+            not feature_gate.is_plugin_enabled("keyword", event.group_id)
+            or not feature_gate.is_enabled(FEATURE_KEY, event.group_id)
+        ):
+            return
         message = Message()
         if index == 0 and at_user_id is not None:
             message += MessageSegment.at(at_user_id)
@@ -125,7 +134,7 @@ async def _send_saved_replies(
 
 @keyword_listener.handle()
 async def handle_keyword(bot: Bot, event: GroupMessageEvent):
-    if not feature_gate.is_enabled(FEATURE_KEY, event.group_id):
+    if not feature_gate.is_plugin_enabled("keyword", event.group_id) or not feature_gate.is_enabled(FEATURE_KEY, event.group_id):
         return
 
     text = _plain_text(event.message)
@@ -138,7 +147,7 @@ async def handle_keyword(bot: Bot, event: GroupMessageEvent):
         return
 
     try:
-        await _send_saved_replies(bot, event, rule["replies"])
+        await _send_saved_replies(bot, event, rule["replies"], passive=True)
     except Exception as exc:
         logger.warning("[Keyword] 群 {} 发送关键词回复失败: {}", event.group_id, exc)
 
@@ -147,7 +156,7 @@ async def handle_keyword(bot: Bot, event: GroupMessageEvent):
 async def handle_member_join(bot: Bot, event: GroupIncreaseNoticeEvent):
     if str(event.user_id) == str(bot.self_id):
         return
-    if not feature_gate.is_enabled(FEATURE_KEY, event.group_id):
+    if not feature_gate.is_plugin_enabled("keyword", event.group_id) or not feature_gate.is_enabled(FEATURE_KEY, event.group_id):
         return
 
     replies = dm.get_join_replies(event.group_id)
@@ -155,7 +164,7 @@ async def handle_member_join(bot: Bot, event: GroupIncreaseNoticeEvent):
         return
 
     try:
-        await _send_saved_replies(bot, event, replies, at_user_id=event.user_id)
+        await _send_saved_replies(bot, event, replies, at_user_id=event.user_id, passive=True)
     except Exception as exc:
         logger.warning("[Keyword] 群 {} 发送入群欢迎失败: {}", event.group_id, exc)
 

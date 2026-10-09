@@ -34,7 +34,8 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from nonebot.log import logger
 
-from xducraft_bot.shared.json_store import JsonStore, as_bool, as_int, unique_ints
+from xducraft_bot.shared.config_store import ConfigDocumentStore
+from xducraft_bot.shared.json_store import as_bool, as_int, unique_ints
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 DB_FILE = os.path.join(DATA_DIR, "anti_recall.db")
@@ -71,13 +72,14 @@ def _default_config() -> Dict[str, Any]:
         "include_self": False,
         # 免于记录的用户（比如管理员自己不想被存）。
         "exempt_user_ids": [],
+        "group_overrides": {},
     }
 
 
 def _normalize_config(raw: Any) -> Dict[str, Any]:
     config = _default_config()
     if not isinstance(raw, dict):
-        return config
+        raise ValueError("anti_recall_config_must_be_object")
 
     config["cache_retention_hours"] = as_int(raw.get("cache_retention_hours"), 48, minimum=1, maximum=24 * 30)
     config["recall_retention_days"] = as_int(raw.get("recall_retention_days"), 7, minimum=1, maximum=365)
@@ -86,17 +88,34 @@ def _normalize_config(raw: Any) -> Dict[str, Any]:
     config["max_media_mb"] = as_int(raw.get("max_media_mb"), 20, minimum=1, maximum=200)
     config["include_self"] = as_bool(raw.get("include_self"), False)
     config["exempt_user_ids"] = unique_ints(raw.get("exempt_user_ids"))
+    overrides = raw.get("group_overrides", {})
+    if isinstance(overrides, dict):
+        for group_id, values in overrides.items():
+            try:
+                gid = int(group_id)
+            except (TypeError, ValueError):
+                continue
+            if gid > 0 and isinstance(values, dict) and values.get("max_query_results") is not None:
+                config["group_overrides"][str(gid)] = {
+                    "max_query_results": as_int(values["max_query_results"], 30, minimum=1, maximum=100),
+                }
     return config
 
 
 class AntiRecallStore:
     """消息缓存 + 撤回记录。"""
 
-    def __init__(self, db_file: str = DB_FILE, config_file: str = CONFIG_FILE, media_dir: str = MEDIA_DIR):
+    def __init__(self, db_file: str = DB_FILE, media_dir: str = MEDIA_DIR, *,
+                 legacy_config_path: str = CONFIG_FILE,
+                 configuration_db_path: Optional[str] = None):
         self.db_file = db_file
         self.media_dir = media_dir
         self._lock = Lock()
-        self._config = JsonStore(config_file, _default_config, _normalize_config)
+        self._config = ConfigDocumentStore(
+            "anti_recall", _default_config, _normalize_config,
+            legacy_path=legacy_config_path, database_path=configuration_db_path,
+        )
+        self._config.load()
         self._ensure_storage()
 
     # --- 基础设施 ---
@@ -153,7 +172,7 @@ class AntiRecallStore:
         return self._config.load()
 
     def set_config_value(self, key: str, value: Any) -> bool:
-        if key not in _default_config():
+        if key == "group_overrides" or key not in _default_config():
             return False
 
         def mutate(config: Dict[str, Any]) -> bool:
@@ -165,7 +184,7 @@ class AntiRecallStore:
 
     def update_config(self, changes: Dict[str, Any]) -> Dict[str, Any]:
         """在一次存储事务中更新允许的反撤回全局参数。"""
-        allowed = set(_default_config())
+        allowed = set(_default_config()) - {"group_overrides"}
         if not isinstance(changes, dict):
             raise ValueError("anti_recall_config_must_be_object")
         unknown = set(changes) - allowed
@@ -180,6 +199,38 @@ class AntiRecallStore:
             return dict(config)
 
         return self._config.mutate(mutate)
+
+    def export_group_config(self, group_id: int) -> Dict[str, Any]:
+        overrides = self.get_config()["group_overrides"].get(str(int(group_id)), {})
+        return {"max_query_results": overrides.get("max_query_results")}
+
+    def update_group_config(self, group_id: int, changes: Dict[str, Any]) -> Dict[str, Any]:
+        gid = int(group_id)
+        if gid <= 0 or not isinstance(changes, dict) or set(changes) - {"max_query_results"}:
+            raise ValueError("invalid_anti_recall_group_config")
+        if "max_query_results" not in changes:
+            return self.export_group_config(gid)
+        value = changes.get("max_query_results")
+        if value is not None and (type(value) is not int or not 1 <= value <= 100):
+            raise ValueError("invalid_max_query_results")
+
+        def mutate(config: Dict[str, Any]) -> Dict[str, Any]:
+            groups = config["group_overrides"]
+            if value is None:
+                groups.pop(str(gid), None)
+            else:
+                groups[str(gid)] = {"max_query_results": value}
+            return {"max_query_results": value}
+
+        return self._config.mutate(mutate)
+
+    def get_effective_group_config(self, group_id: int) -> Dict[str, Any]:
+        config = self.get_config()
+        values = config["group_overrides"].get(str(int(group_id)), {})
+        return {"max_query_results": values.get("max_query_results", config["max_query_results"])}
+
+    def list_configured_groups(self) -> List[int]:
+        return sorted(int(gid) for gid in self.get_config()["group_overrides"])
 
 
     def is_user_exempt(self, user_id: int) -> bool:
@@ -309,7 +360,12 @@ class AntiRecallStore:
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY recalled_at DESC LIMIT ?"
-        params.append(max(1, min(self.get_config()["max_query_results"], int(limit))))
+        maximum = (
+            self.get_effective_group_config(group_ids[0])["max_query_results"]
+            if group_ids is not None and len(group_ids) == 1
+            else self.get_config()["max_query_results"]
+        )
+        params.append(max(1, min(maximum, int(limit))))
 
         with closing(self._connect()) as connection:
             rows = connection.execute(query, params).fetchall()

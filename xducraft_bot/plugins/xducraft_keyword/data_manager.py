@@ -15,7 +15,8 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from xducraft_bot.shared.json_store import JsonStore, as_bool, as_int, as_str
+from xducraft_bot.shared.config_store import ConfigDocumentStore
+from xducraft_bot.shared.json_store import as_bool, as_int, as_str
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 CONFIG_FILE = os.path.join(DATA_DIR, "keyword_config.json")
@@ -145,7 +146,9 @@ def _normalize_config(raw: Any) -> Dict[str, Any]:
     return config
 
 
-_store = JsonStore(CONFIG_FILE, _default_config, _normalize_config)
+_store = ConfigDocumentStore(
+    "keyword", _default_config, _normalize_config, legacy_path=CONFIG_FILE,
+)
 
 
 def _compile(rule: Dict[str, Any]) -> Optional[List[re.Pattern]]:

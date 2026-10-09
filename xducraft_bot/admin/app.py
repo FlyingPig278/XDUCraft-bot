@@ -5,8 +5,9 @@ import ipaddress
 import json
 from pathlib import Path
 from urllib.parse import urlsplit
+
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, Response, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 
 from .avatars import AvatarUnavailable, GroupAvatarCache
 from .auth import AdminAuth
@@ -17,11 +18,14 @@ COOKIE = "xducraft_admin_session"
 CSP = "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 
 
-def error_response(exc):
-    return JSONResponse({"error": {"code": exc.code, "message": exc.message, "fields": exc.fields}}, status_code=exc.status)
+def error_response(exc: AdminError):
+    return JSONResponse(
+        {"error": {"code": exc.code, "message": exc.message, "fields": exc.fields}},
+        status_code=exc.status,
+    )
 
 
-async def limited_body(request: Request, maximum: int):
+async def limited_body(request: Request, maximum: int) -> bytes:
     content = bytearray()
     async for chunk in request.stream():
         if len(content) + len(chunk) > maximum:
@@ -30,7 +34,7 @@ async def limited_body(request: Request, maximum: int):
     return bytes(content)
 
 
-async def json_body(request: Request, maximum=2 * 1024 * 1024):
+async def json_body(request: Request, maximum: int = 2 * 1024 * 1024) -> dict:
     if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
         raise AdminError(415, "content_type", "请使用 JSON 请求")
     try:
@@ -62,9 +66,8 @@ def create_app(service: AdminService, auth: AdminAuth, static_dir: Path) -> Fast
             if not peer_ok:
                 raise AdminError(403, "invalid_peer", "仅允许回环连接")
             write = request.method not in ("GET", "HEAD", "OPTIONS")
-            if write:
-                if request.headers.get("origin") != "http://" + host:
-                    raise AdminError(403, "invalid_origin", "请求来源不合法")
+            if write and request.headers.get("origin") != "http://" + host:
+                raise AdminError(403, "invalid_origin", "请求来源不合法")
             path = request.url.path
             if path.startswith("/api") and path != "/api/auth/login":
                 token = request.cookies.get(COOKIE)
@@ -85,7 +88,7 @@ def create_app(service: AdminService, auth: AdminAuth, static_dir: Path) -> Fast
         return response
 
     @app.exception_handler(AdminError)
-    async def admin_error(request, exc):
+    async def admin_error(_request, exc):
         return error_response(exc)
 
     @app.post("/api/auth/login")
@@ -120,8 +123,11 @@ def create_app(service: AdminService, auth: AdminAuth, static_dir: Path) -> Fast
     async def groups():
         return await service.groups()
 
+    @app.get("/api/plugins")
+    async def plugins():
+        return service.plugins()
 
-    def gid_value(gid):
+    def gid_value(gid: str) -> int:
         try:
             return positive_id(gid)
         except ValueError:
@@ -132,15 +138,11 @@ def create_app(service: AdminService, auth: AdminAuth, static_dir: Path) -> Fast
         try:
             avatar = await avatar_cache.get(gid_value(gid))
         except AvatarUnavailable:
-            raise AdminError(
-                502,
-                "avatar_unavailable",
-                "群头像暂时不可用",
-            ) from None
+            raise AdminError(502, "avatar_unavailable", "群头像暂时不可用") from None
         return Response(content=avatar.content, media_type=avatar.media_type)
 
     @app.get("/api/groups/{gid}/plugins")
-    async def plugins(gid: str):
+    async def group_plugins(gid: str):
         return service.plugins(gid_value(gid))
 
     @app.get("/api/groups/{gid}/features/{key}")
@@ -149,8 +151,7 @@ def create_app(service: AdminService, auth: AdminAuth, static_dir: Path) -> Fast
 
     @app.put("/api/groups/{gid}/features/{key}")
     async def put_group_feature(gid: str, key: str, request: Request):
-        body = await json_body(request)
-        return service.put_feature(key, gid_value(gid), body, request.headers.get("if-match"))
+        return service.put_feature(key, gid_value(gid), await json_body(request), request.headers.get("if-match"))
 
     @app.delete("/api/groups/{gid}/features/{key}")
     async def reset_group_feature(gid: str, key: str, request: Request):
@@ -162,67 +163,93 @@ def create_app(service: AdminService, auth: AdminAuth, static_dir: Path) -> Fast
 
     @app.put("/api/global/features/{key}")
     async def put_global_feature(key: str, request: Request):
-        body = await json_body(request)
-        return service.put_feature(key, None, body, request.headers.get("if-match"))
+        return service.put_feature(key, None, await json_body(request), request.headers.get("if-match"))
+
+    @app.get("/api/groups/{gid}/plugins/{plugin}/enabled")
+    async def group_control(gid: str, plugin: str):
+        return service.get_control(plugin, gid_value(gid))
+
+    @app.put("/api/groups/{gid}/plugins/{plugin}/enabled")
+    async def put_group_control(gid: str, plugin: str, request: Request):
+        return service.put_control(plugin, gid_value(gid), await json_body(request), request.headers.get("if-match"))
+
+    @app.delete("/api/groups/{gid}/plugins/{plugin}/enabled")
+    async def reset_group_control(gid: str, plugin: str, request: Request):
+        return service.put_control(plugin, gid_value(gid), None, request.headers.get("if-match"), reset=True)
+
+    @app.get("/api/plugins/{plugin}/enabled")
+    async def global_control(plugin: str):
+        return service.get_control(plugin)
+
+    @app.put("/api/plugins/{plugin}/enabled")
+    async def put_global_control(plugin: str, request: Request):
+        return service.put_control(plugin, None, await json_body(request), request.headers.get("if-match"))
+
+    @app.delete("/api/plugins/{plugin}/enabled")
+    async def reset_global_control(plugin: str, request: Request):
+        return service.put_control(plugin, None, None, request.headers.get("if-match"), reset=True)
 
     @app.get("/api/groups/{gid}/config/{plugin}")
     async def group_config(gid: str, plugin: str):
-        return service.get_config(plugin, gid_value(gid))
+        return service.get_config(plugin, gid_value(gid), scope="group")
 
     @app.put("/api/groups/{gid}/config/{plugin}")
     async def put_group_config(gid: str, plugin: str, request: Request):
-        body = await json_body(request)
-        return service.put_config(plugin, gid_value(gid), body, request.headers.get("if-match"))
+        return await service.put_config(plugin, gid_value(gid), await json_body(request), request.headers.get("if-match"), scope="group")
+
+    @app.post("/api/groups/{gid}/config/{plugin}/apply")
+    async def apply_group_config(gid: str, plugin: str, request: Request):
+        return await service.recover_config(plugin, gid_value(gid), request.headers.get("if-match"), scope="group")
+
+    @app.post("/api/groups/{gid}/config/{plugin}/rollback")
+    async def rollback_group_config(gid: str, plugin: str, request: Request):
+        return await service.recover_config(plugin, gid_value(gid), request.headers.get("if-match"), scope="group", rollback=True)
 
     @app.get("/api/global/config/{plugin}")
     async def global_config(plugin: str):
-        return service.get_config(plugin)
+        return service.get_config(plugin, scope="global")
 
     @app.put("/api/global/config/{plugin}")
     async def put_global_config(plugin: str, request: Request):
-        body = await json_body(request)
-        return service.put_config(plugin, None, body, request.headers.get("if-match"))
+        return await service.put_config(plugin, None, await json_body(request), request.headers.get("if-match"), scope="global")
 
-    @app.get("/api/groups/{gid}/invite")
-    async def invite(gid: str):
-        return service.get_invite(gid_value(gid))
+    @app.post("/api/global/config/{plugin}/apply")
+    async def apply_global_config(plugin: str, request: Request):
+        return await service.recover_config(plugin, None, request.headers.get("if-match"), scope="global")
 
-    @app.put("/api/groups/{gid}/invite")
-    async def put_invite(gid: str, request: Request):
-        body = await json_body(request)
-        return service.put_invite(gid_value(gid), body, request.headers.get("if-match"))
+    @app.post("/api/global/config/{plugin}/rollback")
+    async def rollback_global_config(plugin: str, request: Request):
+        return await service.recover_config(plugin, None, request.headers.get("if-match"), scope="global", rollback=True)
 
-    @app.get("/api/deployment")
-    async def deployment():
-        return service.get_deployment()
+    @app.get("/api/startup/config/{plugin}")
+    async def startup_config(plugin: str):
+        return service.get_config(plugin, scope="startup")
 
-    @app.put("/api/deployment")
-    async def put_deployment(request: Request):
-        body = await json_body(request)
-        return service.put_deployment(body, request.headers.get("if-match"))
+    @app.put("/api/startup/config/{plugin}")
+    async def put_startup_config(plugin: str, request: Request):
+        return await service.put_config(plugin, None, await json_body(request), request.headers.get("if-match"), scope="startup")
 
-    @app.post("/api/keyword/media")
-    async def upload(request: Request):
-        service.adapter("keyword")
-        if request.headers.get("content-type", "").split(";", 1)[0].lower() not in ("image/png", "image/jpeg", "image/gif", "image/webp"):
-            raise AdminError(415, "invalid_image", "仅支持 PNG、JPEG、GIF、WEBP")
-        from xducraft_bot.plugins.xducraft_keyword.reply_codec import store_uploaded_image, MAX_MEDIA_BYTES
-        content = await limited_body(request, MAX_MEDIA_BYTES)
-        try:
-            name = store_uploaded_image(content)
-        except ValueError:
-            raise AdminError(415, "invalid_image", "图片损坏或格式不支持") from None
-        return {"name": name}
+    @app.post("/api/startup/config/{plugin}/apply")
+    async def apply_startup_config(plugin: str, request: Request):
+        return await service.recover_config(plugin, None, request.headers.get("if-match"), scope="startup")
 
-    @app.get("/api/keyword/media/{name}")
-    async def media(name: str):
-        service.adapter("keyword")
-        from xducraft_bot.plugins.xducraft_keyword.reply_codec import media_path_checked, image_mime
-        try:
-            path = media_path_checked(name)
-            mime = image_mime(path)
-        except (ValueError, OSError):
-            raise AdminError(404, "media_not_found", "图片不存在") from None
+    @app.post("/api/startup/config/{plugin}/rollback")
+    async def rollback_startup_config(plugin: str, request: Request):
+        return await service.recover_config(plugin, None, request.headers.get("if-match"), scope="startup", rollback=True)
+
+    @app.post("/api/plugins/{plugin}/media")
+    async def upload_media(plugin: str, request: Request):
+        provider = service.media_provider(plugin)
+        content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        allowed = {str(value).lower() for value in provider.mime_types}
+        if content_type not in allowed:
+            raise AdminError(415, "invalid_media", "媒体类型不受支持")
+        content = await limited_body(request, int(provider.max_bytes))
+        return await service.upload_media(plugin, content)
+
+    @app.get("/api/plugins/{plugin}/media/{name}")
+    async def read_media(plugin: str, name: str):
+        path, mime = service.resolve_media(plugin, name)
         return FileResponse(path, media_type=mime, headers={"Cache-Control": "no-store"})
 
     @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])

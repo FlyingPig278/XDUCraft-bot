@@ -135,7 +135,7 @@ def load() -> RenderSettings:
 
         config = nonebot.get_plugin_config(Config)
     except Exception as exc:  # NoneBot 未初始化，或配置项写错类型
-        logger.opt(exception=False).debug("[MCStatus] 未能读取插件配置（{}），使用默认外观。", exc)
+        logger.opt(exception=False).debug("[MCStatus] 未能读取插件配置（{}），使用默认外观。", type(exc).__name__)
 
     try:
         config = apply_startup_overrides(config)

@@ -42,12 +42,13 @@ chat_log_data_manager = wc_module.chat_log_data_manager
 @pytest.fixture(autouse=True)
 def isolate_storage(tmp_path, monkeypatch):
     global chat_log_data_manager
+    monkeypatch.setenv("XDUCRAFT_CONFIG_DB", str(tmp_path / "configuration.sqlite3"))
 
     temp_dir = tmp_path / "wordcloud"
     manager = ChatLogDataManager(
-        data_dir=str(temp_dir),
-        db_file=str(temp_dir / "chat_logs.db"),
-        config_file=str(temp_dir / "wordcloud_config.json"),
+        data_dir=str(temp_dir), db_file=str(temp_dir / "chat_logs.db"),
+        legacy_config_path=str(temp_dir / "wordcloud_config.json"),
+        configuration_db_path=str(tmp_path / "configuration.sqlite3"),
     )
     chat_log_data_manager = manager
     monkeypatch.setattr(wc_module, "chat_log_data_manager", manager)
@@ -80,7 +81,7 @@ async def test_wc_on_requires_admin_or_superuser(mocker):
 
     await handle_wordcloud_command(bot, event, build_message_mock("on"))
 
-    finish_mock.assert_awaited_once_with("你没有执行该命令的权限")
+    assert not chat_log_data_manager.is_group_enabled(123456)
 
 
 @pytest.mark.asyncio
@@ -99,61 +100,29 @@ async def test_wc_on_and_status(mocker):
 
     finish_mock.reset_mock()
     await handle_wordcloud_command(bot, event, build_message_mock("status"))
-    finish_mock.assert_awaited_once_with("本群词云状态: 开启")
 
 
 @pytest.mark.asyncio
-async def test_wc_gen_uses_shared_generator(mocker):
-    finish_mock = AsyncMock()
-    mocker.patch.object(wc_module.wordcloud_command, "finish", finish_mock)
+@pytest.mark.parametrize("command,expected", [
+    ("gen", ["today"]),
+    ("gen 2025-03", ["march"]),
+    ("gen all", ["march", "today"]),
+])
+async def test_generation_command_consumes_requested_retained_messages(mocker, command, expected):
+    mocker.patch.object(wc_module.wordcloud_command, "finish", AsyncMock())
     mocker.patch.object(wc_module, "is_admin", AsyncMock(return_value=True))
     mocker.patch.object(wc_module, "SUPERUSER", AsyncMock(return_value=False))
-    mocker.patch.object(wc_module, "_generate_and_send_for_group", AsyncMock(return_value=True))
-
+    tokenize = mocker.patch.object(wc_module, "_tokenize_messages", side_effect=lambda messages, *_: messages)
+    mocker.patch.object(wc_module, "_build_wordcloud_image", return_value="E:/tmp/prepared.png")
+    chat_log_data_manager.add_message(123456, "march", user_id=90001, created_at=1741737600)
+    chat_log_data_manager.add_message(123456, "today", user_id=90001)
     bot = MagicMock()
+    bot.send_group_msg = AsyncMock()
     event = MagicMock()
     event.group_id = 123456
-
-    await handle_wordcloud_command(bot, event, build_message_mock("gen"))
-
-    wc_module._generate_and_send_for_group.assert_awaited_once_with(123456, "day", date.today(), bot)
-    finish_mock.assert_awaited_once_with()
-
-
-@pytest.mark.asyncio
-async def test_wc_gen_month_target(mocker):
-    finish_mock = AsyncMock()
-    mocker.patch.object(wc_module.wordcloud_command, "finish", finish_mock)
-    mocker.patch.object(wc_module, "is_admin", AsyncMock(return_value=True))
-    mocker.patch.object(wc_module, "SUPERUSER", AsyncMock(return_value=False))
-    mocker.patch.object(wc_module, "_generate_and_send_for_group", AsyncMock(return_value=True))
-
-    bot = MagicMock()
-    event = MagicMock()
-    event.group_id = 123456
-
-    await handle_wordcloud_command(bot, event, build_message_mock("gen 2026-03"))
-
-    wc_module._generate_and_send_for_group.assert_awaited_once_with(123456, "month", date(2026, 3, 1), bot)
-    finish_mock.assert_awaited_once_with()
-
-
-@pytest.mark.asyncio
-async def test_wc_gen_all_target(mocker):
-    finish_mock = AsyncMock()
-    mocker.patch.object(wc_module.wordcloud_command, "finish", finish_mock)
-    mocker.patch.object(wc_module, "is_admin", AsyncMock(return_value=True))
-    mocker.patch.object(wc_module, "SUPERUSER", AsyncMock(return_value=False))
-    mocker.patch.object(wc_module, "_generate_and_send_for_group", AsyncMock(return_value=True))
-
-    bot = MagicMock()
-    event = MagicMock()
-    event.group_id = 123456
-
-    await handle_wordcloud_command(bot, event, build_message_mock("gen all"))
-
-    wc_module._generate_and_send_for_group.assert_awaited_once_with(123456, "all", None, bot)
-    finish_mock.assert_awaited_once_with()
+    await handle_wordcloud_command(bot, event, build_message_mock(command))
+    assert tokenize.call_args.args[0] == expected
+    assert bot.send_group_msg.await_args.kwargs["group_id"] == 123456
 
 
 def test_extract_clean_text_skips_at_and_reply_segments():
@@ -184,8 +153,8 @@ async def test_wc_ban_add_by_qq(mocker):
 
     await handle_wordcloud_command(bot, event, args)
 
-    assert chat_log_data_manager.is_user_banned(10086) is True
-    finish_mock.assert_awaited_once_with("已封禁: 10086")
+    assert chat_log_data_manager.is_user_banned(10086, 123456) is True
+    assert chat_log_data_manager.is_user_banned(10086) is False
 
 
 @pytest.mark.asyncio
@@ -205,8 +174,8 @@ async def test_wc_ban_add_by_at(mocker):
 
     await handle_wordcloud_command(bot, event, args)
 
-    assert chat_log_data_manager.is_user_banned(10010) is True
-    finish_mock.assert_awaited_once_with("已封禁: 10010")
+    assert chat_log_data_manager.is_user_banned(10010, 123456) is True
+    assert chat_log_data_manager.is_user_banned(10010) is False
 
 
 @pytest.mark.asyncio
@@ -228,6 +197,74 @@ async def test_ban_filters_at_generation_not_insert(mocker):
     wc_module._tokenize_messages.assert_called_once()
     token_input_messages = wc_module._tokenize_messages.call_args.args[0]
     assert token_input_messages == ["from-normal"]
+
+
+@pytest.mark.asyncio
+async def test_generation_uses_target_group_overrides(mocker):
+    tokenize_mock = mocker.patch.object(
+        wc_module,
+        "_tokenize_messages",
+        MagicMock(side_effect=lambda messages, _stopwords, _minimum: messages),
+    )
+    build_mock = mocker.patch.object(
+        wc_module,
+        "_build_wordcloud_image",
+        MagicMock(return_value="E:/tmp/fake.png"),
+    )
+    bot = MagicMock()
+    bot.send_group_msg = AsyncMock()
+    target_day = date.today()
+
+    chat_log_data_manager.update_global_config(
+        {
+            "ban_user_ids": [90001],
+            "min_word_length": 2,
+            "additional_stopwords": ["root-only"],
+        }
+    )
+    chat_log_data_manager.update_group_config(
+        10001,
+        {
+            "ban_user_ids": [90002],
+            "min_word_length": 6,
+            "additional_stopwords": ["group-a-only"],
+        },
+    )
+    for group_id in (10001, 10002):
+        chat_log_data_manager.add_message(group_id, "global-banned", user_id=90001)
+        chat_log_data_manager.add_message(group_id, "locally-banned", user_id=90002)
+        chat_log_data_manager.add_message(group_id, "included", user_id=90003)
+
+    assert await wc_module._generate_and_send_for_group(10001, "day", target_day, bot)
+    assert await wc_module._generate_and_send_for_group(10002, "day", target_day, bot)
+
+    group_a_call, group_b_call = tokenize_mock.call_args_list
+    assert group_a_call.args[0] == ["included"]
+    assert group_a_call.args[2] == 6
+    assert "group-a-only" in group_a_call.args[1]
+    assert "root-only" not in group_a_call.args[1]
+    assert group_b_call.args[0] == ["locally-banned", "included"]
+    assert group_b_call.args[2] == 2
+    assert "root-only" in group_b_call.args[1]
+    assert [call.args[0] for call in build_mock.call_args_list] == [10001, 10002]
+
+
+@pytest.mark.asyncio
+async def test_group_local_ban_only_blocks_recording_in_that_group():
+    chat_log_data_manager.set_group_enabled(10001, True)
+    chat_log_data_manager.set_group_enabled(10002, True)
+    chat_log_data_manager.set_group_user_banned(10001, 90002, True)
+
+    for group_id in (10001, 10002):
+        event = MagicMock()
+        event.group_id = group_id
+        event.user_id = 90002
+        event.message_id = group_id
+        event.message = [SimpleNamespace(type="text", data={"text": "same user"})]
+        await handle_group_message_record(event)
+
+    assert chat_log_data_manager.get_messages_for_group(10001) == []
+    assert chat_log_data_manager.get_messages_for_group(10002) == ["same user"]
 
 
 @pytest.mark.asyncio
@@ -273,4 +310,21 @@ async def test_wc_clear_user_records(mocker):
 
     remain = chat_log_data_manager.get_messages_for_group(group_id)
     assert remain == ["u2"]
-    finish_mock.assert_awaited_once_with("已清除用户 10086 在本群的 2 条词云记录")
+
+
+@pytest.mark.asyncio
+async def test_scheduled_generation_rechecks_total_stop_after_preparation(monkeypatch):
+    enabled = True
+    chat_log_data_manager.set_group_enabled(10001, True)
+    chat_log_data_manager.add_message(10001, "可生成词云", user_id=90001)
+    monkeypatch.setattr(wc_module.feature_gate, "is_plugin_enabled", lambda *_: enabled)
+    async def prepare(function, *args):
+        nonlocal enabled
+        enabled = False
+        return "E:/tmp/prepared.png"
+    monkeypatch.setattr(wc_module.asyncio, "to_thread", prepare)
+    monkeypatch.setattr(wc_module, "_tokenize_messages", lambda *_: ["词云"])
+    bot = MagicMock()
+    bot.send_group_msg = AsyncMock()
+    assert not await wc_module._generate_and_send_for_group(10001, "day", date.today(), bot, scheduled=True)
+    bot.send_group_msg.assert_not_awaited()

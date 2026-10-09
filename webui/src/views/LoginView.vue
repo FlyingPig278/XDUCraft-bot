@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NForm, NFormItem, NInput, useMessage } from 'naive-ui'
 import { ApiError, login } from '../api/client'
-import { applySession, intendedRoute } from '../state'
+import { applySession, authState, intendedRoute } from '../state'
 
 const router = useRouter()
 const message = useMessage()
@@ -32,6 +32,7 @@ async function submit(): Promise<void> {
 <template>
   <NCard title="XDUCraft 管理面板" class="login-card" :bordered="true">
     <p class="muted">仅供机器人所有者通过本机或 SSH 隧道访问。</p>
+    <NAlert v-if="authState.sessionExpired" type="warning" :show-icon="true" class="login-error">会话已过期。未保存草稿只保留在当前浏览器内存中；重新登录后将返回原页面并核对服务器版本。</NAlert>
     <NAlert v-if="errorText" type="error" :show-icon="true" class="login-error">{{ errorText }}</NAlert>
     <NForm @submit.prevent="submit">
       <NFormItem label="管理口令">
