@@ -33,14 +33,22 @@ def pytest_sessionfinish(session, exitstatus):
     _mirror.cleanup()
 
 
+@pytest.fixture(autouse=True)
+def isolated_configuration_database(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDUCRAFT_CONFIG_DB", str(tmp_path / "configuration.sqlite3"))
+    yield
+    from xducraft_bot.shared.config_store import close_databases
+    close_databases()
+
+
 @pytest.fixture
 def isolated_feature_gate(tmp_path):
     from xducraft_bot.shared import feature_gate
-    from xducraft_bot.shared.json_store import JsonStore
+    from xducraft_bot.shared.config_store import ConfigDocumentStore
     registry, store = dict(feature_gate._registry), feature_gate._store
     feature_gate._registry.clear()
-    feature_gate._store = JsonStore(
-        tmp_path / "features.json", lambda: {"groups": {}, "defaults": {}},
+    feature_gate._store = ConfigDocumentStore(
+        "feature_gate", lambda: {"groups": {}, "defaults": {}},
     )
     try:
         yield feature_gate

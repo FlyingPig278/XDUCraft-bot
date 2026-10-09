@@ -82,6 +82,13 @@ tests/*
 !tests/test_keyword_codec.py
 !tests/test_wordcloud_commands.py
 !tests/test_invite_handlers.py
+!tests/test_wordcloud_data_manager.py
+!tests/test_pig_logic.py
+!tests/test_anti_recall.py
+!tests/test_native_configuration.py
+!tests/test_keyword_reply.py
+!tests/test_mc_status_data_manager.py
+!tests/test_auto_friend.py
 
 # 预览脚本的出图产物
 /preview/
