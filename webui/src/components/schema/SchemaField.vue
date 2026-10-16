@@ -22,6 +22,25 @@ const schema = computed(() => effectiveSchema(declared.value, props.context.root
 const branches = computed(() => variants(declared.value, props.context.rootSchema))
 const type = computed(() => schemaType(schema.value))
 const bounds = computed(() => numericBounds(schema.value))
+const constraintHint = computed(() => {
+  const item = schema.value
+  if (type.value === 'integer' || type.value === 'number') {
+    const { min, max } = bounds.value
+    const lowerOpen = type.value !== 'integer' && item.exclusiveMinimum !== undefined && (item.minimum === undefined || item.exclusiveMinimum >= item.minimum)
+    const upperOpen = type.value !== 'integer' && item.exclusiveMaximum !== undefined && (item.maximum === undefined || item.exclusiveMaximum <= item.maximum)
+    if (min !== undefined && max !== undefined) return lowerOpen || upperOpen
+      ? `${lowerOpen ? '(' : '['}${min}, ${max}${upperOpen ? ')' : ']'}`
+      : `${min}–${max}`
+    if (min !== undefined) return `${lowerOpen ? '>' : '≥'} ${min}`
+    if (max !== undefined) return `${upperOpen ? '<' : '≤'} ${max}`
+  }
+  if (type.value === 'string') {
+    if (item.minLength !== undefined && item.maxLength !== undefined) return `${item.minLength}–${item.maxLength} 字符`
+    if (item.minLength !== undefined) return `至少 ${item.minLength} 字符`
+    if (item.maxLength !== undefined) return `最多 ${item.maxLength} 字符`
+  }
+  return ''
+})
 const isSecret = computed(() => Boolean(schema.value.writeOnly || schema.value['x-ui-secret']))
 watch(() => props.modelValue, (next) => {
   if (isSecret.value && next === undefined) { modifyingSecret.value = false; draftSecret.value = '' }
@@ -112,14 +131,15 @@ function addMapKey(): void {
 </script>
 
 <template>
-  <NFormItem v-if="visible(declared, context, parentValue)" :label="root ? undefined : declared.title || path.split('.').at(-1)" :required="required" :validation-status="fieldError ? 'error' : undefined" :feedback="fieldError" :show-label="!root" class="schema-field">
+  <NFormItem v-if="visible(declared, context, parentValue)" :required="required" :validation-status="fieldError ? 'error' : undefined" :feedback="fieldError" :show-feedback="Boolean(fieldError)" :show-label="!root" class="schema-field">
+    <template v-if="!root" #label><span class="field-label">{{ declared.title || path.split('.').at(-1) }}<span v-if="constraintHint" class="constraint-hint">{{ constraintHint }}</span></span></template>
     <div class="field-content">
       <p v-if="declared.description" class="field-help">{{ declared.description }}</p>
       <NAlert v-if="unsupportedReason" type="warning" :show-icon="false">{{ unsupportedReason }}。原始值保留，请使用受支持的管理入口编辑。</NAlert>
       <template v-else>
         <NSpace v-if="nativeOverride || inheritKey" class="mode-controls">
-          <NTag size="small">{{ inherited ? (context.scope === 'startup' ? '使用现有启动配置' : '使用插件基础值') : (context.scope === 'startup' ? '使用网页保存值' : '使用此处设置') }}</NTag>
-          <NButton size="small" :disabled="context.readonly || declared.readOnly" @click="inherited ? independent() : inherit()">{{ inherited ? '在这里设置' : '改用基础配置' }}</NButton>
+          <span class="mode-source">{{ inherited ? (context.scope === 'startup' ? '使用启动配置' : '使用默认值') : '已自定义' }}</span>
+          <NButton text size="small" :disabled="context.readonly || declared.readOnly" @click="inherited ? independent() : inherit()">{{ inherited ? '自定义' : (context.scope === 'startup' ? '改用启动配置' : '恢复默认') }}</NButton>
         </NSpace>
         <template v-if="isSecret">
           <NTag size="small">{{ configured(context, path) ? '已配置' : '未配置' }}</NTag>
@@ -157,8 +177,8 @@ function addMapKey(): void {
           <SchemaPrimitiveList v-else-if="type === 'array' && (schema['x-ui-widget'] === 'id-list' || schema['x-ui-widget'] === 'tags')" :schema="schema" :model-value="Array.isArray(value) ? value : []" :context="{ ...context, readonly: disabled }" :path="path" @update:model-value="update" />
           <SchemaArray v-else-if="type === 'array'" :schema="schema" :model-value="Array.isArray(value) ? value : []" :context="{ ...context, readonly: disabled }" :path="path" @update:model-value="update" />
           <NSelect v-else-if="enumOptions.length" :value="enumValues.findIndex((item) => Object.is(item, value)) < 0 ? null : enumValues.findIndex((item) => Object.is(item, value))" :options="enumOptions" :disabled="disabled || own(schema, 'const')" @update:value="update(enumValues[Number($event)])" />
-          <NCheckbox v-else-if="type === 'boolean'" :checked="value === true" :disabled="disabled" @update:checked="update">{{ schema.title || '启用' }}</NCheckbox>
-          <NInputNumber v-else-if="type === 'integer' || type === 'number'" :value="typeof value === 'number' ? value : null" :precision="type === 'integer' ? 0 : undefined" :step="schema.multipleOf || (type === 'integer' ? 1 : 0.1)" :min="bounds.min" :max="bounds.max" :disabled="disabled" @update:value="update($event === null ? undefined : $event)" />
+          <NCheckbox v-else-if="type === 'boolean'" :checked="value === true" :disabled="disabled" :aria-label="schema.title || '启用'" @update:checked="update" />
+          <NInputNumber v-else-if="type === 'integer' || type === 'number'" :value="typeof value === 'number' ? value : null" :input-props="{ 'aria-label': declared.title || path.split('.').at(-1) }" :precision="type === 'integer' ? 0 : undefined" :step="schema.multipleOf || (type === 'integer' ? 1 : 0.1)" :min="bounds.min" :max="bounds.max" :disabled="disabled" @update:value="update($event === null ? undefined : $event)" />
           <div v-else-if="type === 'string' && (schema['x-ui-widget'] === 'image' || schema['x-ui-widget'] === 'asset')" class="asset-field">
             <img v-if="context.media && typeof value === 'string' && value" :src="assetUrl(context.media, value)" :alt="schema.title || '图片'" />
             <span v-if="typeof value === 'string'">{{ value }}</span>
@@ -169,9 +189,6 @@ function addMapKey(): void {
           <NInput v-else-if="type === 'string'" :value="typeof value === 'string' ? value : ''" :type="schema['x-ui-widget'] === 'textarea' || schema['x-ui-widget'] === 'multiline' ? 'textarea' : 'text'" :input-props="schema['x-ui-widget'] === 'id' ? { inputmode: 'numeric' } : undefined" :autosize="{ minRows: 2, maxRows: 12 }" :maxlength="schema.maxLength" :disabled="disabled" @update:value="update" />
           <NTag v-else-if="type === 'null'">未设置</NTag>
           <NAlert v-else type="warning">不支持的 schema 类型或 widget，原始值保留，无法在此编辑。</NAlert>
-          <p v-if="schema.minLength || schema.maxLength || schema.minimum !== undefined || schema.maximum !== undefined || schema.exclusiveMinimum !== undefined || schema.exclusiveMaximum !== undefined" class="field-help">
-            <span v-if="schema.minLength">最短 {{ schema.minLength }} 字符；</span><span v-if="schema.maxLength">最长 {{ schema.maxLength }} 字符；</span><span v-if="schema.minimum !== undefined">≥ {{ schema.minimum }}；</span><span v-if="schema.maximum !== undefined">≤ {{ schema.maximum }}；</span><span v-if="schema.exclusiveMinimum !== undefined">&gt; {{ schema.exclusiveMinimum }}；</span><span v-if="schema.exclusiveMaximum !== undefined">&lt; {{ schema.exclusiveMaximum }}</span>
-          </p>
         </template>
       </template>
     </div>
@@ -183,6 +200,9 @@ function addMapKey(): void {
 .field-content { display: flex; flex-direction: column; gap: 10px; }
 .field-group h3 { font-size: 15px; margin: 8px 0 16px; }
 .field-help { margin: 0; opacity: .72; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.field-label { display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.constraint-hint { border-radius:4px; padding:1px 6px; background:color-mix(in srgb,currentColor 6%,transparent); font-size:11px; font-weight:400; opacity:.65; }
+.mode-source { font-size:12px; opacity:.6; }
 .asset-field { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: 0; overflow-wrap: anywhere; }
 .asset-field img { max-width: 100%; width: 160px; max-height: 120px; object-fit: contain; }
 .schema-field :deep(.n-form-item-blank) { min-width: 0; }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onUnmounted, watch } from 'vue'
-import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NSpace, NSpin, useDialog } from 'naive-ui'
+import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NIcon, NSpin, useDialog } from 'naive-ui'
+import { ArrowUndoOutline, RefreshOutline, SaveOutline } from '@vicons/ionicons5'
 import { registerDirtyForm } from '../state'
 
 const props = withDefaults(defineProps<{
@@ -47,11 +48,11 @@ onUnmounted(() => unregister?.())
     </NCollapse>
     <NSpin :show="loading"><slot /></NSpin>
     <template #footer>
-      <NSpace class="form-actions" justify="end">
-        <NButton :disabled="saving || loading" @click="confirmReload">重新加载</NButton>
-        <NButton :disabled="!dirty || saving || loading" @click="requestDiscard">放弃更改</NButton>
-        <NButton type="primary" :loading="saving" :disabled="disabled || !dirty || loading || saving || stale" @click="requestSave">{{ saveText }}</NButton>
-      </NSpace>
+      <div class="form-actions" :class="{ 'form-actions--dirty': dirty }">
+        <NButton quaternary :disabled="saving || loading" @click="confirmReload"><template #icon><NIcon :component="RefreshOutline" /></template>重新加载</NButton>
+        <NButton v-if="dirty" :disabled="saving || loading" @click="requestDiscard"><template #icon><NIcon :component="ArrowUndoOutline" /></template>放弃更改</NButton>
+        <NButton class="form-save" type="primary" :loading="saving" :disabled="disabled || !dirty || loading || saving || stale" @click="requestSave"><template #icon><NIcon :component="SaveOutline" /></template>{{ saveText }}</NButton>
+      </div>
     </template>
   </NCard>
 </template>
@@ -60,5 +61,6 @@ onUnmounted(() => unregister?.())
 .form-alert { margin-bottom: 16px; }
 .dirty-mark { color: #f0a020; font-size: 13px; }
 .error-list { margin: 0; padding-left: 20px; overflow-wrap: anywhere; }
-@media (max-width: 599px) { .form-actions { width: 100%; } .form-actions :deep(.n-space__item), .form-actions .n-button { width: 100%; } }
+.form-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; }
+@media (max-width:599px) { .form-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }.form-actions .n-button { min-height:40px; width:100%; }.form-actions--dirty .form-save { grid-column:1/-1; } }
 </style>

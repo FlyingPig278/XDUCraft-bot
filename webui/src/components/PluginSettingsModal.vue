@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NCard, NModal, NTab, NTabs } from 'naive-ui'
+import { NButton, NCard, NIcon, NModal, NTab, NTabs } from 'naive-ui'
+import { CloseOutline } from '@vicons/ionicons5'
 import type { PluginDescriptor } from '../api/types'
 import SchemaSettingsForm from './SchemaSettingsForm.vue'
 
@@ -38,8 +39,8 @@ function saved(): void { emit('saved') }
           <div>{{ plugin?.name }} · 全局设置</div>
         </div>
       </template>
-      <template #header-extra><NButton quaternary :disabled="formSaving" aria-label="关闭全局设置" @click="requestClose">关闭</NButton></template>
-      <p class="scope-copy">这些设置对所有群生效。</p>
+      <template #header-extra><NButton quaternary :disabled="formSaving" aria-label="关闭全局设置" @click="requestClose"><template #icon><NIcon :component="CloseOutline" /></template>关闭</NButton></template>
+      <p v-if="scope !== 'startup'" class="scope-copy">对所有群生效。</p>
       <NTabs v-if="scopes.length > 1" type="segment" :value="scope" @update:value="selectScope">
         <NTab v-if="plugin?.resources.global" name="global" :disabled="formSaving">全局运行参数</NTab>
         <NTab v-if="plugin?.resources.startup" name="startup" :disabled="formSaving">启动参数</NTab>

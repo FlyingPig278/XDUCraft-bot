@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
-import { NAlert, NButton, NCard, NEmpty, NList, NListItem, NSkeleton, NSpace, NTag, useMessage } from 'naive-ui'
+import { NAlert, NButton, NCard, NEmpty, NIcon, NList, NListItem, NSkeleton, NSpace, NTag, useMessage } from 'naive-ui'
+import { RefreshOutline } from '@vicons/ionicons5'
 import { apiGet } from '../api/client'
 import type { Overview, PluginsResponse } from '../api/types'
 import { connectionState } from '../state'
@@ -44,14 +45,14 @@ onMounted(load)
 
 <template>
   <main class="page system-page">
-    <div class="page-intro"><div><h1 class="page-heading">系统</h1><p class="page-subtitle">只展示 Bot 连接、主机运行状态与基础服务。业务插件的全局控制在“插件”页。</p></div><NButton secondary :loading="loading" @click="load">刷新</NButton></div>
+    <div class="page-intro"><div><h1 class="page-heading">系统</h1><p class="page-subtitle">账号连接与基础服务</p></div><NButton secondary :loading="loading" @click="load"><template #icon><NIcon :component="RefreshOutline" /></template>刷新</NButton></div>
     <NAlert v-if="errorText" type="error" class="page-alert">{{ errorText }}；{{ overview ? '已保留上次成功读取的主机状态。' : '当前状态尚未确认。' }}</NAlert>
     <NAlert v-if="overview?.restart_required" type="warning" class="page-alert">有启动参数已经保存，需要在合适时间手动重启后生效。</NAlert>
     <NSkeleton v-if="loading && !overview" text :repeat="6" />
     <div v-else-if="overview" class="system-grid">
       <NCard title="Bot 连接">
         <NEmpty v-if="!overview.bots.length" description="当前没有 Bot 连接" />
-        <NList v-else><NListItem v-for="bot in overview.bots" :key="bot.bot_id"><NSpace justify="space-between"><span><strong>{{ bot.nickname || 'Bot' }}</strong><span class="bot-id">{{ bot.bot_id }}</span></span><NTag :type="bot.connected ? 'success' : 'warning'">{{ bot.connected ? '已连接' : '未连接' }}</NTag></NSpace></NListItem></NList>
+        <NList v-else><NListItem v-for="bot in overview.bots" :key="bot.bot_id"><NSpace justify="space-between"><span><strong>{{ bot.nickname || '昵称暂不可用' }}</strong><span class="bot-id">{{ bot.bot_id }}</span></span><NTag :type="bot.connected ? 'success' : 'warning'">{{ bot.connected ? '已连接' : '未连接' }}</NTag></NSpace></NListItem></NList>
       </NCard>
       <NCard title="基础服务">
         <NEmpty v-if="catalog && !services.length" description="没有单独报告的基础服务" />

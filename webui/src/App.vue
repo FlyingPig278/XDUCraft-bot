@@ -3,9 +3,10 @@ import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
   darkTheme, dateZhCN, NButton, NConfigProvider, NDialogProvider, NDrawer, NDrawerContent,
-  NLayout, NLayoutContent, NLayoutHeader, NLayoutSider, NMenu, NMessageProvider, NSpace,
+  NIcon, NLayout, NLayoutContent, NLayoutHeader, NLayoutSider, NMenu, NMessageProvider, NSpace,
   zhCN, type MenuOption
 } from 'naive-ui'
+import { AppsOutline, ChatbubblesOutline, LogOutOutline, MenuOutline, SettingsOutline } from '@vicons/ionicons5'
 import { authState, clearDrafts, confirmDiscardDrafts, connectionState, hasDirtyForms, intendedRoute } from './state'
 import { apiGet, clearSessionToken, logout } from './api/client'
 import type { Overview } from './api/types'
@@ -23,9 +24,9 @@ const connectionChecked = ref(false)
 const activeMenu = computed(() => route.path.startsWith('/groups') ? 'groups' : route.path.startsWith('/plugins') ? 'plugins' : 'system')
 
 const menuOptions: MenuOption[] = [
-  { label: () => h(RouterLink, { to: '/groups' }, { default: () => '群聊' }), key: 'groups' },
-  { label: () => h(RouterLink, { to: '/plugins' }, { default: () => '插件' }), key: 'plugins' },
-  { label: () => h(RouterLink, { to: '/system' }, { default: () => '系统' }), key: 'system' }
+  { label: () => h(RouterLink, { to: '/groups' }, { default: () => '群聊' }), key: 'groups', icon: () => h(NIcon, { component: ChatbubblesOutline }) },
+  { label: () => h(RouterLink, { to: '/plugins' }, { default: () => '插件' }), key: 'plugins', icon: () => h(NIcon, { component: AppsOutline }) },
+  { label: () => h(RouterLink, { to: '/system' }, { default: () => '系统' }), key: 'system', icon: () => h(NIcon, { component: SettingsOutline }) }
 ]
 
 function resize(): void { narrow.value = window.innerWidth < 800 }
@@ -101,7 +102,7 @@ onUnmounted(() => {
             <NLayoutHeader bordered class="app-header">
               <NSpace align="center" justify="space-between" :wrap="false">
                 <NSpace align="center" :wrap="false">
-                  <NButton v-if="narrow" quaternary aria-label="打开导航" @click="drawerOpen = true">☰</NButton>
+                  <NButton v-if="narrow" quaternary aria-label="打开导航" @click="drawerOpen = true"><NIcon :component="MenuOutline" size="20" /></NButton>
                   <span class="header-status">
                     <span class="header-dot" :class="{ online: connectionChecked && connectionState.connectedBots > 0 }" />
                     {{ !connectionChecked ? (narrow ? '待确认' : '连接状态待确认') : connectionState.connectedBots > 0 ? (narrow ? `${connectionState.connectedBots} 在线` : `${connectionState.connectedBots} 个 Bot 在线`) : (narrow ? '未连接' : 'Bot 未连接') }}
@@ -110,7 +111,7 @@ onUnmounted(() => {
                 </NSpace>
                 <NSpace :wrap="false">
                   <NButton quaternary :aria-label="`切换主题，当前${themeMode === 'system' ? '跟随系统' : themeMode === 'light' ? '浅色' : '深色'}`" @click="cycleTheme">{{ narrow ? '主题' : `主题：${themeMode === 'system' ? '跟随系统' : themeMode === 'light' ? '浅色' : '深色'}` }}</NButton>
-                  <NButton quaternary @click="signOut">退出</NButton>
+                  <NButton quaternary @click="signOut"><template #icon><NIcon :component="LogOutOutline" /></template>退出</NButton>
                 </NSpace>
               </NSpace>
             </NLayoutHeader>

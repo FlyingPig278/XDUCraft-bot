@@ -14,9 +14,9 @@ from . import settings
 
 class AutoFriendStartup(ConfigModel):
     auto_accept_friend_group_ids: list[Annotated[StrictStr, Field(pattern=r"^[0-9]+$")]] = Field(
-        default_factory=list, title="自动好友申请群白名单",
-        description="去重正整数群号；只有重启后的运行白名单和该群功能开关同时允许才会自动接受",
-        json_schema_extra={"x-ui-group": "好友申请", "x-ui-order": 0, "x-ui-widget": "id-list",
+        default_factory=list, title="群白名单",
+        description="仅接受这些群成员的好友申请。",
+        json_schema_extra={"x-ui-order": 0, "x-ui-widget": "id-list",
                            "x-ui-scope": "global_only", "x-ui-effect-phase": "startup"},
     )
 
@@ -48,8 +48,8 @@ def status(ctx):
     effective = match and feature_gate.is_enabled("auto_accept_friend", ctx.group_id)
     return {"available": True, "applicable": match, "active_whitelist_match": match,
             "feature_effective": {"auto_accept_friend": effective}, "reason": None,
-            "details": [{"label": "当前运行白名单", "value": "包含本群" if match else "不包含本群"}],
-            "notices": [] if match else [{"type": "info", "message": "当前运行白名单不含此群，保存部署配置后须重启"}]}
+            "details": [],
+            "notices": [] if match else [{"type": "warning", "message": "本群不在当前运行白名单中；在全局设置添加后，需重启生效。"}]}
 
 def list_groups():
     pending = read_overrides().get("auto_accept_friend_group_ids", base_startup()["auto_accept_friend_group_ids"])

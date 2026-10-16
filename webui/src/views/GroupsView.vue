@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NAlert, NButton, NEmpty, NInput, NSpin, useMessage } from 'naive-ui'
+import { NAlert, NButton, NEmpty, NIcon, NInput, NSpin, useMessage } from 'naive-ui'
+import { RefreshOutline } from '@vicons/ionicons5'
 import { apiGet } from '../api/client'
 import type { GroupSummary, GroupsResponse } from '../api/types'
 import GroupIdentity from '../components/GroupIdentity.vue'
@@ -68,7 +69,7 @@ onMounted(load)
       <div>
         <h1 class="page-heading">群聊</h1>
       </div>
-      <NButton secondary :loading="loading" @click="load">刷新群列表</NButton>
+      <NButton secondary :loading="loading" @click="load"><template #icon><NIcon :component="RefreshOutline" /></template>刷新群列表</NButton>
     </div>
 
     <NAlert v-if="error" type="error" class="group-warning">

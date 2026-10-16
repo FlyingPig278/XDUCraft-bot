@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { NAlert, NButton, NCard, NSwitch, NTag, useDialog } from 'naive-ui'
+import { NAlert, NButton, NCard, NIcon, NSwitch, NTag, useDialog } from 'naive-ui'
 import { RouterLink } from 'vue-router'
+import { OptionsOutline, SettingsOutline } from '@vicons/ionicons5'
 import { ApiError, apiWrite } from '../api/client'
 import type { FeatureConfig, FeatureMeta, FeatureState, PluginDescriptor, Resource } from '../api/types'
 
@@ -137,10 +138,10 @@ async function reload(): Promise<void> {
 
 
     <div v-if="variant === 'group-list'" class="card-actions">
-      <NButton type="primary" secondary :disabled="!plugin.loaded" @click="emit('configure', 'group')">配置</NButton>
+      <NButton type="primary" secondary :disabled="!plugin.loaded" @click="emit('configure', 'group')"><template #icon><NIcon :component="OptionsOutline" /></template>配置</NButton>
     </div>
     <div v-else-if="variant === 'global-list'" class="card-actions">
-      <NButton v-if="plugin.resources.global || plugin.resources.startup" quaternary @click="emit('configure', plugin.resources.global ? 'global' : 'startup')">设置…</NButton>
+      <NButton v-if="plugin.resources.global || plugin.resources.startup" quaternary :aria-label="`${plugin.name}设置`" @click="emit('configure', plugin.resources.global ? 'global' : 'startup')"><template #icon><NIcon :component="SettingsOutline" /></template>设置</NButton>
     </div>
 
     <section v-if="variant === 'detail' && visibleFeatures.length" class="feature-section">

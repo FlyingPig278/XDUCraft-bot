@@ -87,23 +87,32 @@ function format(value: unknown, key: string): string {
   if (Array.isArray(safe)) return `${safe.length} 项`
   return '已配置'
 }
-const valueRows = computed(() => Object.entries(fields.value).map(([key, field]) => ({
-  key, label: resolve(field, props.descriptor.schema).title ?? key,
-  active: format(meta.value.active && own(meta.value.active, key) ? meta.value.active[key] : meta.value.applied?.[key], key),
-  pending: format(saved.value?.[key], key), draft: format(draft.value?.[key], key),
-  inherited: format(meta.value.defaults?.[key], key),
-  effective: format(isObject(meta.value.effective) ? meta.value.effective[key] : undefined, key)
-})))
+const valueRows = computed(() => {
+  const secretFields = meta.value.secret_fields ?? {}
+  const secretPaths = Array.isArray(secretFields) ? secretFields : Object.keys(secretFields)
+  return Object.entries(fields.value).map(([key, field]) => {
+    const running = meta.value.active && own(meta.value.active, key) ? meta.value.active : meta.value.applied
+    const hasActive = Boolean(running && own(running, key))
+    const hasBase = Boolean(meta.value.defaults && own(meta.value.defaults, key))
+    const sensitive = secretPaths.some(path => path === key || path.startsWith(`${key}.`))
+    return {
+      key, label: resolve(field, props.descriptor.schema).title ?? key,
+      hasActive, hasBase, hasEffective: isObject(meta.value.effective) && own(meta.value.effective, key),
+      runningMatchesSaved: hasActive && !sensitive && JSON.stringify(running?.[key]) === JSON.stringify(saved.value?.[key]),
+      baseMatchesSaved: hasBase && !sensitive && JSON.stringify(meta.value.defaults?.[key]) === JSON.stringify(saved.value?.[key]),
+      draftChanged: JSON.stringify(draft.value?.[key]) !== JSON.stringify(saved.value?.[key]),
+      active: format(running?.[key], key), pending: format(saved.value?.[key], key),
+      draft: format(draft.value?.[key], key), inherited: format(meta.value.defaults?.[key], key),
+      effective: format(isObject(meta.value.effective) ? meta.value.effective[key] : undefined, key)
+    }
+  })
+})
 const changedRows = computed(() => valueRows.value.filter((row) =>
   JSON.stringify(saved.value?.[row.key]) !== JSON.stringify(draft.value?.[row.key]) ||
   (meta.value.overridden ?? []).includes(row.key) !== overrideFields.value.includes(row.key) ||
   conflict.value && (JSON.stringify(conflict.value.config[row.key]) !== JSON.stringify(draft.value?.[row.key]) || props.descriptor.write_mode === 'patch' && (conflict.value.meta.overridden ?? []).includes(row.key) !== overrideFields.value.includes(row.key)) ||
   (meta.value.changed_keys ?? []).includes(row.key) || (meta.value.changed_startup_fields ?? []).includes(row.key)
 ))
-const secretRows = computed(() => {
-  const secrets = meta.value.secret_fields ?? {}
-  return Array.isArray(secrets) ? secrets.map(path => ({ path, configured: true })) : Object.entries(secrets).map(([path, value]) => ({ path, configured: typeof value === 'boolean' ? value : value.configured }))
-})
 function notice(value: unknown): string {
   if (typeof value === 'string') return value
   if (isObject(value)) return String(value.message ?? value.reason ?? value.code ?? '请检查插件提供的状态说明')
@@ -126,15 +135,15 @@ watch([dirty, saving], ([isDirty, isSaving]) => emit('state', { dirty: isDirty, 
 </script>
 
 <template>
-  <ConfigFormShell :form-id="descriptor.path" :title="title" :embedded="embedded" :description="descriptor.schema.description" :loading="loading" :saving="saving" :dirty="dirty" :stale="stale" :errors="errors" :disabled="unavailable || applying || !draft" :confirm-message="confirmation" :save-text="descriptor.scope === 'startup' ? '保存为下次启动值' : descriptor.scope === 'group' ? '保存当前群配置' : '保存全局配置'" @save="save" @discard="form.discard" @reload="reload">
+  <ConfigFormShell :form-id="descriptor.path" :title="title" :embedded="embedded" :description="descriptor.schema.description" :loading="loading" :saving="saving" :dirty="dirty" :stale="stale" :errors="errors" :disabled="unavailable || applying || !draft" :confirm-message="confirmation" :save-text="descriptor.scope === 'group' ? '保存群配置' : '保存设置'" @save="save" @discard="form.discard" @reload="reload">
     <template #conflict>
       <div v-if="conflict" class="comparison-list"><div v-for="row in changedRows" :key="row.key" class="comparison-row"><strong>{{ row.label }}</strong><span>本页原值：{{ format(saved?.[row.key], row.key) }}</span><span>本地草稿：{{ format(draft?.[row.key], row.key) }}</span><span>服务器最新：{{ format(conflict.config[row.key], row.key) }}</span><span v-if="descriptor.write_mode === 'patch'">原模式：{{ overrideLabel(Boolean(meta.overridden?.includes(row.key))) }} · 草稿模式：{{ overrideLabel(overrideFields.includes(row.key)) }} · 最新模式：{{ overrideLabel(Boolean(conflict.meta.overridden?.includes(row.key))) }}</span></div></div>
       <p v-else>最新值暂时无法读取；原版本与草稿均保留，没有自动重试覆盖。</p>
     </template>
     <NAlert v-if="unavailable" type="warning" class="resource-notice">{{ props.readonly ? '此处只显示声明的配置和状态，不能在当前页面修改。' : meta.reason || '插件声明此资源当前不可编辑；其它资源不受影响。' }}</NAlert>
     <p v-for="(item, index) in descriptor.scope === 'group' ? [] : (meta.notices ?? [])" :key="index" class="resource-note">{{ notice(item) }}</p>
-    <p v-if="descriptor.scope === 'startup'" class="resource-note">这是启动参数。保存只改变下次启动值，不会热替换当前客户端、缓存或连接。</p>
-    <NAlert v-if="meta.restart_required" type="warning" class="resource-notice">启动参数已经保存，当前运行值尚未改变。涉及字段：{{ (meta.changed_keys ?? meta.changed_startup_fields ?? []).map(key => fields[key]?.title ?? key).join('、') || '请查看表单' }}</NAlert>
+    <p v-if="descriptor.scope === 'startup' && !meta.restart_required" class="resource-note">对所有群生效，保存后需重启机器人。</p>
+    <NAlert v-if="meta.restart_required" type="warning" class="resource-notice">设置已保存，重启后生效。</NAlert>
     <NAlert v-if="meta.apply_status && !['active', 'applied', 'success'].includes(meta.apply_status)" :type="['failed','invalid'].includes(meta.apply_status) ? 'error' : 'warning'" class="resource-notice">
       {{ sharedApplyFailure ? '共享配置应用失败，请打开全局设置处理。本群配置仍可独立保存。' : meta.apply_status === 'applying' ? '正在应用已保存配置。' : meta.apply_status === 'failed' ? '已保存配置应用失败，当前仍使用上次成功值。' : meta.apply_status === 'invalid' ? '已保存配置无效，请修正字段后保存。' : `应用状态：${meta.apply_status}` }}<p v-if="meta.apply_error">{{ notice(meta.apply_error) }}</p>
       <NSpace v-if="descriptor.scope !== 'startup' && !sharedApplyFailure && meta.apply_status === 'failed'"><NButton :loading="saving" :disabled="dirty || stale || loading || unavailable || applying" @click="retry">重试应用已保存值</NButton><NButton :disabled="dirty || saving || stale || loading || unavailable || applying" @click="restoreApplied">恢复上次已应用值</NButton></NSpace>
@@ -143,10 +152,19 @@ watch([dirty, saving], ([isDirty, isSaving]) => emit('state', { dirty: isDirty, 
     <NAlert v-if="hasItems(meta.invalid_fields) || hasItems(meta.orphaned_fields)" type="warning" class="resource-notice">存在无效或不再声明的字段。{{ hasItems(meta.invalid_fields) ? `无效字段：${Array.isArray(meta.invalid_fields) ? meta.invalid_fields.join('、') : isObject(meta.invalid_fields) ? Object.keys(meta.invalid_fields).join('、') : '请检查字段错误'}` : '' }} {{ hasItems(meta.orphaned_fields) ? `未声明字段：${Array.isArray(meta.orphaned_fields) ? meta.orphaned_fields.join('、') : isObject(meta.orphaned_fields) ? Object.keys(meta.orphaned_fields).join('、') : '请检查插件声明'}` : '' }}</NAlert>
     <SchemaFormRenderer v-if="draft" :schema="schema" :model-value="draft" :scope="descriptor.scope" :readonly="Boolean(unavailable || applying || saving || loading)" :errors="errors" :defaults="meta.defaults ?? {}" :override-fields="descriptor.write_mode === 'patch' ? overrideFields : undefined" :secret-fields="meta.secret_fields ?? {}" :choices="meta.choices ?? {}" :media="media" @update:model-value="draft = $event" @update:override-fields="overrideFields = $event" />
     <NEmpty v-else-if="!loading" description="配置尚未读取，请使用重新加载" />
-    <NCollapse v-if="draft && descriptor.scope !== 'group' && (descriptor.scope === 'startup' || meta.active || meta.applied || meta.defaults || isObject(meta.effective) || dirty)" class="resource-comparisons">
-      <NCollapseItem v-if="descriptor.scope === 'startup' || meta.active || meta.applied" title="当前运行值与已保存配置（秘密字段已隐藏）" name="active"><div class="comparison-list"><div v-for="row in valueRows" :key="row.key" class="comparison-row"><strong>{{ row.label }}</strong><span>当前运行：{{ row.active }}</span><span>{{ descriptor.scope === 'startup' ? '下次启动值' : '已保存配置' }}：{{ row.pending }}</span><span v-if="dirty">本页草稿：{{ row.draft }}</span><span v-if="meta.readonly_fields?.includes(row.key)">服务端声明此字段只读</span></div><div v-for="secret in secretRows" :key="secret.path" class="comparison-row"><strong>{{ secret.path }}</strong><span>秘密字段：{{ secret.configured ? '已配置' : '未配置' }}（内容永不返回）</span></div></div></NCollapseItem>
-      <NCollapseItem v-if="meta.defaults || isObject(meta.effective)" title="基础值与当前实际值（只读）" name="defaults"><div class="comparison-list"><div v-for="row in valueRows" :key="row.key" class="comparison-row"><strong>{{ row.label }}</strong><span>基础值：{{ row.inherited }}</span><span>当前实际：{{ row.effective }}</span></div></div></NCollapseItem>
-      <NCollapseItem v-if="dirty" title="未保存差异（秘密字段已隐藏）" name="draft"><div class="comparison-list"><div v-for="row in changedRows" :key="row.key" class="comparison-row"><strong>{{ row.label }}</strong><span>原值：{{ format(saved?.[row.key], row.key) }}</span><span>草稿：{{ row.draft }}</span></div></div></NCollapseItem>
+    <NCollapse v-if="draft && descriptor.scope !== 'group' && (descriptor.scope === 'startup' || meta.active || meta.applied || meta.defaults || isObject(meta.effective) || dirty)" class="resource-comparisons" :default-expanded-names="[]">
+      <NCollapseItem title="高级信息" name="diagnostics">
+        <div class="comparison-list">
+          <div v-for="row in valueRows" :key="row.key" class="comparison-row">
+            <strong>{{ row.label }}</strong>
+            <span v-if="row.runningMatchesSaved">当前运行与已保存一致：{{ row.active }}</span>
+            <template v-else><span v-if="row.hasActive">当前运行：{{ row.active }}</span><span v-else-if="row.hasEffective">当前生效：{{ row.effective }}</span><span>{{ descriptor.scope === 'startup' ? '下次启动' : '已保存' }}：{{ row.pending }}</span></template>
+            <span v-if="row.hasBase && !row.baseMatchesSaved">{{ descriptor.scope === 'startup' ? '启动配置' : '默认值' }}：{{ row.inherited }}</span>
+            <span v-if="dirty && row.draftChanged">未保存：{{ row.draft }}</span>
+            <span v-if="meta.readonly_fields?.includes(row.key)">此项只读</span>
+          </div>
+        </div>
+      </NCollapseItem>
     </NCollapse>
   </ConfigFormShell>
 </template>

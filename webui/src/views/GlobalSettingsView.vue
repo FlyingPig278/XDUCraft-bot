@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { NAlert, NButton, NEmpty, NSpin } from 'naive-ui'
+import { NAlert, NButton, NEmpty, NIcon, NSpin } from 'naive-ui'
+import { RefreshOutline } from '@vicons/ionicons5'
 import { apiGet } from '../api/client'
 import type { PluginDescriptor, PluginsResponse } from '../api/types'
 import PluginCard from '../components/PluginCard.vue'
@@ -65,7 +66,7 @@ onMounted(load)
   <main class="page plugins-page">
     <div class="page-intro">
       <div><h1 class="page-heading">插件</h1><p class="page-subtitle">全局总开关 · 关闭后所有群暂停运行</p></div>
-      <NButton secondary :loading="loading" @click="load">刷新</NButton>
+      <NButton secondary :loading="loading" @click="load"><template #icon><NIcon :component="RefreshOutline" /></template>刷新</NButton>
     </div>
     <NAlert v-if="error" type="error" class="page-alert">{{ error }} <NButton size="small" @click="load">重试</NButton></NAlert>
     <NAlert v-for="warning in warnings" :key="warning" type="warning" class="page-alert">{{ warning }}</NAlert>
