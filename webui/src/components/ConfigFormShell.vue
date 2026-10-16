@@ -6,7 +6,7 @@ import { registerDirtyForm } from '../state'
 const props = withDefaults(defineProps<{
   formId: string; title: string; description?: string; loading?: boolean; saving?: boolean;
   dirty?: boolean; stale?: boolean; disabled?: boolean; errors?: Record<string, string | string[]>;
-  confirmMessage?: string; saveText?: string
+  confirmMessage?: string; saveText?: string; embedded?: boolean
 }>(), { description: '', loading: false, saving: false, dirty: false, stale: false, disabled: false, errors: () => ({}), confirmMessage: '', saveText: '保存' })
 const emit = defineEmits<{ save: []; discard: []; reload: [] }>()
 const dialog = useDialog()
@@ -30,8 +30,9 @@ onUnmounted(() => unregister?.())
 </script>
 
 <template>
-  <NCard :title="title">
-    <template #header-extra><span v-if="dirty" class="dirty-mark">未保存</span></template>
+  <NCard :title="embedded ? undefined : title" :bordered="!embedded" :content-style="embedded ? { padding:'0' } : undefined" :footer-style="embedded ? { padding:'16px 0 0' } : undefined">
+    <template v-if="!embedded && dirty" #header-extra><span class="dirty-mark">未保存</span></template>
+    <p v-if="embedded && dirty" class="dirty-mark">未保存</p>
     <p v-if="description" class="muted form-description">{{ description }}</p>
     <NAlert v-if="stale" type="warning" class="form-alert">
       配置已被 QQ 或其他页面修改。草稿已保留，不能直接覆盖；请比较差异，或明确放弃后重新加载。

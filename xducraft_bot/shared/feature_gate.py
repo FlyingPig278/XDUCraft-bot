@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from threading import RLock
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from nonebot.log import logger
 
-from .config_store import ConfigDocumentStore
-from .configuration import is_plugin_enabled, owner_of_feature
+from .config_store import ConfigDocumentStore, database
+from .configuration import is_plugin_enabled, owner_of_feature, set_plugin_enabled
 from .json_store import as_bool
 
 SHARED_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -26,7 +27,7 @@ SOURCE_DEFAULT = "default"
 
 
 def _default_state() -> Dict[str, Any]:
-    return {"groups": {}, "defaults": {}}
+    return {"groups": {}}
 
 
 def _normalize_state(raw: Any) -> Dict[str, Any]:
@@ -51,13 +52,7 @@ def _normalize_state(raw: Any) -> Dict[str, Any]:
             if normalized:
                 state["groups"][group_key] = normalized
 
-    raw_defaults = raw.get("defaults", {})
-    if isinstance(raw_defaults, dict):
-        state["defaults"] = {
-            str(key): as_bool(value)
-            for key, value in raw_defaults.items()
-            if isinstance(key, str) and key
-        }
+
 
     return state
 
@@ -73,10 +68,8 @@ class Feature:
         key: 稳定的英文标识，作为存储键，不要随意改名。
         name: 展示用中文名。
         description: 一句话说明这个开关控制什么。
-        default_enabled: 群里没有显式配置时的取值。
         passive: 是否会在**没有人主动发指令**的情况下发言/反应。
-            被动功能（自动推送、关键词回复、贴表情）默认必须是关的，
-            否则机器人一进群就开始刷屏。
+            所有未配置的群功能均为关闭；该字段只描述运行方式。
         getter: 可选。已有独立存储的插件在这里提供 ``(group_id) -> bool``。
         setter: 可选。对应的 ``(group_id, enabled) -> changed``。
         lister: 可选。对应的 ``() -> Iterable[int]``，列出已启用的群。
@@ -87,7 +80,6 @@ class Feature:
     key: str
     name: str
     description: str = ""
-    default_enabled: bool = False
     passive: bool = False
     getter: Optional[Callable[[int], bool]] = field(default=None, repr=False)
     setter: Optional[Callable[[int, bool], bool]] = field(default=None, repr=False)
@@ -100,19 +92,40 @@ class Feature:
 
 
 _registry: Dict[str, Feature] = {}
+_write_lock = RLock()
 
 
 def register(feature: Feature) -> Feature:
     """注册一个功能开关。重复注册同一 key 会覆盖并记一条 warning。"""
     if feature.key in _registry:
         logger.warning("[FeatureGate] 功能 {} 被重复注册，后者覆盖前者。", feature.key)
-    if feature.passive and feature.default_enabled:
-        # 这是设计约束而不是口头约定：被动功能默认开就等于默认刷屏。
-        logger.warning(
-            "[FeatureGate] 被动功能 {} 默认开启，已强制改为默认关闭。", feature.key
-        )
-        feature.default_enabled = False
+
     _registry[feature.key] = feature
+    owner = owner_of_feature(feature.key)
+    if owner is not None and owner.managed and owner.feature_keys == (feature.key,):
+        try:
+            if feature.lister is not None:
+                candidates = {int(group_id) for group_id in feature.lister()}
+                enabled_groups = {
+                    group_id for group_id in candidates
+                    if feature.getter is None or bool(feature.getter(group_id))
+                }
+            elif feature.getter is None:
+                state = _store.load()
+                enabled_groups = {
+                    int(group_id)
+                    for group_id, features in state["groups"].items()
+                    if features.get(feature.key) is True
+                }
+            else:
+                enabled_groups = None
+            if enabled_groups is not None:
+                from .config_store import database
+                database().materialize_feature_controls(
+                    owner.key, feature.key, enabled_groups,
+                )
+        except Exception as exc:
+            logger.error("[FeatureGate] 迁移功能 {} 的插件开关失败: {}", feature.key, exc)
     return feature
 
 
@@ -126,31 +139,21 @@ def all_features() -> List[Feature]:
 
 
 def resolve(key: str, group_id: int) -> Tuple[bool, str]:
-    """返回 ``(是否启用, 判定来源)``。
-
-    来源为 ``group`` 表示本群有显式配置，``default`` 表示走的是默认值。
-    """
+    """Return the saved group preference; absence is always off."""
     feature = _registry.get(key)
 
     if feature is not None and feature.getter is not None:
-        # 自带存储的插件：状态由它自己说了算，无法区分来源，统一记为 group。
         try:
             return bool(feature.getter(int(group_id))), SOURCE_GROUP
         except Exception as exc:
             logger.error("[FeatureGate] 读取功能 {} 状态失败: {}", key, exc)
-            return (feature.default_enabled, SOURCE_DEFAULT)
+            return False, SOURCE_DEFAULT
 
     state = _store.load()
     group_key = str(int(group_id))
     group_features = state["groups"].get(group_key, {})
     if key in group_features:
         return bool(group_features[key]), SOURCE_GROUP
-
-    if key in state["defaults"]:
-        return bool(state["defaults"][key]), SOURCE_DEFAULT
-
-    if feature is not None:
-        return feature.default_enabled, SOURCE_DEFAULT
     return False, SOURCE_DEFAULT
 
 
@@ -165,94 +168,92 @@ def is_enabled(key: str, group_id: Optional[int]) -> bool:
     return enabled
 
 
-def set_enabled(key: str, group_id: int, enabled: bool) -> bool:
-    """设置开关，返回是否**发生了变化**。"""
+def _set_enabled(key: str, group_id: int, enabled: bool) -> bool:
+    """Save one group preference and synchronize a sole-feature plugin gate.
+
+    Plugin-owned setters run first so their validation and eligibility checks
+    remain authoritative.  The group total switch is mirrored only after the
+    underlying store can be read back at the requested value.
+    """
     feature = _registry.get(key)
+    group_id = int(group_id)
+    target = bool(enabled)
+    preference_changed = False
 
     if feature is not None and feature.setter is not None:
+        if feature.getter is None:
+            logger.error("[FeatureGate] 功能 {} 提供 setter 但没有 getter，拒绝同步", key)
+            return False
         try:
-            return bool(feature.setter(int(group_id), bool(enabled)))
+            before = bool(feature.getter(group_id))
+            setter_changed = bool(feature.setter(group_id, target))
+            current = bool(feature.getter(group_id))
         except Exception as exc:
             logger.error("[FeatureGate] 写入功能 {} 状态失败: {}", key, exc)
             return False
-
-    group_key = str(int(group_id))
-    target = bool(enabled)
-
-    def _mutate(state: Dict[str, Any]) -> bool:
-        group_features = state["groups"].setdefault(group_key, {})
-        if group_features.get(key) == target:
+        if current != target:
+            logger.warning("[FeatureGate] 功能 {} 写入后未达到目标状态", key)
             return False
-        group_features[key] = target
-        return True
+        preference_changed = setter_changed or before != current
+    else:
+        group_key = str(group_id)
 
-    return bool(_store.mutate(_mutate))
+        def _mutate(state: Dict[str, Any]) -> bool:
+            group_features = state["groups"].setdefault(group_key, {})
+            if key in group_features and group_features[key] == target:
+                return False
+            group_features[key] = target
+            return True
 
-
-def clear_override(key: str, group_id: int) -> bool:
-    """删除本群的显式配置，回退到默认值。返回是否真的删掉了东西。"""
-    feature = _registry.get(key)
-    if feature is not None and feature.setter is not None:
-        # 自带存储的插件没有“未配置”这个状态，无法清除。
-        return False
-
-    group_key = str(int(group_id))
-
-    def _mutate(state: Dict[str, Any]) -> bool:
-        group_features = state["groups"].get(group_key)
-        if not group_features or key not in group_features:
+        try:
+            preference_changed = bool(_store.mutate(_mutate))
+            current, _ = resolve(key, group_id)
+        except Exception as exc:
+            logger.error("[FeatureGate] 写入功能 {} 状态失败: {}", key, exc)
             return False
-        del group_features[key]
-        if not group_features:
-            state["groups"].pop(group_key, None)
-        return True
-
-    return bool(_store.mutate(_mutate))
-
-
-def set_default(key: str, enabled: bool) -> bool:
-    """设置某功能的全局默认值（对所有没有显式配置的群生效）。"""
-    target = bool(enabled)
-
-    def _mutate(state: Dict[str, Any]) -> bool:
-        if state["defaults"].get(key) == target:
+        if current != target:
+            logger.warning("[FeatureGate] 功能 {} 写入后未达到目标状态", key)
             return False
-        state["defaults"][key] = target
-        return True
 
-    return bool(_store.mutate(_mutate))
+    owner = owner_of_feature(key)
+    control_changed = False
+    if owner is not None and owner.feature_keys == (key,):
+        try:
+            from .config_store import database
+            before_control = database().control(owner.key, group_id)["raw"][1]
+            set_plugin_enabled(owner.key, target, group_id, actor="feature_gate")
+            after_control = database().control(owner.key, group_id)["raw"][1]
+            control_changed = before_control != after_control
+        except Exception as exc:
+            logger.error("[FeatureGate] 同步功能 {} 的插件开关失败: {}", key, exc)
+            return False
+    return preference_changed or control_changed
 
-def get_default(key: str) -> bool:
-    """返回已注册功能的全局默认值；共享配置中的显式值优先。"""
-    feature = _registry.get(key)
-    if feature is None:
-        raise KeyError(key)
 
-    state = _store.load()
-    if key in state["defaults"]:
-        return bool(state["defaults"][key])
-    return bool(feature.default_enabled)
+def set_enabled(key: str, group_id: int, enabled: bool) -> bool:
+    with _write_lock:
+        return _set_enabled(key, group_id, enabled)
+
 
 
 def list_configured_groups() -> List[int]:
-    """列出共享存储里出现过显式功能配置的正整数群号。"""
-    groups: List[int] = []
+    """列出配置核心与功能记录中已知的正整数群号。"""
+    groups = set(database().list_known_groups())
     for group_key in _store.load()["groups"]:
         try:
             group_id = int(group_key)
         except (TypeError, ValueError):
             continue
         if group_id > 0:
-            groups.append(group_id)
-    return sorted(set(groups))
+            groups.add(group_id)
+    return sorted(groups)
 
 
 
 def list_enabled_groups(key: str) -> List[int]:
     """列出显式启用了该功能的群。
 
-    只统计**显式开启**的群：默认值是给“未知的群”兜底的，不能被枚举出来当作
-    推送目标，否则一个默认开启的功能会向机器人所在的所有群推送。
+    未保存偏好的群始终关闭，因此只能枚举显式开启或插件自有存储中的群。
     """
     feature = _registry.get(key)
     if feature is not None and feature.lister is not None:
@@ -307,9 +308,6 @@ __all__ = [
     "is_enabled",
     "is_plugin_enabled",
     "set_enabled",
-    "clear_override",
-    "set_default",
-    "get_default",
     "list_configured_groups",
     "list_enabled_groups",
     "describe_group",

@@ -66,7 +66,7 @@ class CustomConfig(ConfigModel):
 
 
 class ChangedCustomConfig(CustomConfig):
-    title: StrictStr = Field("Default", description="Changed schema contract")
+    required_limit: StrictInt
 
 
 class StartupModel(ConfigModel):
@@ -79,6 +79,14 @@ class StartupModel(ConfigModel):
 
 class NativeModel(ConfigModel):
     value: StrictInt = 1
+
+
+class ScopedNativeModel(ConfigModel):
+    value: StrictInt = 1
+    shared_token: SecretStr = Field(
+        SecretStr("scope-secret-marker"),
+        json_schema_extra={"x-ui-scope": "global_only", "writeOnly": True},
+    )
 
 
 class SyntheticBot:
@@ -156,7 +164,7 @@ class MemoryStore:
         self.groups = {GROUP_A: {**copy.deepcopy(base), "title": "Group A"}}
 
     def read(self, context: ConfigContext) -> ConfigSnapshot:
-        values = self.global_value if context.group_id is None else self.groups.get(context.group_id, self.global_value)
+        values = self.global_value if context.group_id is None else self.groups.get(context.group_id, configuration.private_json(CustomConfig()))
         values = copy.deepcopy(values)
         return ConfigSnapshot(
             values,
@@ -207,7 +215,7 @@ async def environment(
     isolated_feature_gate,
 ) -> Environment:
     feature_gate = isolated_feature_gate
-    feature_gate.register(feature_gate.Feature("custom_feature", "自定义功能", default_enabled=True))
+    feature_gate.register(feature_gate.Feature("custom_feature", "自定义功能"))
     store = MemoryStore()
     startup = MemoryStartup()
     store.blocked_groups = set()
@@ -231,6 +239,8 @@ async def environment(
         media=lambda: media,
     )
     monkeypatch.setitem(configuration._registry, declaration.key, declaration)
+    configuration.set_plugin_enabled("custom", True, actor="test")
+    feature_gate.set_enabled("custom_feature", GROUP_A, True)
     plugins = [
         FakePlugin("third_party_plain", "未声明插件"),
         FakePlugin("xducraft_custom", "动态自定义插件", declaration),
@@ -288,30 +298,17 @@ async def test_auth_security_boundary_and_static_fallback(environment: Environme
 
 
 @pytest.mark.asyncio
-async def test_discovered_custom_plugin_descriptors_and_plain_plugin_truth(environment: Environment):
+async def test_undeclared_plugin_cannot_acquire_full_disable_control(environment: Environment):
     env = environment
-    await login(env)
-    global_plugins = (await env.client.get("/api/plugins")).json()["plugins"]
-    custom = next(item for item in global_plugins if item["short_name"] == "custom")
-    plain = next(item for item in global_plugins if item["short_name"] == "third_party_plain")
-
-    assert custom["id"] == "xducraft_custom"
-    assert set(custom["resources"]) == {"global", "group", "startup"}
-    assert custom["resources"]["global"]["schema"]["title"] == "CustomConfig"
-    assert custom["resources"]["startup"]["write_mode"] == "patch"
-    assert custom["media"]["upload_url"] == "/api/plugins/custom/media"
-    assert custom["features"][0]["key"] == "custom_feature"
-    assert "control" in custom
-
-    assert plain["loaded"] is True
-    assert plain["managed"] is False
-    assert plain["resources"] == {}
-    assert "control" not in plain
-
-    group_plugins = (await env.client.get(f"/api/groups/{GROUP_A}/plugins")).json()["plugins"]
-    group_custom = next(item for item in group_plugins if item["short_name"] == "custom")
-    assert group_custom["resources"]["group"]["path"] == f"/api/groups/{GROUP_A}/config/custom"
-    assert group_custom["features"][0]["effective"] is True
+    csrf = await login(env)
+    control = await env.client.get("/api/plugins/third_party_plain/enabled")
+    assert control.status_code == 404
+    denied = await env.client.put(
+        "/api/plugins/third_party_plain/enabled",
+        json={"enabled": True},
+        headers=headers(csrf, "0" * 64),
+    )
+    assert denied.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -446,38 +443,66 @@ async def test_startup_patch_redacts_and_preserves_untouched_secret(environment:
 
 
 @pytest.mark.asyncio
-async def test_feature_and_total_plugin_controls_are_independent_and_truthful(environment: Environment):
+async def test_total_pause_preserves_independent_group_choices(environment: Environment):
     env = environment
     csrf = await login(env)
-    feature = (await env.client.get(f"/api/groups/{GROUP_A}/features/custom_feature")).json()
-    disabled = await env.client.put(
-        f"/api/groups/{GROUP_A}/features/custom_feature",
-        json={"enabled": False},
-        headers=headers(csrf, feature["revision"]),
-    )
-    assert disabled.status_code == 200
-    assert disabled.json()["config"]["enabled"] is False
-    assert env.feature_gate.resolve("custom_feature", GROUP_A)[0] is False
+    group_path = f"/api/groups/{GROUP_B}/plugins/custom/enabled"
+    initial = (await env.client.get(group_path)).json()
+    assert initial["config"]["enabled"] is False
+    enabled = await env.client.put(group_path, json={"enabled": True}, headers=headers(csrf, initial["revision"]))
+    assert enabled.status_code == 200
+    assert enabled.json()["meta"]["effective"] is True
+    assert env.feature_gate.resolve("custom_feature", GROUP_B)[0] is True
 
-    control = (await env.client.get("/api/plugins/custom/enabled")).json()
-    stopped = await env.client.put(
-        "/api/plugins/custom/enabled",
-        json={"enabled": False},
-        headers=headers(csrf, control["revision"]),
-    )
+    global_path = "/api/plugins/custom/enabled"
+    control = (await env.client.get(global_path)).json()
+    stopped = await env.client.put(global_path, json={"enabled": False}, headers=headers(csrf, control["revision"]))
     assert stopped.status_code == 200
-    assert stopped.json()["meta"]["effective"] is False
+    paused = (await env.client.get(group_path)).json()
+    assert paused["config"]["enabled"] is True
+    assert paused["meta"]["global_enabled"] is False
+    assert paused["meta"]["effective"] is False
 
-    group_control = (await env.client.get(f"/api/groups/{GROUP_B}/plugins/custom/enabled")).json()
-    assert group_control["config"]["enabled"] is False
-    assert group_control["meta"]["global_enabled"] is False
-    assert group_control["meta"]["effective"] is False
+    group_a_path = f"/api/groups/{GROUP_A}/plugins/custom/enabled"
+    stale_group_a = (await env.client.get(group_a_path)).json()
+    env.feature_gate.set_enabled("custom_feature", GROUP_A, False)
+    group_a = (await env.client.get(f"/api/groups/{GROUP_A}/plugins/custom/enabled")).json()
+    assert group_a["config"]["enabled"] is False
+    rejected = await env.client.put(group_a_path, json={"enabled": True}, headers=headers(csrf, stale_group_a["revision"]))
+    assert rejected.status_code == 409
+    restored = await env.client.put(global_path, json={"enabled": True}, headers=headers(csrf, stopped.json()["revision"]))
+    assert restored.status_code == 200
+    assert (await env.client.get(group_path)).json()["meta"]["effective"] is True
+    assert (await env.client.get(f"/api/groups/{GROUP_A}/plugins/custom/enabled")).json()["config"]["enabled"] is False
+    fresh = (await env.client.get("/api/groups/99999/plugins/custom/enabled")).json()
+    assert fresh["config"]["enabled"] is False
+    assert fresh["meta"]["effective"] is False
+
+
+@pytest.mark.asyncio
+async def test_primary_switch_does_not_report_success_when_domain_rejects_enable(environment: Environment):
+    env = environment
+    csrf = await login(env)
+    env.feature_gate.register(env.feature_gate.Feature(
+        "custom_feature", "资格受限功能",
+        getter=lambda _gid: False,
+        setter=lambda _gid, _enabled: False,
+    ))
+    path = f"/api/groups/{GROUP_A}/plugins/custom/enabled"
+    current = (await env.client.get(path)).json()
+    assert current["config"]["enabled"] is True
+    assert current["meta"]["effective"] is False
+    denied = await env.client.put(path, json={"enabled": True}, headers=headers(csrf, current["revision"]))
+    assert denied.status_code == 500
+    assert code(denied) == "storage_failed"
+    assert env.feature_gate.is_enabled("custom_feature", GROUP_A) is False
 
 
 @pytest.mark.asyncio
 async def test_owner_runtime_eligibility_does_not_rewrite_group_preference(environment: Environment):
     env = environment
     await login(env)
+    env.feature_gate.set_enabled("custom_feature", GROUP_B, True)
     env.store.blocked_groups.add(GROUP_A)
     blocked = (await env.client.get(f"/api/groups/{GROUP_A}/features/custom_feature")).json()
     unaffected = (await env.client.get(f"/api/groups/{GROUP_B}/features/custom_feature")).json()
@@ -589,10 +614,7 @@ async def test_groups_merge_live_cache_and_declared_groups(environment: Environm
     await login(env)
     configuration.set_plugin_enabled("custom", False, CONTROL_ONLY_GROUP, actor="test")
     first = (await env.client.get("/api/groups")).json()
-    assert [row["group_id"] for row in first["groups"]] == [
-        str(GROUP_A),
-        str(CONTROL_ONLY_GROUP),
-    ]
+    assert {row["group_id"] for row in first["groups"]} == {str(GROUP_A), str(CONTROL_ONLY_GROUP)}
     env.service.bots()["10"].fail = True
     second = (await env.client.get("/api/groups")).json()
     assert second["groups"][0]["stale"] is True
@@ -621,12 +643,57 @@ async def test_real_bound_business_declaration_shares_store_with_qq_reader(
     async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
         auth = await client.post("/api/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
         csrf = auth.json()["csrf_token"]
-        current = (await client.get("/api/global/config/pig_bot")).json()
+        current = (await client.get(f"/api/groups/{GROUP_A}/config/pig_bot")).json()
+        draft = {**current["config"], "max_forward_results": 9}
         saved = await client.put(
-            "/api/global/config/pig_bot",
-            json={"max_forward_results": 9},
+            f"/api/groups/{GROUP_A}/config/pig_bot",
+            json=draft,
             headers=headers(csrf, current["revision"]),
         )
         assert saved.status_code == 200
         assert saved.json()["config"]["max_forward_results"] == 9
-        assert manager.get_max_forward_results() == 9
+        assert manager.get_max_forward_results(GROUP_A) == 9
+
+
+@pytest.mark.asyncio
+async def test_group_resource_never_exposes_shared_secret_in_runtime_metadata(tmp_path: Path, isolated_feature_gate):
+    declaration = configuration.register_config("api_scoped_secret", ScopedNativeModel)
+    plugin = FakePlugin("xducraft_api_scoped_secret", "作用域边界", declaration)
+    service = AdminService(lambda: discover_catalog([plugin]), isolated_feature_gate, SimpleNamespace(), lambda: {})
+    app = create_app(service, AdminAuth(PASSWORD), tmp_path / "missing-dist")
+    transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 12345))
+    async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
+        await client.post("/api/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+        response = await client.get(f"/api/groups/{GROUP_A}/config/api_scoped_secret")
+        assert response.status_code == 200
+        assert response.json()["config"] == {"value": 1}
+        assert "scope-secret-marker" not in response.text
+        assert "shared_token" not in response.json()["meta"]["effective"]
+    assert configuration.get_config("api_scoped_secret", "group", GROUP_A).shared_token.get_secret_value() == "scope-secret-marker"
+
+
+@pytest.mark.asyncio
+async def test_group_draft_can_save_after_shared_settings_update(tmp_path: Path, isolated_feature_gate):
+    declaration = configuration.register_config("api_modal_isolation", ScopedNativeModel)
+    plugin = FakePlugin("xducraft_api_modal_isolation", "弹窗隔离", declaration)
+    service = AdminService(lambda: discover_catalog([plugin]), isolated_feature_gate, SimpleNamespace(), lambda: {})
+    app = create_app(service, AdminAuth(PASSWORD), tmp_path / "missing-dist")
+    transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 12345))
+    async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
+        auth = await client.post("/api/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+        csrf = auth.json()["csrf_token"]
+        group_path = f"/api/groups/{GROUP_A}/config/api_modal_isolation"
+        group = (await client.get(group_path)).json()
+        global_path = "/api/global/config/api_modal_isolation"
+        shared = (await client.get(global_path)).json()
+        saved_shared = await client.put(
+            global_path, json={"set": {"shared_token": "changed-scope-secret"}, "unset": []},
+            headers=headers(csrf, shared["revision"]),
+        )
+        assert saved_shared.status_code == 200
+        saved_group = await client.put(
+            group_path, json={"value": 5}, headers=headers(csrf, group["revision"]),
+        )
+        assert saved_group.status_code == 200
+        assert saved_group.json()["config"] == {"value": 5}
+        assert "changed-scope-secret" not in saved_group.text

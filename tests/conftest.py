@@ -1,4 +1,5 @@
 """Collect plugin tests in a disposable source/resource mirror, never live data."""
+import gc
 import os
 import shutil
 import sys
@@ -30,6 +31,9 @@ finally:
 
 
 def pytest_sessionfinish(session, exitstatus):
+    from xducraft_bot.shared.config_store import close_databases
+    close_databases()
+    gc.collect()
     _mirror.cleanup()
 
 
@@ -42,13 +46,25 @@ def isolated_configuration_database(tmp_path, monkeypatch):
 
 
 @pytest.fixture
+def enable_plugin(isolated_configuration_database):
+    from xducraft_bot.shared.configuration import set_plugin_enabled
+
+    def enable(plugin_id, *group_ids):
+        set_plugin_enabled(plugin_id, True, actor="test")
+        for group_id in group_ids:
+            set_plugin_enabled(plugin_id, True, group_id, actor="test")
+
+    return enable
+
+
+@pytest.fixture
 def isolated_feature_gate(tmp_path):
     from xducraft_bot.shared import feature_gate
     from xducraft_bot.shared.config_store import ConfigDocumentStore
     registry, store = dict(feature_gate._registry), feature_gate._store
     feature_gate._registry.clear()
     feature_gate._store = ConfigDocumentStore(
-        "feature_gate", lambda: {"groups": {}, "defaults": {}},
+        "feature_gate", lambda: {"groups": {}},
     )
     try:
         yield feature_gate

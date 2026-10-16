@@ -242,11 +242,11 @@ def is_plugin_enabled(plugin_id: str, group_id: Optional[int] = None) -> bool:
     return bool(plugin_control(plugin_id, group_id)["effective"])
 
 
-def set_plugin_enabled(plugin_id: str, enabled: Optional[bool], group_id: Optional[int] = None, *, actor="plugin") -> dict:
+def set_plugin_enabled(plugin_id: str, enabled: bool, group_id: Optional[int] = None, *, actor="plugin") -> dict:
     declaration = get_declaration(plugin_id)
     if not declaration.managed:
         raise ConfigurationError("unsupported_control", "该插件未声明完整停用能力")
-    if enabled is not None and type(enabled) is not bool:
+    if type(enabled) is not bool:
         raise ConfigurationError("invalid_config", "插件开关必须为布尔值")
     from .config_store import config_write_context, database
     with config_write_context(actor, group_id):

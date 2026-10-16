@@ -20,12 +20,12 @@ const media = window.matchMedia('(prefers-color-scheme: dark)')
 const resolvedTheme = computed(() => (themeMode.value === 'dark' || (themeMode.value === 'system' && systemDark.value)) ? darkTheme : null)
 const authenticatedLayout = computed(() => route.name !== 'login' && authState.authenticated)
 const connectionChecked = ref(false)
-const activeMenu = computed(() => route.path.startsWith('/groups') ? 'groups' : route.path.startsWith('/settings') ? 'settings' : 'overview')
+const activeMenu = computed(() => route.path.startsWith('/groups') ? 'groups' : route.path.startsWith('/plugins') ? 'plugins' : 'system')
 
 const menuOptions: MenuOption[] = [
-  { label: () => h(RouterLink, { to: '/overview' }, { default: () => '运行概况' }), key: 'overview' },
-  { label: () => h(RouterLink, { to: '/groups' }, { default: () => '群工作台' }), key: 'groups' },
-  { label: () => h(RouterLink, { to: '/settings' }, { default: () => '全局与系统设置' }), key: 'settings' }
+  { label: () => h(RouterLink, { to: '/groups' }, { default: () => '群聊' }), key: 'groups' },
+  { label: () => h(RouterLink, { to: '/plugins' }, { default: () => '插件' }), key: 'plugins' },
+  { label: () => h(RouterLink, { to: '/system' }, { default: () => '系统' }), key: 'system' }
 ]
 
 function resize(): void { narrow.value = window.innerWidth < 800 }
@@ -106,7 +106,7 @@ onUnmounted(() => {
                     <span class="header-dot" :class="{ online: connectionChecked && connectionState.connectedBots > 0 }" />
                     {{ !connectionChecked ? (narrow ? '待确认' : '连接状态待确认') : connectionState.connectedBots > 0 ? (narrow ? `${connectionState.connectedBots} 在线` : `${connectionState.connectedBots} 个 Bot 在线`) : (narrow ? '未连接' : 'Bot 未连接') }}
                   </span>
-                  <RouterLink v-if="connectionState.restartRequired" class="restart-link" to="/settings/startup">{{ narrow ? '待重启' : '有设置等待重启' }}</RouterLink>
+                  <RouterLink v-if="connectionState.restartRequired" class="restart-link" to="/plugins">{{ narrow ? '待重启' : '有设置等待重启' }}</RouterLink>
                 </NSpace>
                 <NSpace :wrap="false">
                   <NButton quaternary :aria-label="`切换主题，当前${themeMode === 'system' ? '跟随系统' : themeMode === 'light' ? '浅色' : '深色'}`" @click="cycleTheme">{{ narrow ? '主题' : `主题：${themeMode === 'system' ? '跟随系统' : themeMode === 'light' ? '浅色' : '深色'}` }}</NButton>

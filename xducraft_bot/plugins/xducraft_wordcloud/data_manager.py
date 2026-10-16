@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from nonebot.log import logger
 
+from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.config_store import ConfigDocumentStore
 
 DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -13,14 +14,24 @@ DEFAULT_DB_FILE = os.path.join(DEFAULT_DATA_DIR, "chat_logs.db")
 DEFAULT_CONFIG_FILE = os.path.join(DEFAULT_DATA_DIR, "wordcloud_config.json")
 
 GROUP_CONFIG_KEYS = (
+    "ban_user_ids",
     "min_word_length",
     "max_words",
     "additional_stopwords",
     "footer_subtitle",
     "footer_branding_enabled",
     "footer_branding_text",
-    "ban_user_ids",
 )
+
+GROUP_VALUE_DEFAULTS = {
+    "ban_user_ids": [],
+    "min_word_length": 2,
+    "max_words": 200,
+    "additional_stopwords": [],
+    "footer_subtitle": "",
+    "footer_branding_enabled": True,
+    "footer_branding_text": "Powered by FlyingPig278",
+}
 
 
 class ChatLogDataManager:
@@ -45,16 +56,11 @@ class ChatLogDataManager:
     @staticmethod
     def _default_config() -> Dict[str, Any]:
         return {
+            "schema_version": 2,
             "enabled_groups": [],
             "ban_user_ids": [],
-            "min_word_length": 2,
-            "max_words": 200,
             "retention_days": 1095,
-            "additional_stopwords": [],
-            "footer_subtitle": "",
-            "footer_branding_enabled": True,
-            "footer_branding_text": "Powered by FlyingPig278",
-            "group_overrides": {},
+            "groups": {},
         }
 
     @staticmethod
@@ -103,18 +109,10 @@ class ChatLogDataManager:
 
         groups = raw.get("enabled_groups", [])
         if isinstance(groups, list):
-            normalized_groups = []
-            seen = set()
-            for group_id in groups:
-                try:
-                    gid = int(group_id)
-                except (TypeError, ValueError):
-                    continue
-                if gid in seen:
-                    continue
-                normalized_groups.append(gid)
-                seen.add(gid)
-            cfg["enabled_groups"] = normalized_groups
+            cfg["enabled_groups"] = list(dict.fromkeys(
+                gid for gid in (int(value) for value in groups if str(value).lstrip("-").isdigit())
+                if gid > 0
+            ))
 
         try:
             cfg["ban_user_ids"] = self._normalize_ids(
@@ -122,56 +120,47 @@ class ChatLogDataManager:
             )
         except ValueError:
             pass
-
-        min_word_length = raw.get("min_word_length", cfg["min_word_length"])
-        max_words = raw.get("max_words", cfg["max_words"])
         retention_days = raw.get("retention_days", cfg["retention_days"])
-        if isinstance(min_word_length, int):
-            cfg["min_word_length"] = max(1, int(min_word_length))
-        if isinstance(max_words, int):
-            cfg["max_words"] = max(20, int(max_words))
         if isinstance(retention_days, int):
             cfg["retention_days"] = max(30, int(retention_days))
 
-        try:
-            cfg["additional_stopwords"] = self._normalize_stopwords(raw.get("additional_stopwords", []))
-        except ValueError:
-            pass
-
-        footer_subtitle = raw.get("footer_subtitle", "")
-        if isinstance(footer_subtitle, str):
-            cfg["footer_subtitle"] = footer_subtitle.strip()
-
-        footer_branding_enabled = raw.get("footer_branding_enabled", cfg["footer_branding_enabled"])
-        if isinstance(footer_branding_enabled, bool):
-            cfg["footer_branding_enabled"] = footer_branding_enabled
-
-        footer_branding_text = raw.get("footer_branding_text", cfg["footer_branding_text"])
-        if isinstance(footer_branding_text, str):
-            cfg["footer_branding_text"] = footer_branding_text.strip()
-
-        normalized_overrides: Dict[str, Dict[str, Any]] = {}
-        raw_overrides = raw.get("group_overrides", {})
-        if isinstance(raw_overrides, dict):
-            for raw_group_id, raw_override in raw_overrides.items():
+        legacy = raw.get("schema_version") != 2
+        raw_groups = raw.get("group_overrides", {}) if legacy else raw.get("groups", {})
+        known_groups = set(cfg["enabled_groups"])
+        if legacy:
+            known_groups.update(feature_gate.list_configured_groups())
+        if isinstance(raw_groups, dict):
+            for raw_group_id in raw_groups:
                 try:
-                    group_id = int(raw_group_id)
+                    gid = int(raw_group_id)
                 except (TypeError, ValueError):
                     continue
-                if group_id <= 0 or not isinstance(raw_override, dict):
-                    continue
-                normalized_override: Dict[str, Any] = {}
-                for key in GROUP_CONFIG_KEYS:
-                    if key not in raw_override or raw_override[key] is None:
-                        continue
-                    try:
-                        normalized_override[key] = self._normalize_group_value(key, raw_override[key])
-                    except ValueError:
-                        continue
-                if normalized_override:
-                    normalized_overrides[str(group_id)] = normalized_override
-        cfg["group_overrides"] = normalized_overrides
+                if gid > 0:
+                    known_groups.add(gid)
 
+        legacy_defaults = dict(GROUP_VALUE_DEFAULTS)
+        if legacy:
+            for key in GROUP_CONFIG_KEYS:
+                if key == "ban_user_ids":
+                    continue
+                if key in raw:
+                    try:
+                        legacy_defaults[key] = self._normalize_group_value(key, raw[key])
+                    except ValueError:
+                        pass
+
+        for gid in known_groups:
+            source = raw_groups.get(str(gid), raw_groups.get(gid, {})) if isinstance(raw_groups, dict) else {}
+            source = source if isinstance(source, dict) else {}
+            values: Dict[str, Any] = {}
+            for key, fallback in GROUP_VALUE_DEFAULTS.items():
+                effective_fallback = legacy_defaults[key] if legacy else fallback
+                raw_value = source.get(key, effective_fallback)
+                try:
+                    values[key] = self._normalize_group_value(key, raw_value)
+                except ValueError:
+                    values[key] = list(effective_fallback) if isinstance(effective_fallback, list) else effective_fallback
+            cfg["groups"][str(gid)] = values
         return cfg
 
     def _connect(self) -> sqlite3.Connection:
@@ -223,13 +212,7 @@ class ChatLogDataManager:
     def list_configured_groups(self) -> List[int]:
         cfg = self.load_config()
         groups = {int(group_id) for group_id in cfg.get("enabled_groups", []) if int(group_id) > 0}
-        for raw_group_id in cfg.get("group_overrides", {}):
-            try:
-                group_id = int(raw_group_id)
-            except (TypeError, ValueError):
-                continue
-            if group_id > 0:
-                groups.add(group_id)
+        groups.update(int(group_id) for group_id in cfg.get("groups", {}) if int(group_id) > 0)
         return sorted(groups)
 
     def is_group_enabled(self, group_id: int) -> bool:
@@ -255,24 +238,22 @@ class ChatLogDataManager:
 
     @staticmethod
     def _export_group_config_from(cfg: Dict[str, Any], group_id: int) -> Dict[str, Any]:
-        override = cfg.get("group_overrides", {}).get(str(int(group_id)), {})
-        if not isinstance(override, dict):
-            override = {}
-        return {key: override.get(key) for key in GROUP_CONFIG_KEYS}
+        values = cfg.get("groups", {}).get(str(int(group_id)), {})
+        if not isinstance(values, dict):
+            values = {}
+        return {
+            key: values.get(key, list(default) if isinstance(default, list) else default)
+            for key, default in GROUP_VALUE_DEFAULTS.items()
+        }
 
     def export_group_config(self, group_id: int) -> Dict[str, Any]:
         return self._export_group_config_from(self.load_config(), group_id)
 
     def get_effective_group_config(self, group_id: int) -> Dict[str, Any]:
         cfg = self.load_config()
-        raw_override = self._export_group_config_from(cfg, group_id)
-        effective = {key: cfg[key] for key in GROUP_CONFIG_KEYS}
-        for key, value in raw_override.items():
-            if value is not None:
-                effective[key] = value
-
+        effective = self._export_group_config_from(cfg, group_id)
         global_bans = [int(item) for item in cfg.get("ban_user_ids", [])]
-        local_bans = [int(item) for item in (raw_override.get("ban_user_ids") or [])]
+        local_bans = [int(item) for item in effective["ban_user_ids"]]
         effective["ban_user_ids"] = list(dict.fromkeys([*global_bans, *local_bans]))
         return effective
 
@@ -288,20 +269,14 @@ class ChatLogDataManager:
 
         normalized_changes: Dict[str, Any] = {}
         for key, value in changes.items():
-            normalized_changes[key] = None if value is None else self._normalize_group_value(key, value)
+            if value is None:
+                raise ValueError("wordcloud_group_values_must_be_direct")
+            normalized_changes[key] = self._normalize_group_value(key, value)
+        if set(normalized_changes) != set(GROUP_CONFIG_KEYS):
+            raise ValueError("wordcloud_group_config_incomplete")
 
         def mutate(cfg: Dict[str, Any]) -> Dict[str, Any]:
-            overrides = cfg.setdefault("group_overrides", {})
-            current = dict(overrides.get(str(gid), {}))
-            for key, value in normalized_changes.items():
-                if value is None:
-                    current.pop(key, None)
-                else:
-                    current[key] = value
-            if current:
-                overrides[str(gid)] = current
-            else:
-                overrides.pop(str(gid), None)
+            cfg.setdefault("groups", {})[str(gid)] = normalized_changes
             return self._export_group_config_from(cfg, gid)
 
         return self._config_store.mutate(mutate)
@@ -348,9 +323,9 @@ class ChatLogDataManager:
         uid = int(user_id)
 
         def mutate(cfg: Dict[str, Any]) -> bool:
-            overrides = cfg.setdefault("group_overrides", {})
-            current = dict(overrides.get(str(gid), {}))
-            users = [int(item) for item in current.get("ban_user_ids", [])]
+            groups = cfg.setdefault("groups", {})
+            current = self._export_group_config_from(cfg, gid)
+            users = [int(item) for item in current["ban_user_ids"]]
             if banned and uid in users:
                 return False
             if (not banned) and uid not in users:
@@ -358,19 +333,16 @@ class ChatLogDataManager:
             current["ban_user_ids"] = (
                 [*users, uid] if banned else [item for item in users if item != uid]
             )
-            overrides[str(gid)] = current
+            groups[str(gid)] = current
             return True
 
         return bool(self._config_store.mutate(mutate))
 
     def update_global_config(self, changes: Dict[str, Any]) -> Dict[str, Any]:
-        """原子更新全局词云参数，并始终保留群启用列表。"""
-        allowed = {*GROUP_CONFIG_KEYS, "retention_days"}
-        if not isinstance(changes, dict):
-            raise ValueError("wordcloud_config_must_be_object")
-        unknown = set(changes) - allowed
-        if unknown:
-            raise ValueError("unknown_wordcloud_config_key")
+        """Atomically update global retention and safety policy."""
+        allowed = {"ban_user_ids", "retention_days"}
+        if not isinstance(changes, dict) or set(changes) != allowed:
+            raise ValueError("wordcloud_global_config_incomplete")
 
         def mutate(cfg: Dict[str, Any]) -> Dict[str, Any]:
             candidate = dict(cfg)

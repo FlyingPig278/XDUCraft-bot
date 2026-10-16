@@ -60,6 +60,11 @@ def isolate_pig_storage(tmp_path, monkeypatch):
     yield
 
 
+@pytest.fixture
+def enabled_pig(enable_plugin, isolate_pig_storage):
+    enable_plugin("pig_bot", 123456)
+
+
 @pytest.fixture(autouse=True)
 def reset_query_cooldown():
     pig_module._query_cooldown_tracker.clear()
@@ -147,78 +152,92 @@ def test_pick_random_image_empty_returns_none():
     assert pick_random_image([]) is None
 
 
-def test_data_manager_max_forward_results_default_and_normalize():
-    assert pig_data_manager.get_max_forward_results() == 5
+def test_data_manager_group_defaults_and_strict_limits():
+    assert pig_data_manager.export_group_config(10001) == {"max_forward_results": 5}
+    assert pig_data_manager.get_group_config(10001) == {
+        "auto_push_enabled": False,
+        "query_enabled": False,
+    }
+    assert 10001 not in pig_data_manager.list_configured_groups()
 
-    pig_data_manager.set_max_forward_results(8)
-    assert pig_data_manager.get_max_forward_results() == 8
+    pig_data_manager.update_group_config(10001, {"max_forward_results": 8})
+    assert pig_data_manager.get_max_forward_results(10001) == 8
+    for invalid in (0, None, True, "8"):
+        with pytest.raises(ValueError):
+            pig_data_manager.update_group_config(10001, {"max_forward_results": invalid})
+    with pytest.raises(ValueError):
+        pig_data_manager.update_group_config(10001, {})
+    assert pig_data_manager.get_max_forward_results(10001) == 8
 
-    pig_data_manager.set_max_forward_results(0)
-    assert pig_data_manager.get_max_forward_results() == 1
 
-
-def test_group_max_forward_override_inherits_and_preserves_feature_flags():
-    pig_data_manager.set_query_enabled(10001, False)
+def test_group_max_forward_limit_is_independent_and_preserves_feature_flags():
     pig_data_manager.set_auto_push_enabled(10001, True)
-    pig_data_manager.set_query_enabled(10002, False)
+    pig_data_manager.set_query_enabled(10002, True)
 
-    assert pig_data_manager.export_group_config(19999) == {"max_forward_results": None}
-    assert pig_data_manager.get_max_forward_results(19999) == 5
+    assert pig_data_manager.export_group_config(19999) == {"max_forward_results": 5}
     assert 19999 not in pig_data_manager.list_configured_groups()
 
     assert pig_data_manager.update_group_config(10001, {"max_forward_results": 2}) == {
         "max_forward_results": 2
     }
-    assert pig_data_manager.get_max_forward_results(10001) == 2
-    assert pig_data_manager.get_max_forward_results(10002) == 5
-    assert pig_data_manager.get_group_config(10001) == {
-        "auto_push_enabled": True,
-        "query_enabled": False,
-    }
-    assert pig_data_manager.get_group_config(10002)["query_enabled"] is False
-
-    pig_data_manager.set_max_forward_results(8)
+    pig_data_manager.update_group_config(10002, {"max_forward_results": 8})
     assert pig_data_manager.get_max_forward_results(10001) == 2
     assert pig_data_manager.get_max_forward_results(10002) == 8
-
-    assert pig_data_manager.update_group_config(10001, {"max_forward_results": None}) == {
-        "max_forward_results": None
-    }
-    assert pig_data_manager.get_max_forward_results(10001) == 8
+    assert pig_data_manager.get_max_forward_results(19999) == 5
     assert pig_data_manager.get_group_config(10001) == {
         "auto_push_enabled": True,
         "query_enabled": False,
     }
-    assert pig_data_manager.get_group_config(10002)["query_enabled"] is False
+    assert pig_data_manager.get_group_config(10002) == {
+        "auto_push_enabled": False,
+        "query_enabled": True,
+    }
 
 
 def test_forward_selection_uses_group_specific_limit():
     images = [{"url": f"https://example.com/{index}.png"} for index in range(10)]
-    pig_data_manager.set_max_forward_results(5)
+    pig_data_manager.update_group_config(10002, {"max_forward_results": 7})
     pig_data_manager.update_group_config(10001, {"max_forward_results": 2})
 
     assert len(pig_module._select_forward_images(images, 10001)) == 2
-    assert len(pig_module._select_forward_images(images, 10002)) == 5
+    assert len(pig_module._select_forward_images(images, 10002)) == 7
     assert len(pig_module._select_forward_images(images)) == 5
 
 
-def test_legacy_import_is_once_and_manager_instances_share_committed_changes(tmp_path):
+@pytest.mark.parametrize("legacy_source", ["json", "sqlite"])
+def test_legacy_import_is_once_and_manager_instances_share_committed_changes(tmp_path, legacy_source):
+    from xducraft_bot.shared.config_store import ConfigDocumentStore
     path = tmp_path / "legacy.json"
-    path.write_text(json.dumps({"groups": {"123456": {"query_enabled": False}}}), encoding="utf-8")
+    legacy = {
+        "max_forward_results": 9,
+        "groups": {"123456": {"query_enabled": False}, "234567": {"max_forward_results": 3}},
+    }
+    path.write_text(json.dumps(legacy), encoding="utf-8")
     database_path = str(tmp_path / "import.sqlite3")
+    raw_store = ConfigDocumentStore("pig_bot", lambda: legacy, database_path=database_path)
+    if legacy_source == "sqlite":
+        raw_store.load()
     first = DataManager(legacy_config_path=str(path), configuration_db_path=database_path)
     assert first.get_group_config(123456)["query_enabled"] is False
+    assert first.get_max_forward_results(123456) == 9
+    assert first.get_max_forward_results(234567) == 3
+    assert first.get_max_forward_results(345678) == 5
+    assert first.get_group_config(345678)["query_enabled"] is False
+    persisted = raw_store.load()
+    assert persisted["schema_version"] == 2
+    assert "max_forward_results" not in persisted
     first.update_group_config(123456, {"max_forward_results": 2})
     path.write_text("not JSON", encoding="utf-8")
     second = DataManager(legacy_config_path=str(path), configuration_db_path=database_path)
     assert second.get_max_forward_results(123456) == 2
     second.set_auto_push_enabled(123456, True)
     assert first.get_group_config(123456) == {"query_enabled": False, "auto_push_enabled": True}
-    assert first.update_group_config(123456, {}) == {"max_forward_results": 2}
+    assert first.export_group_config(123456) == {"max_forward_results": 2}
+    assert first.get_max_forward_results(234567) == 3
 
 
 @pytest.mark.asyncio
-async def test_handle_pig_command_query_disabled(mocker):
+async def test_handle_pig_command_query_disabled(mocker, enabled_pig):
     mocker.patch.object(pig_module.pig_command, "finish", AsyncMock())
     fetch = mocker.patch.object(pig_module, "fetch_all_images", AsyncMock())
     mocker.patch.object(pig_module, "is_admin", AsyncMock(return_value=False))
@@ -236,7 +255,7 @@ async def test_handle_pig_command_query_disabled(mocker):
 
 
 @pytest.mark.asyncio
-async def test_handle_pig_command_toggle_auto_on(mocker):
+async def test_handle_pig_command_toggle_auto_on(mocker, enabled_pig):
     finish_mock = AsyncMock()
     mocker.patch.object(pig_module.pig_command, "finish", finish_mock)
     mocker.patch.object(pig_module, "is_admin", AsyncMock(return_value=True))
@@ -253,7 +272,7 @@ async def test_handle_pig_command_toggle_auto_on(mocker):
 
 
 @pytest.mark.asyncio
-async def test_handle_pig_command_query_multi_results_send_forward(mocker):
+async def test_handle_pig_command_query_multi_results_send_forward(mocker, enabled_pig):
     send_mock = AsyncMock()
     finish_mock = AsyncMock()
     sample_mock = mocker.patch.object(
@@ -273,7 +292,7 @@ async def test_handle_pig_command_query_multi_results_send_forward(mocker):
     ]))
 
     pig_data_manager.set_query_enabled(123456, True)
-    pig_data_manager.set_max_forward_results(5)
+    pig_data_manager.update_group_config(123456, {"max_forward_results": 5})
 
     _, event = build_fake_group_event(group_id=123456, self_id="10000")
     mocker.patch.object(pig_module, "GroupMessageEvent", object)
@@ -299,7 +318,7 @@ async def test_handle_pig_command_query_multi_results_send_forward(mocker):
 
 
 @pytest.mark.asyncio
-async def test_handle_pig_command_private_multi_results_send_private_forward(mocker):
+async def test_handle_pig_command_private_multi_results_send_private_forward(mocker, enabled_pig):
     class FakePrivateEvent:
         pass
 
@@ -342,7 +361,7 @@ async def test_handle_pig_command_private_multi_results_send_private_forward(moc
 
 
 @pytest.mark.asyncio
-async def test_handle_pig_command_empty_keyword_returns_random_single_image(mocker):
+async def test_handle_pig_command_empty_keyword_returns_random_single_image(mocker, enabled_pig):
     finish_mock = AsyncMock()
     send_mock = AsyncMock()
     mocker.patch.object(pig_module.pig_command, "finish", finish_mock)
@@ -371,7 +390,7 @@ async def test_handle_pig_command_empty_keyword_returns_random_single_image(mock
 
 
 @pytest.mark.asyncio
-async def test_handle_pig_command_query_cooldown_blocks_frequent_requests(mocker):
+async def test_handle_pig_command_query_cooldown_blocks_frequent_requests(mocker, enabled_pig):
     class FakePrivateEvent:
         pass
 
@@ -397,35 +416,36 @@ async def test_handle_pig_command_query_cooldown_blocks_frequent_requests(mocker
 
 
 
-def test_pig_declaration_validates_and_binds_inherited_revision():
+def test_pig_declaration_validates_independent_group_revisions():
     from xducraft_bot.shared.configuration import ConfigContext, ConfigurationError
     from xducraft_bot.plugins.xducraft_pig_bot.configuration import bind_configuration
     declaration = bind_configuration(pig_data_manager)
+    assert set(declaration.resources) == {"group"}
     resource = declaration.resources["group"]
     ctx = ConfigContext(10001)
     before = resource.read(ctx)
     resource.write(ctx, {"max_forward_results": 2})
-    assert pig_data_manager.get_max_forward_results(10001) == 2
-    pig_data_manager.set_max_forward_results(8)
     current = resource.read(ctx)
-    assert current.meta["effective"]["max_forward_results"] == 2
+    assert current.values == {"max_forward_results": 2}
     assert current.revision_values != before.revision_values
-    with pytest.raises(ConfigurationError):
-        resource.write(ctx, {"max_forward_results": 0})
-    resource.write(ctx, {"max_forward_results": None})
-    assert resource.read(ctx).meta["effective"]["max_forward_results"] == 8
+    resource.write(ConfigContext(10002), {"max_forward_results": 8})
+    assert resource.read(ctx).revision_values == current.revision_values
+    assert resource.read(ConfigContext(10003)).values == {"max_forward_results": 5}
+    for invalid in (0, None, True, "8"):
+        with pytest.raises(ConfigurationError):
+            resource.write(ctx, {"max_forward_results": invalid})
+    assert resource.read(ctx).revision_values == current.revision_values
 
 
 def test_happy_declaration_only_changes_selected_group(tmp_path, monkeypatch):
     from xducraft_bot.shared.config_store import ConfigDocumentStore
-    from xducraft_bot.shared.configuration import ConfigContext
+    from xducraft_bot.shared.configuration import ConfigContext, ConfigurationError
     from xducraft_bot.plugins.xducraft_happy_bot import data_manager as happy
     from xducraft_bot.plugins.xducraft_happy_bot.configuration import bind_configuration
     monkeypatch.setattr(happy, "_store", ConfigDocumentStore(
         "happy_bot", happy._default_data, happy._normalize,
         database_path=str(tmp_path / "happy.sqlite3"),
     ))
-    happy.set_emoji_id("321")
     happy.set_emoji_id("123", 10001)
     happy.set_emoji_id("456", 10002)
     declaration = bind_configuration(happy)
@@ -434,26 +454,32 @@ def test_happy_declaration_only_changes_selected_group(tmp_path, monkeypatch):
     resource.write(ConfigContext(10001), {"emoji_id": "789"})
     assert happy.get_emoji_id(10001) == "789"
     assert happy.get_emoji_id(10002) == "456"
-    assert happy.get_emoji_id() == "321"
-    resource.write(ConfigContext(10001), {"emoji_id": None})
-    assert happy.get_emoji_id(10001) == "321"
-    assert happy.get_emoji_id(10002) == "456"
+    assert happy.get_emoji_id(10003) == happy.DEFAULT_EMOJI_ID
+    before = resource.read(ConfigContext(10002))
+    for invalid in (None, "", "not-a-number"):
+        with pytest.raises(ConfigurationError):
+            resource.write(ConfigContext(10001), {"emoji_id": invalid})
+    assert happy.get_emoji_id(10001) == "789"
+    assert resource.read(ConfigContext(10002)).revision_values == before.revision_values
 
 
 @pytest.mark.asyncio
-async def test_scheduled_pig_rechecks_stop_after_fetch(monkeypatch):
-    enabled = True
+async def test_scheduled_pig_rechecks_stop_after_fetch(monkeypatch, enable_plugin):
+    from xducraft_bot.shared.configuration import set_plugin_enabled
+    enable_plugin("pig_bot", 10001)
     pig_data_manager.set_auto_push_enabled(10001, True)
+
     async def prepare():
-        nonlocal enabled
-        enabled = False
+        set_plugin_enabled("pig_bot", False, actor="test")
         return [{"url": "https://example.com/pig.png"}]
-    monkeypatch.setattr(pig_module.feature_gate, "is_plugin_enabled", lambda *_: enabled)
-    monkeypatch.setattr(pig_module, "fetch_all_images", prepare)
+
+    fetch = AsyncMock(side_effect=prepare)
+    monkeypatch.setattr(pig_module, "fetch_all_images", fetch)
     bot = MagicMock()
     bot.send_group_msg = AsyncMock()
     monkeypatch.setattr(pig_module, "get_bots", lambda: {"1": bot})
     await pig_module.push_random_pig_job()
+    fetch.assert_awaited_once()
     bot.send_group_msg.assert_not_awaited()
 
 
@@ -463,6 +489,70 @@ def test_invalid_legacy_configuration_is_not_silently_replaced(tmp_path, legacy)
     path.write_text(legacy, encoding="utf-8")
     with pytest.raises(ValueError):
         DataManager(legacy_config_path=str(path), configuration_db_path=str(tmp_path / "broken.sqlite3"))
-    path.write_text('{"max_forward_results": 9, "groups": {}}', encoding="utf-8")
+    path.write_text('{"max_forward_results": 9, "groups": {"123456": {}}}', encoding="utf-8")
     manager = DataManager(legacy_config_path=str(path), configuration_db_path=str(tmp_path / "broken.sqlite3"))
-    assert manager.get_max_forward_results() == 9
+    assert manager.get_max_forward_results(123456) == 9
+    assert manager.get_max_forward_results(234567) == 5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("private", [False, True])
+async def test_pig_total_off_blocks_queries_and_auto_push(mocker, private):
+    fetch = mocker.patch.object(pig_module, "fetch_all_images", AsyncMock())
+    send = mocker.patch.object(pig_module.pig_command, "send", AsyncMock())
+    finish = mocker.patch.object(pig_module.pig_command, "finish", AsyncMock())
+    pig_data_manager.set_query_enabled(123456, True)
+    pig_data_manager.set_auto_push_enabled(123456, True)
+    _, event = build_fake_group_event()
+    mocker.patch.object(pig_module, "GroupMessageEvent", type(event))
+    if private:
+        event = MagicMock(user_id=10001)
+    bot = MagicMock()
+    bot.send_group_msg = AsyncMock()
+    bot.send_group_forward_msg = AsyncMock()
+    bot.call_api = AsyncMock()
+    mocker.patch.object(pig_module, "get_bots", return_value={"1": bot})
+
+    assert not pig_module.feature_gate.is_plugin_enabled("pig_bot")
+    await handle_pig_command(bot, event, build_message_mock("test"))
+    await pig_module.push_random_pig_job()
+
+    fetch.assert_not_awaited()
+    send.assert_not_awaited()
+    finish.assert_not_awaited()
+    bot.send_group_msg.assert_not_awaited()
+    bot.send_group_forward_msg.assert_not_awaited()
+    bot.call_api.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_auto_push_enabled_group_does_not_enable_another(mocker, enable_plugin):
+    enable_plugin("pig_bot", 10001)
+    for group_id in (10001, 10002):
+        pig_data_manager.set_auto_push_enabled(group_id, True)
+    mocker.patch.object(pig_module, "fetch_all_images", AsyncMock(return_value=[
+        {"url": "https://example.com/pig.png"},
+    ]))
+    bot = MagicMock()
+    bot.send_group_msg = AsyncMock()
+    mocker.patch.object(pig_module, "get_bots", return_value={"1": bot})
+
+    await pig_module.push_random_pig_job()
+
+    bot.send_group_msg.assert_awaited_once()
+    assert bot.send_group_msg.await_args.kwargs["group_id"] == 10001
+    assert not pig_module.feature_gate.is_plugin_enabled("pig_bot", 10002)
+
+
+@pytest.mark.asyncio
+async def test_pig_toggle_requires_group_permission(mocker, enabled_pig):
+    finish = mocker.patch.object(pig_module.pig_command, "finish", AsyncMock())
+    mocker.patch.object(pig_module, "is_admin", AsyncMock(return_value=False))
+    mocker.patch.object(pig_module, "SUPERUSER", AsyncMock(return_value=False))
+    event_type, event = build_fake_group_event()
+    mocker.patch.object(pig_module, "GroupMessageEvent", event_type)
+
+    await handle_pig_command(MagicMock(), event, build_message_mock("auto on"))
+
+    assert pig_data_manager.get_group_config(event.group_id)["auto_push_enabled"] is False
+    finish.assert_awaited_once()

@@ -13,7 +13,6 @@
     /关键词 <群号> mode <词> <匹配方式>       包含 / 完全 / 开头 / 正则
     /关键词 <群号> join set|show|clear       配置入群欢迎
     /关键词 <群号> cooldown <秒>             设置默认冷却
-    /关键词 global add|del ...              全局规则（限 SUPERUSER）
 """
 
 from __future__ import annotations
@@ -41,7 +40,7 @@ from nonebot.typing import T_State
 from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.configuration import PROTOCOL_KEY
 from xducraft_bot.shared.onebot import notify_privately, send_text_sections
-from xducraft_bot.shared.permissions import can_manage_group, is_superuser
+from xducraft_bot.shared.permissions import can_manage_group
 
 from . import data_manager as dm
 from .reply_codec import persist_reply_media, restore_reply
@@ -60,7 +59,6 @@ feature_gate.register(feature_gate.Feature(
     key=FEATURE_KEY,
     name="关键词回复",
     description="匹配关键词或有新成员入群时自动回复",
-    default_enabled=False,
     passive=True,
 ))
 
@@ -115,6 +113,8 @@ async def _send_saved_replies(
 ) -> None:
     """按顺序发送已保存的消息；入群欢迎的首条消息会提及新成员。"""
     for index, reply in enumerate(replies):
+        if not feature_gate.is_plugin_enabled("keyword"):
+            return
         if passive and (
             not feature_gate.is_plugin_enabled("keyword", event.group_id)
             or not feature_gate.is_enabled(FEATURE_KEY, event.group_id)
@@ -176,8 +176,7 @@ async def handle_member_join(bot: Bot, event: GroupIncreaseNoticeEvent):
 def _describe_rule(rule: Dict, index: Optional[int] = None) -> str:
     prefix = f"{index}. " if index is not None else ""
     state = "" if rule.get("enabled", True) else "（已停用）"
-    scope = {"group": "本群", "global": "全局"}.get(rule.get("scope", ""), "")
-    scope_text = f"[{scope}] " if scope else ""
+    scope_text = "[本群] " if rule.get("scope") == "group" else ""
     keywords = " / ".join(rule["keywords"])
     mode = dm.MATCH_LABELS.get(rule["match"], rule["match"])
     previews = [
@@ -198,7 +197,7 @@ async def _start_capture(
     state: T_State,
     *,
     kind: str,
-    group_id: Optional[int],
+    group_id: int,
     keyword: Optional[str] = None,
 ) -> None:
     state[_CAPTURE_STATE_KEY] = {
@@ -207,7 +206,7 @@ async def _start_capture(
         "keyword": keyword,
         "replies": [],
     }
-    scope = "全局" if group_id is None else f"群 {group_id}"
+    scope = f"群 {group_id}"
     target = f"{scope}关键词「{keyword}」" if kind == "rule" else f"{scope}入群欢迎"
     await keyword_command.pause(
         f"开始录制{target}的回复。\n"
@@ -225,8 +224,7 @@ def _private_entry_help() -> str:
         "请发送：/关键词 <群号>\n"
         "例如：/关键词 123456789\n\n"
         "不知道群号时，只需在目标群发送一次 /关键词；"
-        "我会把该群的专用菜单私聊给你，群里不会显示菜单。\n"
-        "SUPERUSER 管理全局规则可发送：/关键词 global list"
+        "我会把该群的专用菜单私聊给你，群里不会显示菜单。"
     )
 
 
@@ -277,6 +275,8 @@ async def handle_command(
     state: T_State,
     args: Message = CommandArg(),
 ):
+    if not feature_gate.is_plugin_enabled("keyword"):
+        return
     if isinstance(event, GroupMessageEvent):
         await _redirect_group_configuration(bot, event)
         return
@@ -285,9 +285,6 @@ async def handle_command(
     if not head:
         await keyword_command.finish(_private_entry_help())
 
-    if head[0].lower() == "global":
-        await _handle_global(bot, event, args, state)
-        return
 
     try:
         group_id = int(head[0])
@@ -400,7 +397,7 @@ async def _handle_group_command(
     if action in {"show", "查看"}:
         if len(raw_args) < 2:
             await keyword_command.finish(f"缺少关键词。请发送：{prefix} show <关键词>")
-        rule = dm.find_rule(raw_args[1], group_id=group_id) or dm.find_rule(raw_args[1], group_id=None)
+        rule = dm.find_rule(raw_args[1], group_id=group_id)
         if rule is None:
             await keyword_command.finish(f"没有找到关键词「{raw_args[1]}」。")
         await keyword_command.send(
@@ -509,11 +506,6 @@ async def _finish_capture(state: T_State) -> None:
             await keyword_command.finish(
                 f"保存失败：关键词「{keyword}」已存在，回复不合法，或规则数量已达上限。"
             )
-        if group_id is None:
-            await keyword_command.finish(
-                f"已保存全局关键词「{keyword}」的 {len(replies)} 条回复。\n"
-                "查看规则：/关键词 global list"
-            )
         await keyword_command.finish(
             f"已保存群 {group_id} 关键词「{keyword}」的 {len(replies)} 条回复。\n"
             f"查看内容：/关键词 {group_id} show {keyword}"
@@ -537,6 +529,8 @@ async def receive_configured_reply(
     state: T_State,
     matcher: Matcher,
 ) -> None:
+    if not feature_gate.is_plugin_enabled("keyword"):
+        return
     capture = state.get(_CAPTURE_STATE_KEY)
     if not isinstance(capture, dict):
         await matcher.finish("录制状态已失效，请重新执行配置命令。")
@@ -555,6 +549,8 @@ async def receive_configured_reply(
         await _finish_capture(state)
 
     reply = await persist_reply_media(message)
+    if not feature_gate.is_plugin_enabled("keyword"):
+        return
     if not reply:
         await matcher.reject_receive(
             "configured_reply",
@@ -640,7 +636,7 @@ async def _show_list(bot: Bot, event: MessageEvent, group_id: int) -> None:
         f"群 {group_id} 当前状态",
         f"自动回复总开关：{'开启' if enabled else '关闭'}",
         f"入群欢迎：{'已配置 ' + str(len(join_replies)) + ' 条' if join_replies else '未配置'}",
-        f"关键词规则：{len(rules)} 条（含全局规则）",
+        f"关键词规则：{len(rules)} 条",
         f"关键词默认冷却：{dm.get_default_cooldown(group_id)} 秒",
         "",
         _group_command_help(group_id),
@@ -653,63 +649,3 @@ async def _show_list(bot: Bot, event: MessageEvent, group_id: int) -> None:
     await keyword_command.finish()
 
 
-async def _handle_global(
-    bot: Bot,
-    event: MessageEvent,
-    args: Message,
-    state: T_State,
-) -> None:
-    """全局规则管理，只有 SUPERUSER 能用。"""
-    if not await is_superuser(bot, event):
-        await keyword_command.finish("全局关键词只有超级用户可以配置。")
-
-    tokens = args.extract_plain_text().strip().split(maxsplit=2)
-    sub_action = tokens[1].lower() if len(tokens) > 1 else "list"
-
-    if sub_action in {"list", "列表"}:
-        rules = dm.get_global_rules()
-        if not rules:
-            await keyword_command.finish("还没有配置全局关键词。")
-        body = "\n".join(_describe_rule(rule, index + 1) for index, rule in enumerate(rules))
-        await keyword_command.finish(f"全局关键词（所有启用的群都生效）：\n{body}")
-
-    if sub_action in {"add", "添加"}:
-        head, reply_message = _split_message_head(args, 3)
-        if len(head) < 3:
-            await keyword_command.finish(
-                "用法：/关键词 global add <关键词> [回复内容]\n"
-                "省略回复内容后可单独录制图文或多条消息。"
-            )
-        keyword = head[2]
-        if dm.find_rule(keyword, group_id=None) is not None:
-            await keyword_command.finish(f"添加失败：全局关键词「{keyword}」已存在。")
-        if reply_message is None:
-            await _start_capture(
-                state,
-                kind="rule",
-                group_id=None,
-                keyword=keyword,
-            )
-
-        reply = await persist_reply_media(reply_message)
-        if dm.add_rule(keyword, [reply], group_id=None) is None:
-            await keyword_command.finish(
-                f"添加失败：全局关键词「{keyword}」的回复为空、过长，或规则数量已达上限。"
-            )
-        await keyword_command.finish(
-            f"已添加全局关键词「{keyword}」，所有启用自动回复的群都会生效。"
-        )
-
-    if sub_action in {"del", "delete", "删除"}:
-        if len(tokens) < 3:
-            await keyword_command.finish("用法：/关键词 global del <关键词>")
-        if dm.remove_rule(tokens[2], group_id=None):
-            await keyword_command.finish(f"已删除全局关键词「{tokens[2]}」。")
-        await keyword_command.finish(f"没有找到全局关键词「{tokens[2]}」。")
-
-    await keyword_command.finish(
-        "用法：\n"
-        "/关键词 global list\n"
-        "/关键词 global add <词> [回复]\n"
-        "/关键词 global del <词>"
-    )

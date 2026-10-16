@@ -9,9 +9,7 @@
     /功能              查看本群所有功能的开关状态
     /功能 on <名字>     开启
     /功能 off <名字>    关闭
-    /功能 reset <名字>  清除本群配置，回到默认值
     /功能 <群号> ...    在私聊中查看或管理指定群
-    /功能 default on|off <名字>   设置全局默认（SUPERUSER）
 """
 
 from __future__ import annotations
@@ -66,7 +64,6 @@ def _usage_text(*, private: bool) -> str:
         f"{prefix} — 查看{scope}所有功能状态\n"
         f"{prefix} on <功能名> — 开启\n"
         f"{prefix} off <功能名> — 关闭\n"
-        f"{prefix} reset <功能名> — 回到默认值\n"
         f"\n{_known_features_text()}"
     )
 
@@ -97,32 +94,11 @@ async def handle_features(bot: Bot, event: MessageEvent, args: Message = Command
 
     action = tokens[0].lower()
 
-    if action in {"default", "默认"}:
-        if private:
-            await feature_command.finish("全局默认值不能绑定群号，请由超级用户在群聊中设置。")
-        if not await is_superuser(bot, event):
-            await feature_command.finish("设置全局默认值需要超级用户权限。")
-        if len(tokens) < 3 or tokens[1].lower() not in {"on", "off"}:
-            await feature_command.finish("用法：/功能 default on|off <功能名>")
-        feature_name = " ".join(tokens[2:])
-        feature = _resolve_feature(feature_name)
-        if feature is None:
-            await feature_command.finish(f"没有找到功能「{feature_name}」。\n{_known_features_text()}")
-        if not feature.uses_shared_store:
-            await feature_command.finish(
-                f"「{feature.name}」使用插件自己的开关配置，不支持设置全局默认值。"
-            )
-        enabled = tokens[1].lower() == "on"
-        feature_gate.set_default(feature.key, enabled)
-        await feature_command.finish(
-            f"已将「{feature.name}」的全局默认设为{'开启' if enabled else '关闭'}。\n"
-            "（只影响没有单独配置过的群）"
-        )
 
     if not private and not await can_manage(bot, event):
         await feature_command.finish("只有群管理员可以修改功能开关。发送 /功能 可以查看当前状态。")
 
-    if action in {"on", "off", "开", "关", "reset", "重置"}:
+    if action in {"on", "off", "开", "关"}:
         if len(tokens) < 2:
             await feature_command.finish(f"用法：/功能 {action} <功能名>\n{_known_features_text()}")
 
@@ -134,20 +110,6 @@ async def handle_features(bot: Bot, event: MessageEvent, args: Message = Command
         if feature.superuser_only and not await is_superuser(bot, event):
             await feature_command.finish(f"「{feature.name}」只有超级用户可以修改。")
 
-        if action in {"reset", "重置"}:
-            if not feature.uses_shared_store:
-                await feature_command.finish(
-                    f"「{feature.name}」使用插件自己的开关配置，没有可清除的默认值覆盖。"
-                )
-            if feature_gate.clear_override(feature.key, group_id):
-                enabled, _ = feature_gate.resolve(feature.key, group_id)
-                target = f"群 {group_id} 的" if private else ""
-                await feature_command.finish(
-                    f"已清除{target}「{feature.name}」配置，"
-                    f"现在跟随默认值：{'开启' if enabled else '关闭'}"
-                )
-            target = f"群 {group_id} 的" if private else ""
-            await feature_command.finish(f"{target}「{feature.name}」本来就没有单独配置。")
 
         enabled = action in {"on", "开"}
         changed = feature_gate.set_enabled(feature.key, group_id, enabled)
@@ -169,7 +131,7 @@ def _render_overview(group_id: int, *, show_group_id: bool = False) -> str:
     lines = [title]
     for item in snapshot:
         mark = "✅" if item["enabled"] else "⬜"
-        source = "本群配置" if item["source"] == feature_gate.SOURCE_GROUP else "默认值"
+        source = "本群已保存" if item["source"] == feature_gate.SOURCE_GROUP else "尚未设置（关闭）"
         passive = "（被动触发）" if item["passive"] else ""
         restricted = "（仅超级用户可改）" if item["superuser_only"] else ""
         lines.append(f"{mark} {item['name']} [{item['key']}] · {source}{passive}{restricted}")

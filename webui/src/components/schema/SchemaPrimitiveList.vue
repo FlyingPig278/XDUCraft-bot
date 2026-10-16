@@ -63,7 +63,7 @@ function move(index: number, offset: number): void {
         <NInput v-model:value="draft" :input-props="schema['x-ui-widget'] === 'id-list' ? { inputmode: 'numeric' } : undefined" :maxlength="itemSchema.maxLength" :placeholder="editing === null ? itemSchema.title || '输入新项目' : '编辑所选项目'" @keydown.enter.prevent="commit" />
         <NSpace><NButton :disabled="!canCommit" @click="commit">{{ editing === null ? '添加' : '更新' }}</NButton><NButton v-if="editing !== null" @click="editing = null; draft = ''">取消编辑</NButton></NSpace>
       </div>
-      <p class="list-help">{{ modelValue.length }} 项<span v-if="schema.minItems !== undefined">，最少 {{ schema.minItems }}</span><span v-if="schema.maxItems !== undefined">，最多 {{ schema.maxItems }}</span><span v-if="schema.uniqueItems">；项目不可重复</span><span v-if="itemSchema.pattern">；格式 {{ itemSchema.pattern }}</span></p>
+      <p class="list-help">{{ modelValue.length }} 项<span v-if="schema.minItems !== undefined">，最少 {{ schema.minItems }}</span><span v-if="schema.maxItems !== undefined">，最多 {{ schema.maxItems }}</span><span v-if="schema.uniqueItems">；项目不可重复</span></p>
     </template>
   </div>
 </template>

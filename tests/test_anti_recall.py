@@ -19,8 +19,11 @@ from xducraft_bot.plugins.xducraft_anti_recall.data_manager import AntiRecallSto
 
 
 @pytest.fixture(autouse=True)
-def isolate_configuration(tmp_path, monkeypatch):
-    monkeypatch.setenv("XDUCRAFT_CONFIG_DB", str(tmp_path / "configuration.sqlite3"))
+def running_plugin(enable_plugin):
+    groups = (2000, 3000, 10001, 10002)
+    enable_plugin("anti_recall", *groups)
+    for group_id in groups:
+        anti_recall.feature_gate.set_enabled("anti_recall", group_id, True)
 
 def _private_event(text: str = "/撤回") -> PrivateMessageEvent:
     message = Message(text)
@@ -247,9 +250,10 @@ async def test_failed_record_does_not_downgrade_sibling_image_to_text():
     assert all(segment.type == "text" for segment in bot.direct_messages[0])
 
 
-def test_retained_sql_records_obey_group_cap_and_empty_patch_is_noop(tmp_path):
+def test_retained_records_obey_independent_caps_and_reject_incomplete_replacement(tmp_path):
     store = _temp_store(tmp_path)
-    store.update_config({"max_query_results": 5})
+    for group_id in (10001, 10002):
+        store.update_group_config(group_id, {"max_query_results": 5})
     for group_id in (10001, 10002):
         for message_id in range(12):
             assert store.record_recall(
@@ -260,10 +264,14 @@ def test_retained_sql_records_obey_group_cap_and_empty_patch_is_noop(tmp_path):
     store.update_group_config(10001, {"max_query_results": 2})
     assert len(store.list_recalls([10001], limit=100)) == 2
     assert len(store.list_recalls([10002], limit=100)) == 5
-    assert store.update_group_config(10001, {}) == {"max_query_results": 2}
+    with pytest.raises(ValueError):
+        store.update_group_config(10001, {})
     assert len(store.list_recalls([10001], limit=100)) == 2
-    store.update_group_config(10001, {"max_query_results": None})
-    assert len(store.list_recalls([10001], limit=100)) == 5
+    with pytest.raises(ValueError):
+        store.update_group_config(10001, {"max_query_results": None})
+    store.update_group_config(10001, {"max_query_results": 30})
+    assert len(store.list_recalls([10001], limit=100)) == 12
+    assert len(store.list_recalls([10002], limit=100)) == 5
     assert len(store.list_recalls([10001], limit=1)) == 1
     assert all(item["count"] == 12 for item in store.list_recent_recall_group_stats())
 
@@ -276,27 +284,26 @@ def test_anti_recall_declaration_global_policy_and_group_limit(tmp_path):
     root = declaration.resources["global"]
     group = declaration.resources["group"]
     values = root.read(ConfigContext()).values
-    values.update(exempt_user_ids=["090001", "90001"], max_query_results=6, save_media=False)
+    before_other_group = group.read(ConfigContext(10002)).values
+    values.update(exempt_user_ids=["090001", "90001"], save_media=False)
     root.write(ConfigContext(), values)
     assert store.is_user_exempt(90001)
     assert store.get_config()["exempt_user_ids"] == [90001]
     group.write(ConfigContext(10001), {"max_query_results": 2})
     assert store.get_effective_group_config(10001)["max_query_results"] == 2
-    assert store.get_effective_group_config(10002)["max_query_results"] == 6
+    assert group.read(ConfigContext(10002)).values == before_other_group
     with pytest.raises(ConfigurationError):
         group.write(ConfigContext(10001), {"max_query_results": 3, "save_media": True})
     assert store.get_config()["save_media"] is False
 
 
 @pytest.mark.asyncio
-async def test_total_stop_blocks_selected_group_but_feature_off_retains_read(tmp_path, monkeypatch):
+async def test_total_stop_blocks_selected_group_without_deleting_retained_records(tmp_path, monkeypatch):
     from unittest.mock import AsyncMock
+    from xducraft_bot.shared.configuration import set_plugin_enabled
     store = _temp_store(tmp_path)
     store.record_recall(10001, 1, 90001, "成员", 90002, 100, [{"type": "text", "text": "保留记录"}])
     monkeypatch.setattr(anti_recall, "store", store)
-    monkeypatch.setattr(anti_recall.feature_gate, "is_enabled", lambda *_: False)
-    enabled = True
-    monkeypatch.setattr(anti_recall.feature_gate, "is_plugin_enabled", lambda *_: enabled)
     class Bot:
         async def get_group_info(self, **kwargs):
             return {"group_name": "测试群"}
@@ -306,17 +313,19 @@ async def test_total_stop_blocks_selected_group_but_feature_off_retains_read(tmp
     await anti_recall._send_group_records(bot, _private_event(), 10001, 30)
     assert bot.call_api.await_count == 1
     bot.call_api.reset_mock()
-    enabled = False
+    set_plugin_enabled("anti_recall", False, 10001)
     await anti_recall._send_group_records(bot, _private_event(), 10001, 30)
     bot.call_api.assert_not_awaited()
     bot.send_private_msg.assert_not_awaited()
+    assert len(store.list_recalls([10001], limit=30)) == 1
 
 
 @pytest.mark.asyncio
 async def test_cleanup_respects_global_total_stop(monkeypatch):
     from unittest.mock import MagicMock
+    from xducraft_bot.shared.configuration import set_plugin_enabled
     cleanup = MagicMock()
     monkeypatch.setattr(anti_recall.store, "cleanup", cleanup)
-    monkeypatch.setattr(anti_recall.feature_gate, "is_plugin_enabled", lambda *_: False)
+    set_plugin_enabled("anti_recall", False)
     await anti_recall.cleanup_job()
     cleanup.assert_not_called()

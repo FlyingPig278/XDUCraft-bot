@@ -7,8 +7,6 @@
 
     /ans            查看本群当前表情
     /ans set <ID>   设置本群表情
-    /ans clear      清除本群设置，回到全局默认
-    /ans global set <ID>   设置全局默认（SUPERUSER）
 """
 
 from __future__ import annotations
@@ -22,9 +20,9 @@ from nonebot.rule import Rule
 
 from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.configuration import PROTOCOL_KEY
-from xducraft_bot.shared.permissions import can_manage, is_superuser
+from xducraft_bot.shared.permissions import can_manage
 
-from .data_manager import DEFAULT_EMOJI_ID, clear_group_emoji_id, get_emoji_id, set_emoji_id
+from .data_manager import get_emoji_id, set_emoji_id
 from .configuration import DECLARATION
 
 __plugin_meta__ = PluginMetadata(
@@ -40,7 +38,6 @@ feature_gate.register(feature_gate.Feature(
     key=FEATURE_KEY,
     name="表情回应",
     description="被 @ 或被回复时自动贴表情",
-    default_enabled=False,
     passive=True,
 ))
 
@@ -48,8 +45,6 @@ ANSWER_USAGE = (
     "用法：\n"
     "/ans — 查看本群当前表情\n"
     "/ans set <emoji_id> — 设置本群表情\n"
-    "/ans clear — 回到全局默认\n"
-    "/ans global set <emoji_id> — 设置全局默认（超级用户）\n"
     "开关本功能请用 /功能 on 表情回应"
 )
 
@@ -79,6 +74,8 @@ at_me_reply = on_message(rule=Rule(_should_react), priority=99, block=False)
 
 @answer_command.handle()
 async def handle_answer_command(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
+    if not feature_gate.is_plugin_enabled("happy_bot", getattr(event, "group_id", None)):
+        return
     if not isinstance(event, GroupMessageEvent):
         await answer_command.finish("请在群里使用该命令。")
 
@@ -97,18 +94,6 @@ async def handle_answer_command(bot: Bot, event: MessageEvent, args: Message = C
 
     action = tokens[0].lower()
 
-    if action == "global":
-        if not await is_superuser(bot, event):
-            await answer_command.finish("设置全局默认需要超级用户权限。")
-        if len(tokens) != 3 or tokens[1].lower() != "set" or not tokens[2].isdigit():
-            await answer_command.finish("用法：/ans global set <emoji_id>")
-        set_emoji_id(tokens[2], group_id=None)
-        await answer_command.finish(f"已将全局默认表情设为 {tokens[2]}。")
-
-    if action == "clear":
-        if clear_group_emoji_id(event.group_id):
-            await answer_command.finish(f"已清除本群表情设置，回到全局默认 {get_emoji_id()}。")
-        await answer_command.finish("本群本来就没有单独设置表情。")
 
     if action == "set":
         if len(tokens) != 2 or not tokens[1].isdigit():
@@ -129,7 +114,7 @@ async def handle_at_me(bot: Bot, event: GroupMessageEvent):
         await bot.call_api(
             "set_msg_emoji_like",
             message_id=event.message_id,
-            emoji_id=get_emoji_id(event.group_id) or DEFAULT_EMOJI_ID,
+            emoji_id=get_emoji_id(event.group_id),
             set=True,
         )
     except Exception as exc:

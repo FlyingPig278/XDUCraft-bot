@@ -139,7 +139,9 @@ export function useResourceForm(descriptor: () => ResourceDescriptor) {
       if (token !== generation || path !== descriptor().path) return false
       accept(resource)
       if (['failed', 'invalid', 'applying'].includes(resource.meta.apply_status ?? '')) {
-        message.warning(resource.meta.apply_status === 'applying' ? '配置已保存，正在应用；请刷新确认最终状态' : '配置已保存，但没有成功应用。请检查状态后重试或恢复')
+        message.warning(resource.meta.apply_scope && resource.meta.apply_scope !== current.scope
+          ? '本群配置已保存；共享配置仍待修复，请打开全局设置处理'
+          : resource.meta.apply_status === 'applying' ? '配置已保存，正在应用；请刷新确认最终状态' : '配置已保存，但没有成功应用。请检查状态后重试或恢复')
       } else if (current.scope === 'startup' || resource.meta.restart_required) {
         message.success('设置已保存为下次启动值；当前进程未改变')
       } else {

@@ -1,57 +1,69 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { NAlert, NButton, NCard, NEmpty, NList, NListItem, NSkeleton, NSpace, NTag, useMessage } from 'naive-ui'
 import { apiGet } from '../api/client'
-import type { Overview } from '../api/types'
+import type { Overview, PluginsResponse } from '../api/types'
 import { connectionState } from '../state'
 
 const overview = ref<Overview | null>(null)
+const catalog = ref<PluginsResponse | null>(null)
 const loading = ref(false)
 const errorText = ref('')
 let generation = 0
 onUnmounted(() => { generation++ })
 const message = useMessage()
+const serviceIds = computed(() => new Set((catalog.value?.plugins ?? []).filter(plugin => !plugin.managed).map(plugin => plugin.id)))
+const services = computed(() => overview.value?.plugins.filter(plugin => serviceIds.value.has(plugin.id)) ?? [])
+
 async function load(): Promise<void> {
   const token = ++generation
   errorText.value = ''
   loading.value = true
-  try {
-    const result = await apiGet<Overview>('/api/overview')
-    if (token !== generation) return
-    overview.value = result
-    connectionState.connectedBots = result.bots.filter((bot) => bot.connected).length
-    connectionState.restartRequired = result.restart_required
-  } catch (error) {
-    if (token !== generation) return
-    errorText.value = error instanceof Error ? error.message : '读取概览失败'
+  const [overviewResult, catalogResult] = await Promise.allSettled([
+    apiGet<Overview>('/api/overview'),
+    apiGet<PluginsResponse>('/api/plugins')
+  ])
+  if (token !== generation) return
+  if (overviewResult.status === 'fulfilled') {
+    overview.value = overviewResult.value
+    connectionState.connectedBots = overviewResult.value.bots.filter(bot => bot.connected).length
+    connectionState.restartRequired = overviewResult.value.restart_required
+  }
+  if (catalogResult.status === 'fulfilled') catalog.value = catalogResult.value
+  if (overviewResult.status === 'rejected' || catalogResult.status === 'rejected') {
+    errorText.value = overviewResult.status === 'rejected'
+      ? (overviewResult.reason instanceof Error ? overviewResult.reason.message : '读取系统状态失败')
+      : '系统服务目录暂时不可用；为避免混入业务插件，暂不显示服务列表。'
     message.error(errorText.value)
   }
-  finally { if (token === generation) loading.value = false }
+  loading.value = false
 }
 onMounted(load)
 </script>
 
 <template>
-  <main class="page">
-    <h1 class="page-heading">运行概况</h1><p class="page-subtitle">这里只确认连接与可用性；业务管理从“选择群”开始。</p>
-    <NAlert v-if="errorText" type="error" class="overview-alert">{{ errorText }}；{{ overview ? '下方保留的是上次成功读取的状态，不是本次实时结果。' : '当前运行状态尚未确认。' }}</NAlert>
-    <NAlert v-if="overview?.restart_required" type="warning" class="overview-alert">有设置已经保存，需在合适时间手动重启机器人后生效。</NAlert>
+  <main class="page system-page">
+    <div class="page-intro"><div><h1 class="page-heading">系统</h1><p class="page-subtitle">只展示 Bot 连接、主机运行状态与基础服务。业务插件的全局控制在“插件”页。</p></div><NButton secondary :loading="loading" @click="load">刷新</NButton></div>
+    <NAlert v-if="errorText" type="error" class="page-alert">{{ errorText }}；{{ overview ? '已保留上次成功读取的主机状态。' : '当前状态尚未确认。' }}</NAlert>
+    <NAlert v-if="overview?.restart_required" type="warning" class="page-alert">有启动参数已经保存，需要在合适时间手动重启后生效。</NAlert>
     <NSkeleton v-if="loading && !overview" text :repeat="6" />
-    <div v-else-if="overview" class="card-grid">
+    <div v-else-if="overview" class="system-grid">
       <NCard title="Bot 连接">
         <NEmpty v-if="!overview.bots.length" description="当前没有 Bot 连接" />
-        <NList v-else><NListItem v-for="bot in overview.bots" :key="bot.bot_id"><NSpace justify="space-between"><span class="mono">{{ bot.bot_id }}</span><NTag :type="bot.connected ? 'success' : 'warning'">{{ bot.connected ? '已连接' : '未连接' }}</NTag></NSpace></NListItem></NList>
+        <NList v-else><NListItem v-for="bot in overview.bots" :key="bot.bot_id"><NSpace justify="space-between"><span><strong>{{ bot.nickname || 'Bot' }}</strong><span class="bot-id">{{ bot.bot_id }}</span></span><NTag :type="bot.connected ? 'success' : 'warning'">{{ bot.connected ? '已连接' : '未连接' }}</NTag></NSpace></NListItem></NList>
       </NCard>
-      <NCard title="插件状态">
-        <NList><NListItem v-for="plugin in overview.plugins" :key="plugin.id"><NSpace justify="space-between"><span>{{ plugin.name }}</span><NTag :type="plugin.loaded ? 'success' : 'error'">{{ plugin.loaded ? '已加载' : '不可用' }}</NTag></NSpace><div v-if="plugin.reason" class="muted">{{ plugin.reason }}</div></NListItem></NList>
+      <NCard title="基础服务">
+        <NEmpty v-if="catalog && !services.length" description="没有单独报告的基础服务" />
+        <NEmpty v-else-if="!catalog" description="服务目录尚未确认" />
+        <NList v-else><NListItem v-for="service in services" :key="service.id"><NSpace justify="space-between"><span>{{ service.name }}</span><NTag :type="service.loaded ? 'success' : 'error'">{{ service.loaded ? '运行中' : '不可用' }}</NTag></NSpace><div v-if="service.reason" class="muted">{{ service.reason }}</div></NListItem></NList>
       </NCard>
     </div>
-    <NSpace class="overview-actions">
-      <RouterLink to="/groups"><NButton type="primary">选择群并管理插件</NButton></RouterLink>
-      <RouterLink to="/settings"><NButton>全局与系统设置</NButton></RouterLink>
-      <NButton secondary @click="load">刷新状态</NButton>
-    </NSpace>
+    <NSpace class="system-actions"><RouterLink to="/groups"><NButton type="primary">管理群聊</NButton></RouterLink><RouterLink to="/plugins"><NButton>管理插件</NButton></RouterLink></NSpace>
   </main>
 </template>
-<style scoped>.overview-alert { margin-bottom:16px; }.overview-actions { margin-top:20px; }</style>
+
+<style scoped>
+.system-page { width:min(980px,100%); }.page-intro { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }.page-alert { margin-bottom:14px; }.system-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }.bot-id { display:block; margin-top:2px; opacity:.58; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px; }.system-actions { margin-top:20px; }
+@media(max-width:699px) { .page-intro { align-items:stretch; flex-direction:column; }.system-grid { grid-template-columns:minmax(0,1fr); } }
+</style>

@@ -89,6 +89,10 @@ tests/*
 !tests/test_keyword_reply.py
 !tests/test_mc_status_data_manager.py
 !tests/test_auto_friend.py
+!tests/test_feature_commands.py
+!tests/test_mc_logic.py
+!tests/test_mc_status_fetcher.py
+!tests/test_mc_status_handlers.py
 
 # 预览脚本的出图产物
 /preview/

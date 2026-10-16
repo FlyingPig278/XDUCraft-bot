@@ -32,8 +32,6 @@ feature_gate.register(feature_gate.Feature(
     key=FEATURE_KEY,
     name="MC 服务器状态",
     description="/mcs 查询 Minecraft 服务器状态",
-    # 指令驱动，不会主动发言，所以默认开启；管理员仍可按群关掉。
-    default_enabled=True,
     passive=False,
 ))
 
@@ -57,6 +55,8 @@ def split_query_options(arg_list: List[str]) -> Tuple[List[str], str]:
 async def handle_entry(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
     """按消息来源分发到私聊 / 群聊处理器。"""
     arg_list = args.extract_plain_text().strip().split()
+    if not feature_gate.is_plugin_enabled("mc_status"):
+        return
 
     if isinstance(event, PrivateMessageEvent):
         if arg_list and arg_list[0].lower() == "import":

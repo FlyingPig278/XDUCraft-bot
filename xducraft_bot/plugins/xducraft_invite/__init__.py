@@ -41,6 +41,30 @@ __plugin_meta__ = PluginMetadata(
 SELF_REMARK_PREFIX = text.SELF_REMARK_PREFIX
 ADMIN_REMARK_PREFIX = text.ADMIN_REMARK_PREFIX
 SELF_PRECHECK_MESSAGE = text.SELF_PRECHECK_MESSAGE
+FEATURE_KEY = "invite_self_service"
+
+
+def _self_service_enabled(group_id: int) -> bool:
+    return int(group_id) == SETTINGS.group_id and store.get_state().self_service_enabled
+
+
+def _set_self_service_enabled(group_id: int, enabled: bool) -> bool:
+    if int(group_id) != SETTINGS.group_id:
+        return False
+    if enabled and SETTINGS.configuration_error():
+        return False
+    return store.set_self_service_enabled(enabled)
+
+
+feature_gate.register(feature_gate.Feature(
+    key=FEATURE_KEY,
+    name="邀请码自助领取",
+    description="绑定群成员自助领取邀请码",
+    passive=True,
+    getter=_self_service_enabled,
+    setter=_set_self_service_enabled,
+    lister=lambda: [SETTINGS.group_id] if SETTINGS.group_id > 0 and store.get_state().self_service_enabled else [],
+))
 
 
 async def _is_self_request(event: MessageEvent) -> bool:
@@ -98,7 +122,8 @@ def _self_service_guide() -> str:
 
 
 async def _send_group_notice(bot: Bot, group_id: int, user_id: int, text: str) -> None:
-    if not feature_gate.is_plugin_enabled("invite", group_id):
+    if (not feature_gate.is_plugin_enabled("invite", group_id)
+            or not feature_gate.is_enabled(FEATURE_KEY, group_id)):
         return
     try:
         await bot.send_group_msg(
@@ -162,7 +187,9 @@ async def _generate(remark: str) -> GeneratedInvite:
 async def handle_self_service(bot: Bot, event: GroupMessageEvent) -> None:
     user_id = int(event.user_id)
     group_id = int(event.group_id)
-    if group_id != SETTINGS.group_id or not feature_gate.is_plugin_enabled("invite", group_id):
+    if (group_id != SETTINGS.group_id
+            or not feature_gate.is_plugin_enabled("invite", group_id)
+            or not feature_gate.is_enabled(FEATURE_KEY, group_id)):
         return
     state = store.get_state()
 
@@ -174,7 +201,8 @@ async def handle_self_service(bot: Bot, event: GroupMessageEvent) -> None:
         return
 
     member = await _get_member_info(bot, user_id)
-    if not feature_gate.is_plugin_enabled("invite", group_id):
+    if (not feature_gate.is_plugin_enabled("invite", group_id)
+            or not feature_gate.is_enabled(FEATURE_KEY, group_id)):
         return
     if member is None:
         await _send_group_notice(bot, group_id, user_id, text.SELF_MEMBER_UNKNOWN)
@@ -225,7 +253,9 @@ async def handle_self_service(bot: Bot, event: GroupMessageEvent) -> None:
             text.SELF_PRIVATE_UNAVAILABLE,
         )
         return
-    if not feature_gate.is_plugin_enabled("invite", group_id) or not store.get_state().self_service_enabled:
+    if (not feature_gate.is_plugin_enabled("invite", group_id)
+            or not feature_gate.is_enabled(FEATURE_KEY, group_id)
+            or not store.get_state().self_service_enabled):
         store.release_lease(user_id)
         return
 
@@ -263,7 +293,8 @@ async def handle_self_service(bot: Bot, event: GroupMessageEvent) -> None:
         return
 
     # 生成完成后领取记录必须仍落库，防止重复发码；停用时不再发送。
-    if not feature_gate.is_plugin_enabled("invite", group_id):
+    if (not feature_gate.is_plugin_enabled("invite", group_id)
+            or not feature_gate.is_enabled(FEATURE_KEY, group_id)):
         return
 
     delivered = await notify_privately(
@@ -285,6 +316,8 @@ async def handle_slash_self_service(
     event: MessageEvent,
     args: Message = CommandArg(),
 ) -> None:
+    if not feature_gate.is_plugin_enabled("invite"):
+        return
     if args.extract_plain_text().strip():
         await slash_self_service.finish(text.GROUP_ARGUMENTS_REJECTED)
     if int(event.group_id) == SETTINGS.group_id:
@@ -295,6 +328,8 @@ async def handle_slash_self_service(
 
 @private_invite_guide.handle()
 async def handle_private_invite_guide() -> None:
+    if not feature_gate.is_plugin_enabled("invite"):
+        return
     await private_invite_guide.finish(_self_service_guide())
 
 
@@ -315,6 +350,8 @@ async def _handle_init(bot: Bot, event: PrivateMessageEvent) -> None:
         await admin_command.finish(text.ADMIN_MEMBER_LIST_FAILED)
     if not isinstance(members, list) or not members:
         await admin_command.finish(text.ADMIN_MEMBER_LIST_EMPTY)
+    if not feature_gate.is_plugin_enabled("invite"):
+        return
 
     legacy_ids = {
         _safe_int(member.get("user_id"))
@@ -339,9 +376,14 @@ async def _handle_init(bot: Bot, event: PrivateMessageEvent) -> None:
         await admin_command.finish("部署覆盖文件损坏，请先修复后再初始化邀请码。")
     if pending_group != SETTINGS.group_id:
         await admin_command.finish("邀请码绑定群已有待生效修改，请先重启或恢复原群号，再初始化。")
+    if not feature_gate.is_plugin_enabled("invite"):
+        return
     initialized_at = int(time.time())
     if not store.initialize(legacy_ids, initialized_at, int(event.user_id)):
         await admin_command.finish(text.ADMIN_ALREADY_INITIALIZED)
+    feature_gate.set_enabled(FEATURE_KEY, SETTINGS.group_id, True)
+    if not feature_gate.is_plugin_enabled("invite"):
+        return
     await admin_command.finish(text.init_success(len(legacy_ids), initialized_at))
 
 
@@ -359,6 +401,8 @@ async def _handle_admin_issue(
     member = await _get_member_info(bot, target_user_id)
     if member is None:
         await admin_command.finish(text.target_not_member(target_user_id))
+    if not feature_gate.is_plugin_enabled("invite"):
+        return
 
     lease = store.acquire_lease(
         target_user_id,
@@ -395,6 +439,8 @@ async def _handle_admin_issue(
     except Exception as exc:
         logger.exception("[Invite] 管理员为 {} 生成邀请码后落库失败: {}", target_user_id, exc)
         await admin_command.finish(text.ADMIN_PERSIST_FAILED)
+    if not feature_gate.is_plugin_enabled("invite"):
+        return
 
     await admin_command.finish(
         text.admin_issue_success(target_user_id, generated.code, forced=forced)
@@ -403,6 +449,8 @@ async def _handle_admin_issue(
 
 @admin_command.handle()
 async def handle_admin(bot: Bot, event: MessageEvent, args: Message = CommandArg()) -> None:
+    if not feature_gate.is_plugin_enabled("invite"):
+        return
     if not isinstance(event, PrivateMessageEvent):
         await admin_command.finish(text.ADMIN_PRIVATE_ONLY)
 
@@ -432,7 +480,10 @@ async def handle_admin(bot: Bot, event: MessageEvent, args: Message = CommandArg
         if len(tokens) != 1:
             await admin_command.finish(text.usage_toggle(action))
         enabled = action == "on"
-        if not store.set_self_service_enabled(enabled):
+        if not store.get_state().initialized:
+            await admin_command.finish(text.ADMIN_NOT_INITIALIZED)
+        changed = feature_gate.set_enabled(FEATURE_KEY, SETTINGS.group_id, enabled)
+        if not changed and store.get_state().self_service_enabled != enabled:
             await admin_command.finish(text.ADMIN_NOT_INITIALIZED)
         await admin_command.finish(text.toggle_success(enabled))
 

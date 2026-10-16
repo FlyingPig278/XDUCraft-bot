@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from urllib.parse import urlparse
-from pydantic import Field, SecretStr, StrictBool, StrictStr, field_validator
+from pydantic import Field, SecretStr, StrictStr, field_validator
 
 from xducraft_bot.shared.configuration import (
-    ConfigModel, ConfigResource, ConfigSnapshot, ConfigurationError,
+    ConfigModel, ConfigurationError,
     PluginConfiguration, StartupConfig, declare_config,
 )
+from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.deployment_config import get_startup_base, read_overrides
 from . import data_manager as dm, settings
 
@@ -36,8 +37,6 @@ class InviteStartup(ConfigModel):
         return value
 
 
-class InviteGroup(ConfigModel):
-    enabled: StrictBool = Field(title="邀请码自助领取", description="仅当前绑定群，须先通过 QQ /invite init 初始化资格", json_schema_extra={"default": False, "x-ui-group": "自助领取", "x-ui-order": 0, "x-ui-scope": "group_only", "x-ui-effect-phase": "runtime"})
 
 
 def status(ctx):
@@ -52,32 +51,19 @@ def status(ctx):
         notices.append({"type": "warning", "message": "请先在 QQ 使用 /invite init 初始化资格"})
     if not complete:
         notices.append({"type": "warning", "message": "邀请码部署配置不完整，保存并重启后才可开启自助领取"})
+    effective = (applicable and initialized and complete
+                 and feature_gate.is_plugin_enabled("invite", ctx.group_id)
+                 and feature_gate.is_enabled("invite_self_service", ctx.group_id))
     return {"available": available, "applicable": applicable, "bound_group_id": str(current.group_id),
             "initialized": initialized, "initialized_at": state.initialized_at,
             "configuration_complete": complete, "group_config_available": applicable,
+            "feature_effective": {"invite_self_service": effective},
             "reason": None if available else "邀请码仅适用于当前绑定群", "notices": notices,
             "details": [{"label": "当前绑定群", "value": str(current.group_id)},
                         {"label": "资格初始化", "value": "已初始化" if initialized else "尚未初始化"},
                         {"label": "运行配置", "value": "完整" if complete else "需配置并重启"}]}
 
 
-def read_group(ctx):
-    meta = status(ctx)
-    if not meta["applicable"]:
-        raise ConfigurationError("invite_group_not_bound", "邀请码仅适用于当前绑定群")
-    values = {"enabled": dm.store.get_state().self_service_enabled}
-    return ConfigSnapshot(values, meta, {"values": values, **meta})
-
-
-def write_group(ctx, values):
-    current = read_group(ctx)
-    if not current.meta["initialized"]:
-        raise ConfigurationError("invite_not_initialized", "请先在 QQ 使用 /invite init 初始化")
-    if values["enabled"] and not current.meta["configuration_complete"]:
-        raise ConfigurationError("invite_configuration_missing", "请先配置邀请码部署参数并重启")
-    dm.store.set_self_service_enabled(values["enabled"])
-    if dm.store.get_state().self_service_enabled != values["enabled"]:
-        raise ConfigurationError("storage_failed", "配置未能保存")
 
 
 def active_startup():
@@ -125,7 +111,7 @@ def list_groups():
 
 
 DECLARATION = declare_config(PluginConfiguration(
-    key="invite", name="邀请码", resources={"group": ConfigResource(InviteGroup, read_group, write_group)},
+    key="invite", name="邀请码", feature_keys=("invite_self_service",),
     list_groups=list_groups, status=status,
     startup=StartupConfig(InviteStartup, active_startup, base_startup, normalize_startup,
                           validate_startup, startup_metadata),

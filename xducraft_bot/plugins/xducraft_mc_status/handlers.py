@@ -1,14 +1,7 @@
 """``/mcs`` 各子命令的实现。
 
-三个贯穿全文件的约定：
-
-1. **权限检查用 :func:`admin_only` 装饰器**，不再每个函数开头抄一遍
-   ``if not await is_admin(...)``。
-2. **管理类操作的回执默认走私聊**（见 ``/mcs quiet``）。机器人接在几百人的大群
-   里，改一次配置就在群里回一条，很快就是刷屏。
-3. **群级 / 全局两级配置由 :class:`ScopedSetting` 统一处理**。旧代码里
-   ``/mcs source`` 和 ``/mcs api`` 是两份逐行对应的实现，加一个新配置项就要再抄
-   一份。
+Management commands use one permission decorator, configuration is group-local,
+and quiet administrative acknowledgements prefer private delivery.
 """
 
 from __future__ import annotations
@@ -24,20 +17,20 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment, PrivateMessageEvent
 from nonebot.log import logger
 
+from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.onebot import make_node, notify_privately, send_private_forward, send_text_sections
 
 from . import auth_mode as auth
 from .config_coder import compress_config, decompress_config
 from .constants import USAGE_ADMIN, USAGE_USER, WEB_UI_BASE_URL
 from .data_manager import (
-    VALID_API_SOURCES, add_footer, add_server, clear_footer, clear_global_status_api_source,
-    clear_global_status_api_url, clear_group_status_api_source, clear_group_status_api_url,
+    VALID_API_SOURCES, add_footer, add_server, clear_footer,
+    clear_group_status_api_source, clear_group_status_api_url,
     clear_server_attribute, export_group_data, get_all_servers_flat, get_auth_detect_enabled,
-    get_effective_status_api_source, get_effective_status_api_url, get_group_default_auth_mode,
+    get_group_default_auth_mode, get_group_status_api_source, get_group_status_api_url,
     get_quiet_admin_replies, get_server_info, get_server_list, import_group_data, remove_server,
-    set_auth_detect_enabled, set_global_status_api_source, set_global_status_api_url,
-    set_group_default_auth_mode, set_group_status_api_source, set_group_status_api_url,
-    set_quiet_admin_replies, set_server_attribute,
+    set_auth_detect_enabled, set_group_default_auth_mode, set_group_status_api_source,
+    set_group_status_api_url, set_quiet_admin_replies, set_server_attribute,
 )
 from .decode_image import get_cache_stats
 from .image_renderer import render_status_image
@@ -114,61 +107,41 @@ def admin_only(handler: Callable) -> Callable:
 
 
 # ==============================================================================
-# 群级 / 全局两级配置
+# Group-local query configuration
 # ==============================================================================
 
 @dataclass
 class ScopedSetting:
-    """一个支持“群级覆盖 + 全局默认”的配置项。
-
-    ``/mcs source`` 和 ``/mcs api`` 的全部子命令语法都由这里生成，
-    两者只是校验函数和文案不同。
-    """
-
-    command: str                 # 子命令名，如 "source"
-    title: str                   # 展示名，如 "状态查询源"
-    value_hint: str              # 取值提示，如 "protocol / sjtu / jsu / custom / auto"
-    normalize: Callable[[str], Optional[str]]        # 输入 -> 标准值 / None 表示非法
-    describe: Callable[[str], str]                   # 标准值 -> 展示文本
-    get_effective: Callable[[int], Tuple[str, str]]
+    command: str
+    title: str
+    value_hint: str
+    normalize: Callable[[str], Optional[str]]
+    describe: Callable[[str], str]
+    get_value: Callable[[int], str]
     set_group: Callable[[int, str], bool]
     clear_group: Callable[[int], bool]
-    set_global: Callable[[str], bool]
-    clear_global: Callable[[], bool]
-    allow_shorthand: bool = False   # 是否兼容 "/mcs source <值>" 这种老写法
+    allow_shorthand: bool = False
 
     @property
     def usage(self) -> str:
-        lines = [
-            f"/mcs {self.command} — 查看当前生效值",
+        return "\n".join([
+            f"/mcs {self.command} — 查看本群值",
             f"/mcs {self.command} set <值> — 设置本群",
-            f"/mcs {self.command} clear — 清除本群覆盖",
-            f"/mcs {self.command} global set <值> — 设置全局默认",
-            f"/mcs {self.command} global clear — 清除全局默认",
+            f"/mcs {self.command} clear — 重置为代码默认值",
             f"可用值：{self.value_hint}",
-        ]
-        return "\n".join(lines)
-
-
-SCOPE_NAMES = {"group": "本群配置", "global": "全局默认", "none": "未配置"}
-
+        ])
 
 async def _handle_scoped_setting(
     bot: Bot, event: GroupMessageEvent, arg_list: List[str], setting: ScopedSetting
 ) -> None:
-    """``ScopedSetting`` 的统一分发。"""
     args = arg_list[1:]
-
     if not args:
-        value, scope = setting.get_effective(event.group_id)
-        scope_name = SCOPE_NAMES.get(scope, scope)
+        value = setting.get_value(event.group_id)
         current = setting.describe(value) if value else "未配置"
-        await _finish(f"当前{setting.title}（{scope_name}）：{current}\n\n{setting.usage}")
+        await _finish(f"当前本群{setting.title}：{current}\n\n{setting.usage}")
 
     action = args[0].strip().lower()
-
-    # 兼容老写法 "/mcs source jsu"
-    if setting.allow_shorthand and len(args) == 1 and action not in {"set", "clear", "global"}:
+    if setting.allow_shorthand and len(args) == 1 and action not in {"set", "clear"}:
         normalized = setting.normalize(action)
         if normalized is None:
             await _finish(f"无法识别的值：{args[0]}\n\n{setting.usage}")
@@ -187,30 +160,11 @@ async def _handle_scoped_setting(
         await _finish_admin(bot, event, f"{verb}本群{setting.title}：{setting.describe(normalized)}")
 
     if action == "clear":
-        if setting.clear_group(event.group_id):
-            value, scope = setting.get_effective(event.group_id)
-            fallback = setting.describe(value) if value else "未配置"
-            await _finish_admin(
-                bot, event,
-                f"已清除本群{setting.title}覆盖，现在回退到{SCOPE_NAMES.get(scope, scope)}：{fallback}",
-            )
-        await _finish_admin(bot, event, f"本群原本就没有设置{setting.title}覆盖。")
-
-    if action == "global":
-        if len(args) == 3 and args[1].strip().lower() == "set":
-            normalized = setting.normalize(args[2])
-            if normalized is None:
-                await _finish(f"无法识别的值：{args[2]}\n可用值：{setting.value_hint}")
-            changed = setting.set_global(normalized)
-            verb = "已设置" if changed else "未变化"
-            await _finish_admin(bot, event, f"{verb}全局默认{setting.title}：{setting.describe(normalized)}")
-
-        if len(args) == 2 and args[1].strip().lower() == "clear":
-            if setting.clear_global():
-                await _finish_admin(bot, event, f"已清除全局默认{setting.title}。")
-            await _finish_admin(bot, event, f"全局默认{setting.title}原本就是默认值。")
-
-        await _finish(f"用法：\n/mcs {setting.command} global set <值>\n/mcs {setting.command} global clear")
+        changed = setting.clear_group(event.group_id)
+        value = setting.get_value(event.group_id)
+        verb = "已重置" if changed else "未变化"
+        current = setting.describe(value) if value else "未配置"
+        await _finish_admin(bot, event, f"{verb}本群{setting.title}：{current}")
 
     await _finish(f"未知参数：{args[0]}\n\n{setting.usage}")
 
@@ -230,11 +184,9 @@ SOURCE_SETTING = ScopedSetting(
     value_hint="protocol / sjtu / jsu / custom / auto / auto_api_first",
     normalize=lambda value: value.strip().lower() if value.strip().lower() in VALID_API_SOURCES else None,
     describe=lambda value: f"{SOURCE_LABELS.get(value, value)}（{value}）",
-    get_effective=get_effective_status_api_source,
+    get_value=get_group_status_api_source,
     set_group=set_group_status_api_source,
     clear_group=clear_group_status_api_source,
-    set_global=set_global_status_api_source,
-    clear_global=clear_global_status_api_source,
     allow_shorthand=True,
 )
 
@@ -244,11 +196,9 @@ API_SETTING = ScopedSetting(
     value_hint="以 http:// 或 https:// 开头的完整地址",
     normalize=lambda value: value.strip() if is_valid_api_url(value) else None,
     describe=lambda value: value,
-    get_effective=get_effective_status_api_url,
+    get_value=get_group_status_api_url,
     set_group=set_group_status_api_url,
     clear_group=clear_group_status_api_url,
-    set_global=set_global_status_api_url,
-    clear_global=clear_global_status_api_url,
 )
 
 
@@ -552,7 +502,7 @@ async def handle_query_all(
     await matcher.send("正在查询所有服务器状态...")
 
     try:
-        source, _ = get_effective_status_api_source(event.group_id)
+        source = get_group_status_api_source(event.group_id)
         server_data_list = await get_all_servers_status(event.group_id)
         image_path = await render_status_image(
             server_data_list, event.group_id, show_all_servers,
@@ -560,8 +510,14 @@ async def handle_query_all(
         )
     except Exception as exc:
         logger.exception("[MCStatus] 查询群 {} 全部服务器失败", event.group_id)
+        if (not feature_gate.is_plugin_enabled("mc_status", event.group_id)
+                or not feature_gate.is_enabled("mc_status", event.group_id)):
+            return
         await matcher.finish(f"查询失败：{type(exc).__name__}: {exc}\n管理员可用 /mcs diag 排查。")
 
+    if (not feature_gate.is_plugin_enabled("mc_status", event.group_id)
+            or not feature_gate.is_enabled("mc_status", event.group_id)):
+        return
     await matcher.finish(MessageSegment.image(file=f"file:///{image_path}"))
 
 
@@ -608,7 +564,7 @@ async def handle_query_single(
         await matcher.finish(_easter_egg_reply(ip))
 
     try:
-        source, _ = get_effective_status_api_source(event.group_id)
+        source = get_group_status_api_source(event.group_id)
         live_status = await get_single_server_status(ip, group_id=event.group_id)
 
         saved_config = get_server_info(event.group_id, ip)
@@ -628,8 +584,14 @@ async def handle_query_single(
         )
     except Exception as exc:
         logger.exception("[MCStatus] 查询 {} 失败", ip)
+        if (not feature_gate.is_plugin_enabled("mc_status", event.group_id)
+                or not feature_gate.is_enabled("mc_status", event.group_id)):
+            return
         await matcher.finish(f"查询 {ip} 失败：{type(exc).__name__}: {exc}")
 
+    if (not feature_gate.is_plugin_enabled("mc_status", event.group_id)
+            or not feature_gate.is_enabled("mc_status", event.group_id)):
+        return
     await matcher.finish(MessageSegment.image(file=f"file:///{image_path}"))
 
 
@@ -674,16 +636,16 @@ async def _handle_diag(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
     matcher = _matcher()
     group_id = event.group_id
 
-    source, source_scope = get_effective_status_api_source(group_id)
-    api_url, url_scope = get_effective_status_api_url(group_id)
+    source = get_group_status_api_source(group_id)
+    api_url = get_group_status_api_url(group_id)
     servers = get_all_servers_flat(group_id)
     cache = get_cache_stats()
 
     lines = [
         "【本群配置】",
         f"服务器数量：{len(servers)}",
-        f"状态查询源：{SOURCE_LABELS.get(source, source)}（{source}，来自{SCOPE_NAMES.get(source_scope, source_scope)}）",
-        f"自定义后端：{api_url or '未配置'}（{SCOPE_NAMES.get(url_scope, url_scope)}）",
+        f"状态查询源：{SOURCE_LABELS.get(source, source)}（{source}）",
+        f"自定义后端：{api_url or '未配置'}",
         f"验证方式自动探测：{'开启' if get_auth_detect_enabled(group_id) else '关闭'}",
         f"本群默认验证方式：{auth.style_for(get_group_default_auth_mode(group_id)).label if get_group_default_auth_mode(group_id) else '未设置'}",
         f"安静模式：{'开启' if get_quiet_admin_replies(group_id) else '关闭'}",
@@ -747,6 +709,9 @@ async def _handle_edit(bot: Bot, event: GroupMessageEvent, arg_list: List[str]):
     # 链接很长，用合并转发发送，避免被聊天框折行截断。
     if not await send_private_forward(bot, user_id, [make_node(export_url, "网页编辑器链接", event.self_id)]):
         await notify_privately(bot, user_id, export_url)
+    if (not feature_gate.is_plugin_enabled("mc_status", group_id)
+            or not feature_gate.is_enabled("mc_status", group_id)):
+        return
 
     start_edit_session(user_id, group_id)
     await _finish_admin(bot, event, "编辑链接已通过私信发送，请查收。")
@@ -782,6 +747,10 @@ async def handle_private_import(bot: Bot, event: PrivateMessageEvent, arg_list: 
             "请先在需要修改的群里发送 /mcs edit，拿到链接后再回来导入。"
             f"（编辑会话 {EDIT_SESSION_TTL // 60} 分钟内有效）"
         )
+    if (not feature_gate.is_plugin_enabled("mc_status", group_id)
+            or not feature_gate.is_enabled("mc_status", group_id)):
+        start_edit_session(user_id, group_id)
+        return
 
     if len(arg_list) != 2:
         # 会话已经被取出来了，格式不对就放回去，别让用户白跑一趟 /mcs edit。
@@ -792,6 +761,10 @@ async def handle_private_import(bot: Bot, event: PrivateMessageEvent, arg_list: 
     if decompressed is None:
         start_edit_session(user_id, group_id)
         await matcher.finish("导入失败：无法解析这段字符串。请确认是从网页编辑器完整复制的。")
+    if (not feature_gate.is_plugin_enabled("mc_status", group_id)
+            or not feature_gate.is_enabled("mc_status", group_id)):
+        start_edit_session(user_id, group_id)
+        return
 
     if not import_group_data(group_id, decompressed):
         start_edit_session(user_id, group_id)
@@ -803,6 +776,9 @@ async def handle_private_import(bot: Bot, event: PrivateMessageEvent, arg_list: 
         group_name = info.get("group_name", group_name) or group_name
     except Exception:
         pass  # 机器人可能已经不在这个群了，用群号兜底即可。
+    if (not feature_gate.is_plugin_enabled("mc_status", group_id)
+            or not feature_gate.is_enabled("mc_status", group_id)):
+        return
 
     server_count = len(get_all_servers_flat(group_id))
     await matcher.finish(f"群「{group_name}」的配置导入成功，共 {server_count} 台服务器。")

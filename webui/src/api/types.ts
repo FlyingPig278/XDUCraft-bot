@@ -24,6 +24,7 @@ export interface ResourceMeta {
   secret_fields?: SecretFields
   notices?: unknown[]
   apply_status?: 'active' | 'applied' | 'success' | 'applying' | 'failed' | 'invalid' | string
+  apply_scope?: ResourceScope
   apply_error?: unknown
   invalid_fields?: unknown
   orphaned_fields?: unknown
@@ -68,6 +69,7 @@ export interface PluginDescriptor {
   resources: Partial<Record<ResourceScope, ResourceDescriptor>>
   features: FeatureState[]
   context: Record<string, unknown> & {
+    icon?: string
     available?: boolean
     reason?: string | null
     notices?: Array<{ type?: string; message: string }>

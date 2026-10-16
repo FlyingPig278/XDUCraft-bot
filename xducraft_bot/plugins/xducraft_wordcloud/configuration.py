@@ -1,5 +1,5 @@
 """词云配置协议；保留期仅全局，群封禁始终叠加根封禁。"""
-from typing import List, Optional
+from typing import List
 from pydantic import Field, StrictBool, StrictInt, StrictStr, field_validator
 from xducraft_bot.shared.configuration import (
     ConfigModel, ConfigResource, ConfigSnapshot, PluginConfiguration,
@@ -8,12 +8,10 @@ from xducraft_bot.shared.configuration import (
 from .data_manager import GROUP_CONFIG_KEYS, chat_log_data_manager
 
 
-def _field(default, title, description, order, *, scope="global", widget=None, inherit=False, phase="runtime", **bounds):
+def _field(default, title, description, order, *, scope="global", widget=None, phase="runtime", **bounds):
     extra = {"x-ui-group": "词云", "x-ui-order": order, "x-ui-scope": {"global": "global_only", "group": "group_only"}[scope], "x-ui-effect-phase": phase}
     if widget:
         extra["x-ui-widget"] = widget
-    if inherit:
-        extra["x-ui-inherit-value"] = None
     return Field(default=default, title=title, description=description, json_schema_extra=extra, **bounds)
 
 
@@ -35,23 +33,17 @@ class _Lists(ConfigModel):
 
 class Wordcloud(_Lists):
     ban_user_ids: List[StrictStr] = _field([], "全局封禁 QQ", "所有群都排除这些用户；群设置不能解除全局封禁。", 1, widget="id-list")
-    min_word_length: StrictInt = _field(2, "最短词长", "分词后保留的最短字符数。", 2, ge=1)
-    max_words: StrictInt = _field(200, "最多词数", "图中最多展示的词数。", 3, ge=20)
-    retention_days: StrictInt = _field(1095, "日志保留天数", "只影响下一次每日 00:00 清理，不立即删除日志。", 4, phase="next_cleanup", ge=30)
-    additional_stopwords: List[StrictStr] = _field([], "额外停用词", "去首尾空白、转小写并去重。", 5, widget="tags")
-    footer_subtitle: StrictStr = _field("", "页脚副标题", "允许空文本。", 6)
-    footer_branding_enabled: StrictBool = _field(True, "显示品牌署名", "控制词云页脚品牌显示。", 7)
-    footer_branding_text: StrictStr = _field("Powered by FlyingPig278", "品牌署名", "允许空文本。", 8)
+    retention_days: StrictInt = _field(1095, "日志保留天数", "只影响下一次每日 00:00 清理，不立即删除日志。", 2, phase="next_cleanup", ge=30)
 
 
 class WordcloudGroup(_Lists):
-    ban_user_ids: Optional[List[StrictStr]] = _field(None, "本群额外封禁 QQ", "与全局封禁取并集；空列表不解除全局封禁。", 1, scope="group", widget="id-list", inherit=True)
-    min_word_length: Optional[StrictInt] = _field(None, "本群最短词长", "恢复继承使用全局值。", 2, scope="group", inherit=True, ge=1)
-    max_words: Optional[StrictInt] = _field(None, "本群最多词数", "恢复继承使用全局值。", 3, scope="group", inherit=True, ge=20)
-    additional_stopwords: Optional[List[StrictStr]] = _field(None, "本群额外停用词", "空列表覆盖全局额外词，内置停用词仍保留。", 4, scope="group", widget="tags", inherit=True)
-    footer_subtitle: Optional[StrictStr] = _field(None, "本群页脚副标题", "空文本是明确覆盖；恢复继承使用全局值。", 5, scope="group", inherit=True)
-    footer_branding_enabled: Optional[StrictBool] = _field(None, "本群显示品牌署名", "关闭是明确覆盖；恢复继承使用全局值。", 6, scope="group", inherit=True)
-    footer_branding_text: Optional[StrictStr] = _field(None, "本群品牌署名", "空文本是明确覆盖；恢复继承使用全局值。", 7, scope="group", inherit=True)
+    ban_user_ids: List[StrictStr] = _field([], "本群额外封禁 QQ", "与全局封禁取并集；空列表不解除全局封禁。", 1, scope="group", widget="id-list")
+    min_word_length: StrictInt = _field(2, "本群最短词长", "分词后保留的最短字符数。", 2, scope="group", ge=1)
+    max_words: StrictInt = _field(200, "本群最多词数", "图中最多展示的词数。", 3, scope="group", ge=20)
+    additional_stopwords: List[StrictStr] = _field([], "本群额外停用词", "空列表表示不添加额外停用词。", 4, scope="group", widget="tags")
+    footer_subtitle: StrictStr = _field("", "本群页脚副标题", "允许空文本。", 5, scope="group")
+    footer_branding_enabled: StrictBool = _field(True, "本群显示品牌署名", "控制词云页脚品牌显示。", 6, scope="group")
+    footer_branding_text: StrictStr = _field("Powered by FlyingPig278", "本群品牌署名", "允许空文本。", 7, scope="group")
 
 
 def _public(values):
@@ -78,14 +70,10 @@ def bind_configuration(manager):
         manager.update_global_config(_business(Wordcloud, values))
 
     def read_group(ctx):
-        cfg = manager.load_config()
-        raw = manager._export_group_config_from(cfg, ctx.group_id)
-        defaults = {key: cfg[key] for key in GROUP_CONFIG_KEYS}
-        effective = {key: defaults[key] if value is None else value for key, value in raw.items()}
-        effective["ban_user_ids"] = list(dict.fromkeys(defaults["ban_user_ids"] + (raw["ban_user_ids"] or [])))
-        return ConfigSnapshot(_public(raw), {"defaults": _public(defaults), "effective": _public(effective),
-                                            "overridden": [key for key, value in raw.items() if value is not None]},
-                              {"overrides": raw, "defaults": defaults})
+        raw = manager.export_group_config(ctx.group_id)
+        effective = manager.get_effective_group_config(ctx.group_id)
+        return ConfigSnapshot(_public(raw), {"effective_ban_user_ids": _public(effective)["ban_user_ids"]},
+                              revision_data=raw)
 
     def write_group(ctx, values):
         read_group(ctx)

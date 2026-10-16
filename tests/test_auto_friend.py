@@ -16,6 +16,11 @@ GROUP_B = 987654321
 USER_ID = 233333
 
 
+@pytest.fixture
+def running_auto_friend(enable_plugin):
+    enable_plugin("auto_friend", GROUP_A, GROUP_B)
+
+
 def _event():
     event = MagicMock()
     event.user_id = USER_ID
@@ -24,7 +29,7 @@ def _event():
 
 
 @pytest.mark.asyncio
-async def test_accepts_member_from_configured_enabled_group(mocker):
+async def test_accepts_member_from_configured_enabled_group(mocker, running_auto_friend):
     mocker.patch.object(
         auto_friend,
         "SETTINGS",
@@ -55,7 +60,7 @@ async def test_accepts_member_from_configured_enabled_group(mocker):
 
 
 @pytest.mark.asyncio
-async def test_does_not_query_or_accept_when_feature_is_disabled(mocker):
+async def test_does_not_query_or_accept_when_feature_is_disabled(mocker, running_auto_friend):
     mocker.patch.object(
         auto_friend,
         "SETTINGS",
@@ -73,7 +78,7 @@ async def test_does_not_query_or_accept_when_feature_is_disabled(mocker):
 
 
 @pytest.mark.asyncio
-async def test_query_failure_is_fail_closed_and_next_group_can_match(mocker):
+async def test_query_failure_is_fail_closed_and_next_group_can_match(mocker, running_auto_friend):
     mocker.patch.object(
         auto_friend,
         "SETTINGS",
@@ -93,7 +98,7 @@ async def test_query_failure_is_fail_closed_and_next_group_can_match(mocker):
 
 
 @pytest.mark.asyncio
-async def test_does_not_accept_when_member_response_is_for_another_user(mocker):
+async def test_does_not_accept_when_member_response_is_for_another_user(mocker, running_auto_friend):
     mocker.patch.object(
         auto_friend,
         "SETTINGS",
@@ -116,3 +121,18 @@ def test_group_id_config_removes_invalid_and_duplicate_values():
         GROUP_A,
         GROUP_B,
     )
+
+
+@pytest.mark.asyncio
+async def test_global_stop_blocks_friend_lookup_and_acceptance(mocker, running_auto_friend):
+    from xducraft_bot.shared.configuration import set_plugin_enabled
+
+    mocker.patch.object(auto_friend, "SETTINGS", AutoFriendSettings(group_ids=(GROUP_A,)))
+    mocker.patch.object(auto_friend.feature_gate, "is_enabled", return_value=True)
+    set_plugin_enabled("auto_friend", False)
+    bot = MagicMock()
+    bot.get_group_member_info = AsyncMock()
+    bot.set_friend_add_request = AsyncMock()
+    await auto_friend.handle_friend_request(bot, _event())
+    bot.get_group_member_info.assert_not_awaited()
+    bot.set_friend_add_request.assert_not_awaited()

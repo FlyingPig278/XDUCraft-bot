@@ -2,6 +2,7 @@
 import os
 from typing import Any, Dict, Optional
 
+from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.config_store import ConfigDocumentStore
 
 DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -20,11 +21,15 @@ class DataManager:
 
     @staticmethod
     def _default_group_config() -> Dict[str, Any]:
-        return {"auto_push_enabled": False, "query_enabled": True}
+        return {
+            "auto_push_enabled": False,
+            "query_enabled": False,
+            "max_forward_results": DEFAULT_MAX_FORWARD_RESULTS,
+        }
 
     @staticmethod
     def _default_data() -> Dict[str, Any]:
-        return {"max_forward_results": DEFAULT_MAX_FORWARD_RESULTS, "groups": {}}
+        return {"schema_version": 2, "groups": {}}
 
     @staticmethod
     def _normalize_max_forward_results(value: Any) -> int:
@@ -40,21 +45,43 @@ class DataManager:
         groups = raw.get("groups", {})
         if not isinstance(groups, dict):
             raise ValueError("pig_groups_must_be_object")
-        data["max_forward_results"] = self._normalize_max_forward_results(raw.get("max_forward_results", 5))
+        legacy = raw.get("schema_version") != 2
+        legacy_limit = self._normalize_max_forward_results(raw.get("max_forward_results", 5))
+        known_groups = set()
+        if legacy:
+            known_groups.update(feature_gate.list_configured_groups())
         for group_id, values in groups.items():
+            try:
+                gid = int(group_id)
+            except (TypeError, ValueError):
+                continue
+            if gid <= 0:
+                continue
+            known_groups.add(gid)
             cfg = self._default_group_config()
+            if legacy:
+                cfg["query_enabled"] = True
+                cfg["max_forward_results"] = legacy_limit
             if isinstance(values, dict):
                 cfg["auto_push_enabled"] = bool(values.get("auto_push_enabled", False))
-                cfg["query_enabled"] = bool(values.get("query_enabled", True))
-                if values.get("max_forward_results") is not None:
-                    cfg["max_forward_results"] = self._normalize_max_forward_results(values["max_forward_results"])
-            data["groups"][str(group_id)] = cfg
+                cfg["query_enabled"] = bool(values.get("query_enabled", cfg["query_enabled"]))
+                cfg["max_forward_results"] = self._normalize_max_forward_results(
+                    values.get("max_forward_results", cfg["max_forward_results"])
+                )
+            data["groups"][str(gid)] = cfg
+        if legacy:
+            for gid in known_groups:
+                data["groups"].setdefault(str(gid), {
+                    "auto_push_enabled": False,
+                    "query_enabled": True,
+                    "max_forward_results": legacy_limit,
+                })
         return data
 
     def get_group_config(self, group_id: int) -> Dict[str, bool]:
         cfg = self._store.load()["groups"].get(str(group_id), {})
         return {"auto_push_enabled": bool(cfg.get("auto_push_enabled", False)),
-                "query_enabled": bool(cfg.get("query_enabled", True))}
+                "query_enabled": bool(cfg.get("query_enabled", False))}
 
     def _set_group_enabled(self, group_id: int, key: str, enabled: bool) -> bool:
         def mutate(data):
@@ -79,42 +106,26 @@ class DataManager:
         return sorted(int(gid) for gid in self._store.load()["groups"]
                       if str(gid).isdigit() and int(gid) > 0)
 
-    def export_group_config(self, group_id: int) -> Dict[str, Optional[int]]:
+    def export_group_config(self, group_id: int) -> Dict[str, int]:
         cfg = self._store.load()["groups"].get(str(group_id), {})
-        return {"max_forward_results": cfg.get("max_forward_results")}
+        return {"max_forward_results": self._normalize_max_forward_results(
+            cfg.get("max_forward_results", DEFAULT_MAX_FORWARD_RESULTS)
+        )}
 
-    def update_group_config(self, group_id: int, changes: Dict[str, Any]) -> Dict[str, Optional[int]]:
-        if int(group_id) <= 0 or not isinstance(changes, dict) or set(changes) - {"max_forward_results"}:
+    def update_group_config(self, group_id: int, changes: Dict[str, Any]) -> Dict[str, int]:
+        if int(group_id) <= 0 or not isinstance(changes, dict) or set(changes) != {"max_forward_results"}:
             raise ValueError("invalid_pig_group_config")
-        if "max_forward_results" not in changes:
-            return self.export_group_config(group_id)
         value = changes["max_forward_results"]
-        if value is not None and (type(value) is not int or value < 1):
+        if type(value) is not int or value < 1:
             raise ValueError("invalid_max_forward_results")
         def mutate(data):
-            cfg = data["groups"].get(str(group_id))
-            if value is None:
-                if cfg is not None:
-                    cfg.pop("max_forward_results", None)
-            else:
-                cfg = data["groups"].setdefault(str(group_id), self._default_group_config())
-                cfg["max_forward_results"] = value
+            cfg = data["groups"].setdefault(str(group_id), self._default_group_config())
+            cfg["max_forward_results"] = value
             return {"max_forward_results": value}
         return self._store.mutate(mutate)
 
-    def get_max_forward_results(self, group_id: Optional[int] = None) -> int:
-        data = self._store.load()
-        cfg = data["groups"].get(str(group_id), {}) if group_id is not None else {}
-        return cfg.get("max_forward_results", data["max_forward_results"])
-
-    def set_max_forward_results(self, value: int) -> bool:
-        normalized = self._normalize_max_forward_results(value)
-        def mutate(data):
-            if data["max_forward_results"] == normalized:
-                return False
-            data["max_forward_results"] = normalized
-            return True
-        return bool(self._store.mutate(mutate))
+    def get_max_forward_results(self, group_id: int) -> int:
+        return self.export_group_config(group_id)["max_forward_results"]
 
 
 pig_data_manager = DataManager()

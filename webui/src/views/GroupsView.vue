@@ -1,17 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { NAlert, NButton, NCard, NEmpty, NInput, NSpin, useMessage } from 'naive-ui'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { NAlert, NButton, NEmpty, NInput, NSpin, useMessage } from 'naive-ui'
 import { apiGet } from '../api/client'
 import type { GroupSummary, GroupsResponse } from '../api/types'
 import GroupIdentity from '../components/GroupIdentity.vue'
 
+const route = useRoute()
 const router = useRouter()
 const message = useMessage()
 const groups = ref<GroupSummary[]>([])
 const warnings = ref<string[]>([])
 const error = ref('')
-const search = ref('')
+const search = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const loading = ref(false)
 let generation = 0
 onUnmounted(() => { generation++ })
@@ -33,6 +34,9 @@ async function load(): Promise<void> {
     if (token !== generation) return
     groups.value = response.groups
     warnings.value = response.warnings
+    await nextTick()
+    const savedScroll = Number(sessionStorage.getItem('xducraft-groups-scroll') ?? '0')
+    if (Number.isFinite(savedScroll) && savedScroll > 0) window.scrollTo({ top: savedScroll })
   } catch (caught) {
     if (token !== generation) return
     error.value = caught instanceof Error ? caught.message : '读取群列表失败'
@@ -42,14 +46,19 @@ async function load(): Promise<void> {
   }
 }
 function openGroup(groupId: string): void {
-  router.push(`/groups/${encodeURIComponent(groupId)}`)
+  sessionStorage.setItem('xducraft-groups-scroll', String(window.scrollY))
+  void router.push({ name: 'group-plugins', params: { groupId }, query: search.value.trim() ? { groups: search.value.trim() } : {} })
 }
 function connectionText(group: GroupSummary): string {
-  if (error.value) return '上次成功的目录，当前连接未确认'
-  if (group.connected) return '当前可连接'
-  if (group.stale) return '使用最近一次获取的群信息'
-  return '当前未连接，来自已有配置'
+  if (error.value) return '连接未确认'
+  if (group.connected) return '在线'
+  if (group.stale) return '最近连接'
+  return '离线'
 }
+watch(search, value => {
+  const query = value.trim()
+  void router.replace({ name: 'groups', query: query ? { q: query } : {} })
+})
 onMounted(load)
 </script>
 
@@ -57,8 +66,7 @@ onMounted(load)
   <main class="page groups-page">
     <div class="page-intro">
       <div>
-        <h1 class="page-heading">选择一个群开始管理</h1>
-        <p class="page-subtitle">进入群工作台后，可直接在插件之间切换，不必反复返回此页。</p>
+        <h1 class="page-heading">群聊</h1>
       </div>
       <NButton secondary :loading="loading" @click="load">刷新群列表</NButton>
     </div>
@@ -69,21 +77,15 @@ onMounted(load)
     </NAlert>
     <NAlert v-for="warning in warnings" :key="warning" type="warning" class="group-warning">{{ warning }}</NAlert>
 
-    <NCard class="group-finder">
-      <div class="finder-fields">
-        <div class="finder-field">
-          <label for="group-search">搜索已发现的群</label>
-          <NInput id="group-search" v-model:value="search" clearable placeholder="输入群名或群号" />
-        </div>
-      </div>
-    </NCard>
+    <div class="group-finder">
+      <NInput id="group-search" v-model:value="search" clearable aria-label="搜索群聊" placeholder="搜索群名或群号" />
+    </div>
 
     <NSpin :show="loading">
-      <section class="group-section" aria-labelledby="recent-groups">
+      <section v-if="currentGroups.length" class="group-section" aria-labelledby="recent-groups">
         <div class="section-heading">
           <div>
-            <h2 id="recent-groups">当前与最近连接</h2>
-            <p>优先显示 Bot 当前能识别的群；断开后仍保留最近成功获取的名称。</p>
+            <h2 id="recent-groups">{{ currentGroups.some(group => group.connected) ? '已连接' : '最近群聊' }}</h2>
           </div>
           <span>{{ currentGroups.length }} 个</span>
         </div>
@@ -101,17 +103,15 @@ onMounted(load)
               <span class="connection-dot" :class="{ online: group.connected && !error }" />
               {{ connectionText(group) }}
             </span>
-            <span class="row-action">管理插件 →</span>
+            <span class="row-action" aria-hidden="true">→</span>
           </button>
         </div>
-        <NEmpty v-else :description="search ? '没有匹配的当前或最近连接群' : '尚未发现可连接的群'" />
       </section>
 
-      <section class="group-section configured-section" aria-labelledby="configured-groups">
+      <section v-if="configuredGroups.length" class="group-section configured-section" aria-labelledby="configured-groups">
         <div class="section-heading">
           <div>
-            <h2 id="configured-groups">仅有历史配置</h2>
-            <p>这些群目前没有连接信息；打开前请核对灰色群号。</p>
+            <h2 id="configured-groups">历史配置 · 未连接</h2>
           </div>
           <span>{{ configuredGroups.length }} 个</span>
         </div>
@@ -125,12 +125,11 @@ onMounted(load)
             @click="openGroup(group.group_id)"
           >
             <GroupIdentity :group-id="group.group_id" :name="group.name" />
-            <span class="row-status"><span class="connection-dot" />{{ connectionText(group) }}</span>
-            <span class="row-action">查看配置 →</span>
+            <span class="row-action" aria-hidden="true">→</span>
           </button>
         </div>
-        <NEmpty v-else :description="search ? '没有匹配的历史配置群' : '没有仅含历史配置的群'" />
       </section>
+      <NEmpty v-if="!loading && !matchingGroups.length" :description="search ? '没有匹配的群聊' : '尚未获取群聊，请连接 QQ 后刷新'" />
     </NSpin>
   </main>
 </template>
@@ -140,15 +139,11 @@ onMounted(load)
 .page-intro, .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .page-intro { align-items: flex-start; }
 .group-warning { margin-bottom: 10px; }
-.group-finder { margin-bottom: 26px; }
-.finder-fields { align-items: flex-end; }
-.finder-field { min-width: 0; flex: 1; }
-.finder-field label { display: block; margin-bottom: 7px; font-size: 13px; font-weight: 650; }
+.group-finder { margin-bottom:20px; }
 .group-section { min-width: 0; }
-.configured-section { margin-top: 30px; padding-top: 26px; border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
+.group-section + .configured-section { margin-top:24px; padding-top:20px; border-top:1px solid color-mix(in srgb,currentColor 12%,transparent); }
 .section-heading { align-items: flex-start; margin-bottom: 12px; }
 .section-heading h2 { margin: 0; font-size: 18px; }
-.section-heading p { margin: 5px 0 0; opacity: .66; }
 .section-heading > span { flex: 0 0 auto; opacity: .55; }
 .group-list { overflow: hidden; border: 1px solid color-mix(in srgb, currentColor 13%, transparent); border-radius: 12px; }
 .group-row {
@@ -173,8 +168,10 @@ onMounted(load)
 .connection-dot.online { background: #18a058; }
 .row-action { color: #2080f0; font-weight: 600; white-space: nowrap; }
 @media (max-width: 699px) {
-  .page-intro { align-items: stretch; flex-direction: column; }
-  .group-row { grid-template-columns: minmax(0, 1fr); gap: 9px; }
-  .row-action { justify-self: start; }
+  .page-intro { align-items:center; }
+  .group-row { grid-template-columns:minmax(0,1fr) auto; gap:6px 12px; padding:13px; }
+  .row-status { grid-column:1; grid-row:2; margin-left:60px; }
+  .row-action { grid-column:2; grid-row:1 / span 2; }
+  .configured-row .row-action { grid-row:1; }
 }
 </style>

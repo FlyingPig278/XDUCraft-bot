@@ -58,7 +58,6 @@ feature_gate.register(feature_gate.Feature(
     key=FEATURE_KEY,
     name="群聊词云",
     description="记录群聊文本，每天 0 点推送前一天的词云图",
-    default_enabled=False,
     passive=True,
     getter=chat_log_data_manager.is_group_enabled,
     setter=chat_log_data_manager.set_group_enabled,
@@ -478,6 +477,10 @@ async def handle_group_message_record(event: GroupMessageEvent):
 
 @group_recall_notice.handle()
 async def handle_group_recall_notice(event: GroupRecallNoticeEvent):
+    group_id = int(event.group_id)
+    if (not feature_gate.is_plugin_enabled("wordcloud", group_id)
+            or not feature_gate.is_enabled(FEATURE_KEY, group_id)):
+        return
     deleted = chat_log_data_manager.delete_message_by_message_id(
         group_id=int(event.group_id),
         message_id=int(event.message_id),
@@ -488,6 +491,8 @@ async def handle_group_recall_notice(event: GroupRecallNoticeEvent):
 
 @wordcloud_command.handle()
 async def handle_wordcloud_command(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
+    if not feature_gate.is_plugin_enabled("wordcloud"):
+        return
     if not await _can_manage(bot, event):
         await wordcloud_command.finish("你没有执行该命令的权限")
         return
@@ -502,20 +507,13 @@ async def handle_wordcloud_command(bot: Bot, event: GroupMessageEvent, args: Mes
     action = arg_list[0].lower()
     group_id = int(event.group_id)
 
-    if action == "on":
-        changed = chat_log_data_manager.set_group_enabled(group_id, True)
+    if action in {"on", "off"}:
+        enabled = action == "on"
+        changed = feature_gate.set_enabled(FEATURE_KEY, group_id, enabled)
+        state = "开启" if enabled else "关闭"
         if changed:
-            await wordcloud_command.finish("已开启本群词云记录与推送")
-            return
-        await wordcloud_command.finish("本群词云记录与推送已开启")
-        return
-
-    if action == "off":
-        changed = chat_log_data_manager.set_group_enabled(group_id, False)
-        if changed:
-            await wordcloud_command.finish("已关闭本群词云记录与推送")
-            return
-        await wordcloud_command.finish("本群词云记录与推送已关闭")
+            await wordcloud_command.finish(f"已{state}本群词云记录与推送")
+        await wordcloud_command.finish(f"本群词云记录与推送已{state}")
         return
 
     if action == "status":

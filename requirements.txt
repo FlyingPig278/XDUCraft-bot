@@ -11,3 +11,4 @@ jieba~=0.42.1
 wordcloud~=1.9.4
 stopwordsiso~=0.6.1
 setuptools<81
+pydantic>=2.0,<3.0

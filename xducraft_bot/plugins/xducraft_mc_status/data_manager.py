@@ -1,32 +1,11 @@
-"""MC 状态插件的配置存储。
-
-数据文件结构::
-
-    {
-      "__global__": { 全局默认值 },
-      "<群号>": {
-          "servers": [ 服务器树 ],
-          "footer": "...",
-          ...群级设置
-      }
-    }
-
-相比旧实现修掉的三件事：
-
-1. **群级默认值不再自带 ``status_api_source``。**
-   旧代码的群默认值里写着 ``"jsu"``，而 ``setdefault`` 会把它当成“这个群显式
-   配置过 jsu”写进去，导致 ``/mcs source global set`` 对任何群都不生效——
-   全局默认值形同虚设。现在群级默认是空串（= 未配置 = 回退全局）。
-2. **配置读写统一走 SQLite 原子事务。** 旧 JSON 仅作为首次导入来源；
-   已导入后，QQ 指令和声明式配置接口读取同一个配置文档。
-3. **群级/全局的 getter-setter 不再手抄四遍。**  统一由 ``_scoped_*`` 系列生成。
-"""
+"""Independent per-group MC status configuration storage."""
 
 from __future__ import annotations
 
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.config_store import ConfigDocumentStore
 from xducraft_bot.shared.json_store import as_bool, as_str
 
@@ -35,7 +14,7 @@ from .constants import DEFAULT_SERVER_PRIORITY
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 DATA_FILE = os.path.join(DATA_DIR, "server_data.json")
-GLOBAL_CONFIG_KEY = "__global__"
+SCHEMA_VERSION_KEY = "__schema_version__"
 
 #: 允许的状态查询源。``auto`` 会按 protocol -> custom -> jsu -> sjtu 依次回退，
 #: ``auto_api_first`` 按反向顺序回退（公共 API 优先，protocol 最后兜底）。
@@ -62,23 +41,16 @@ def _default_group_data() -> Dict[str, Any]:
         "servers": [],
         "footer": "",
         "show_offline_by_default": False,
-        # 空串表示“本群未配置”，读取时回退到全局默认值。
-        "status_api_source": "",
+        "status_api_source": DEFAULT_API_SOURCE,
         "status_api_url": "",
-        # 本群所有服务器的默认登录验证方式（空串 = 不设默认）。
         "default_auth_mode": "",
-        # 状态协议无法可靠区分联合认证后端，默认关闭；仅保留为旧配置的可选功能。
         "auth_detect": False,
-        # 管理类指令的回执是否走私聊，避免在大群里刷屏。
         "quiet_admin_replies": True,
     }
 
 
-def _default_global_config() -> Dict[str, Any]:
-    return {
-        "status_api_source": DEFAULT_API_SOURCE,
-        "status_api_url": "",
-    }
+def _default_data() -> Dict[str, Any]:
+    return {SCHEMA_VERSION_KEY: 2}
 
 
 def _normalize_source(value: Any, fallback: str = "") -> str:
@@ -92,38 +64,53 @@ def _normalize_auth_mode(value: Any) -> str:
 
 
 def _normalize_data(raw: Any) -> Dict[str, Any]:
-    """补齐缺失字段、纠正类型，保证下游拿到的一定是预期结构。"""
+    """Normalize legacy inherited query settings into direct group values."""
     if not isinstance(raw, dict):
-        return {GLOBAL_CONFIG_KEY: _default_global_config()}
+        return _default_data()
 
-    data: Dict[str, Any] = {}
-
-    global_raw = raw.get(GLOBAL_CONFIG_KEY)
-    global_config = _default_global_config()
-    if isinstance(global_raw, dict):
-        global_config["status_api_source"] = _normalize_source(
-            global_raw.get("status_api_source"), DEFAULT_API_SOURCE
-        )
-        global_config["status_api_url"] = as_str(global_raw.get("status_api_url"))
-    data[GLOBAL_CONFIG_KEY] = global_config
+    data: Dict[str, Any] = _default_data()
+    legacy = raw.get(SCHEMA_VERSION_KEY) != 2
+    global_raw = raw.get("__global__")
+    global_raw = global_raw if isinstance(global_raw, dict) else {}
+    legacy_source = _normalize_source(global_raw.get("status_api_source"), DEFAULT_API_SOURCE)
+    legacy_url = as_str(global_raw.get("status_api_url"))
+    known_groups = set(feature_gate.list_configured_groups()) if legacy else set()
 
     for key, value in raw.items():
-        if key == GLOBAL_CONFIG_KEY:
+        if key in {"__global__", SCHEMA_VERSION_KEY} or not isinstance(value, dict):
             continue
-        if not isinstance(value, dict):
+        try:
+            gid = int(key)
+        except (TypeError, ValueError):
             continue
+        if gid <= 0:
+            continue
+        known_groups.add(gid)
 
         group = _default_group_data()
         group["servers"] = _normalize_server_tree(value.get("servers"))
         group["footer"] = as_str(value.get("footer"))
         group["show_offline_by_default"] = as_bool(value.get("show_offline_by_default"), False)
-        group["status_api_source"] = _normalize_source(value.get("status_api_source"), "")
+        group["status_api_source"] = _normalize_source(
+            value.get("status_api_source"),
+            legacy_source if legacy else DEFAULT_API_SOURCE,
+        )
+        if legacy and not _normalize_source(value.get("status_api_source"), ""):
+            group["status_api_source"] = legacy_source
         group["status_api_url"] = as_str(value.get("status_api_url"))
+        if legacy and not group["status_api_url"]:
+            group["status_api_url"] = legacy_url
         group["default_auth_mode"] = _normalize_auth_mode(value.get("default_auth_mode"))
         group["auth_detect"] = as_bool(value.get("auth_detect"), False)
         group["quiet_admin_replies"] = as_bool(value.get("quiet_admin_replies"), True)
-        data[str(key)] = group
-
+        data[str(gid)] = group
+    if legacy:
+        for gid in known_groups:
+            if str(gid) not in data:
+                group = _default_group_data()
+                group["status_api_source"] = legacy_source
+                group["status_api_url"] = legacy_url
+                data[str(gid)] = group
     return data
 
 
@@ -168,8 +155,7 @@ def _normalize_server_tree(nodes: Any, _depth: int = 0) -> List[Dict[str, Any]]:
 
 
 _store = ConfigDocumentStore(
-    "mc_status", lambda: {GLOBAL_CONFIG_KEY: _default_global_config()},
-    _normalize_data, legacy_path=DATA_FILE,
+    "mc_status", _default_data, _normalize_data, legacy_path=DATA_FILE,
 )
 
 
@@ -177,7 +163,7 @@ def configure_storage(database_path: str, *, legacy_path: Optional[str] = None) 
     """注入隔离配置数据库；旧 JSON 只允许用作首次导入来源。"""
     global _store
     _store = ConfigDocumentStore(
-        "mc_status", lambda: {GLOBAL_CONFIG_KEY: _default_global_config()},
+        "mc_status", _default_data,
         _normalize_data, database_path=database_path, legacy_path=legacy_path,
     )
 
@@ -194,12 +180,6 @@ def _group(data: Dict[str, Any], group_id: int) -> Dict[str, Any]:
     return existing
 
 
-def _global(data: Dict[str, Any]) -> Dict[str, Any]:
-    existing = data.get(GLOBAL_CONFIG_KEY)
-    if not isinstance(existing, dict):
-        existing = _default_global_config()
-        data[GLOBAL_CONFIG_KEY] = existing
-    return existing
 
 
 def _set_group_field(group_id: int, field: str, value: Any) -> bool:
@@ -214,15 +194,6 @@ def _set_group_field(group_id: int, field: str, value: Any) -> bool:
     return bool(_store.mutate(mutate))
 
 
-def _set_global_field(field: str, value: Any) -> bool:
-    def mutate(data: Dict[str, Any]) -> bool:
-        config = _global(data)
-        if config.get(field) == value:
-            return False
-        config[field] = value
-        return True
-
-    return bool(_store.mutate(mutate))
 
 
 def _get_group_field(group_id: int, field: str, default: Any = None) -> Any:
@@ -233,12 +204,6 @@ def _get_group_field(group_id: int, field: str, default: Any = None) -> Any:
     return group.get(field, default)
 
 
-def _get_global_field(field: str, default: Any = None) -> Any:
-    data = _store.load()
-    config = data.get(GLOBAL_CONFIG_KEY)
-    if not isinstance(config, dict):
-        return default
-    return config.get(field, default)
 
 
 # --- 树形结构辅助 ---
@@ -428,8 +393,11 @@ def set_quiet_admin_replies(group_id: int, enabled: bool) -> bool:
 # --- 公共 API：状态查询源 ---
 
 def get_group_status_api_source(group_id: int) -> str:
-    """本群显式配置的查询源；未配置返回空串。"""
-    return _normalize_source(_get_group_field(group_id, "status_api_source", ""), "")
+    """Return this group's direct query source."""
+    return _normalize_source(
+        _get_group_field(group_id, "status_api_source", DEFAULT_API_SOURCE),
+        DEFAULT_API_SOURCE,
+    )
 
 
 def set_group_status_api_source(group_id: int, api_source: str) -> bool:
@@ -440,43 +408,7 @@ def set_group_status_api_source(group_id: int, api_source: str) -> bool:
 
 
 def clear_group_status_api_source(group_id: int) -> bool:
-    if not get_group_status_api_source(group_id):
-        return False
-    return _set_group_field(group_id, "status_api_source", "")
-
-
-def get_global_status_api_source() -> str:
-    return _normalize_source(_get_global_field("status_api_source", DEFAULT_API_SOURCE), DEFAULT_API_SOURCE)
-
-
-def set_global_status_api_source(api_source: str) -> bool:
-    normalized = _normalize_source(api_source)
-    if not normalized:
-        return False
-    return _set_global_field("status_api_source", normalized)
-
-
-def clear_global_status_api_source() -> bool:
-    if get_global_status_api_source() == DEFAULT_API_SOURCE:
-        return False
-    return _set_global_field("status_api_source", DEFAULT_API_SOURCE)
-
-
-def get_effective_status_api_source(group_id: int) -> Tuple[str, str]:
-    """返回 ``(生效的查询源, 来源)``，来源为 ``group`` 或 ``global``。"""
-    group_source = get_group_status_api_source(group_id)
-    if group_source:
-        return group_source, "group"
-    return get_global_status_api_source(), "global"
-
-
-def get_status_api_source(group_id: int) -> str:
-    return get_effective_status_api_source(group_id)[0]
-
-
-def set_status_api_source(group_id: int, api_source: str) -> bool:
-    """兼容旧接口：等价于设置群级覆盖。"""
-    return set_group_status_api_source(group_id, api_source)
+    return _set_group_field(group_id, "status_api_source", DEFAULT_API_SOURCE)
 
 
 # --- 公共 API：自定义 API URL ---
@@ -490,34 +422,7 @@ def set_group_status_api_url(group_id: int, api_url: str) -> bool:
 
 
 def clear_group_status_api_url(group_id: int) -> bool:
-    if not get_group_status_api_url(group_id):
-        return False
     return _set_group_field(group_id, "status_api_url", "")
-
-
-def get_global_status_api_url() -> str:
-    return as_str(_get_global_field("status_api_url", ""))
-
-
-def set_global_status_api_url(api_url: str) -> bool:
-    return _set_global_field("status_api_url", as_str(api_url))
-
-
-def clear_global_status_api_url() -> bool:
-    if not get_global_status_api_url():
-        return False
-    return _set_global_field("status_api_url", "")
-
-
-def get_effective_status_api_url(group_id: int) -> Tuple[str, str]:
-    """返回 ``(生效的 URL, 来源)``，来源为 ``group`` / ``global`` / ``none``。"""
-    group_url = get_group_status_api_url(group_id)
-    if group_url:
-        return group_url, "group"
-    global_url = get_global_status_api_url()
-    if global_url:
-        return global_url, "global"
-    return "", "none"
 
 
 # --- 公共 API：导入导出 ---
@@ -578,10 +483,10 @@ def export_group_data(group_id: int) -> Dict[str, Any]:
     return group
 
 def list_configured_groups() -> List[int]:
-    """列出存储中已有配置块的正整数群号。"""
+    """List groups with a stored configuration block."""
     groups: List[int] = []
     for key in _store.load():
-        if key == GLOBAL_CONFIG_KEY:
+        if key == SCHEMA_VERSION_KEY:
             continue
         try:
             group_id = int(key)
@@ -592,43 +497,11 @@ def list_configured_groups() -> List[int]:
     return sorted(set(groups))
 
 
-def export_global_data() -> Dict[str, Any]:
-    """导出网页可编辑的完整全局配置。"""
-    data = _store.load()
-    config = data.get(GLOBAL_CONFIG_KEY)
-    if not isinstance(config, dict):
-        return _default_global_config()
-    return {
-        "status_api_source": _normalize_source(
-            config.get("status_api_source"), DEFAULT_API_SOURCE
-        ),
-        "status_api_url": as_str(config.get("status_api_url")),
-    }
-
-
-def import_global_data(data: Dict[str, Any]) -> Dict[str, Any]:
-    """在一次原子写入中替换网页可编辑的全局配置。"""
-    if not isinstance(data, dict):
-        raise ValueError("global_config_must_be_object")
-
-    source = _normalize_source(data.get("status_api_source"), DEFAULT_API_SOURCE)
-    url = as_str(data.get("status_api_url"))
-
-    def mutate(stored: Dict[str, Any]) -> Dict[str, Any]:
-        config = _global(stored)
-        config["status_api_source"] = source
-        config["status_api_url"] = url
-        return {
-            "status_api_source": source,
-            "status_api_url": url,
-        }
-
-    return _store.mutate(mutate)
 
 
 
 __all__ = [
-    "DATA_DIR", "DATA_FILE", "GLOBAL_CONFIG_KEY", "VALID_API_SOURCES", "DEFAULT_API_SOURCE",
+    "DATA_DIR", "DATA_FILE", "SCHEMA_VERSION_KEY", "VALID_API_SOURCES", "DEFAULT_API_SOURCE",
     "SERVER_ATTRIBUTE_DEFAULTS", "configure_storage",
     "get_server_list", "get_all_servers_flat", "get_server_info",
     "add_server", "remove_server", "set_server_attribute", "clear_server_attribute",
@@ -638,11 +511,6 @@ __all__ = [
     "get_group_default_auth_mode", "set_group_default_auth_mode",
     "get_quiet_admin_replies", "set_quiet_admin_replies",
     "get_group_status_api_source", "set_group_status_api_source", "clear_group_status_api_source",
-    "get_global_status_api_source", "set_global_status_api_source", "clear_global_status_api_source",
-    "get_effective_status_api_source", "get_status_api_source", "set_status_api_source",
     "get_group_status_api_url", "set_group_status_api_url", "clear_group_status_api_url",
-    "get_global_status_api_url", "set_global_status_api_url", "clear_global_status_api_url",
-    "get_effective_status_api_url",
-    "import_group_data", "export_group_data",
-    "list_configured_groups", "export_global_data", "import_global_data",
+    "import_group_data", "export_group_data", "list_configured_groups",
 ]

@@ -439,29 +439,22 @@ class AdminService:
                 return entry, declaration, feature
         raise AdminError(404, "unknown_feature", "不存在的功能")
 
-    def get_feature(self, key: str, gid: Optional[int] = None):
+    def get_feature(self, key: str, gid: int):
         _, declaration, feature = self._feature_owner(key)
-        shared = bool(feature.uses_shared_store)
-        if gid is None:
-            if not shared:
-                raise AdminError(409, "feature_scope", "该功能由插件自己的群设置管理")
-            enabled, source = self.feature_gate.get_default(key), "default"
-        else:
-            enabled, source = self.feature_gate.resolve(key, gid)
+        enabled, source = self.feature_gate.resolve(key, gid)
         try:
             control = configuration.plugin_control(declaration.key, gid)
         except ConfigurationError as exc:
             raise _configuration_error(exc) from None
         owner_effective = True
-        if gid is not None:
-            feature_state = self._status(declaration, gid).get("feature_effective", {})
-            if isinstance(feature_state, dict):
-                owner_effective = bool(feature_state.get(key, True))
+        feature_state = self._status(declaration, gid).get("feature_effective", {})
+        if isinstance(feature_state, dict):
+            owner_effective = bool(feature_state.get(key, True))
         effective = bool(enabled and control["effective"] and owner_effective)
         meta = {
             "source": source,
-            "resettable": shared and gid is not None,
-            "global_configurable": shared,
+            "resettable": False,
+            "global_configurable": False,
             "superuser_only": bool(feature.superuser_only),
             "passive": bool(feature.passive),
             "effective": effective,
@@ -472,26 +465,17 @@ class AdminService:
         raw = {"enabled": enabled, "source": source, "control": control.get("raw"), "owner_effective": owner_effective}
         return self.resource(["feature", key, gid], {"enabled": bool(enabled)}, meta, raw)
 
-    def put_feature(self, key: str, gid: Optional[int], data: Optional[dict], expected: Optional[str], *, reset: bool = False):
+    def put_feature(self, key: str, gid: int, data: dict, expected: Optional[str]):
         current = self.get_feature(key, gid)
         expected_value = self._expected(expected)
         if not hmac.compare_digest(current["revision"], expected_value):
             raise AdminError(409, "stale_config", "配置已被 QQ 或其他页面修改，请重新加载后再保存")
+        target = _validate(models.Switch, data)["enabled"]
         with config_write_context("web_admin", gid):
-            if reset:
-                if not current["meta"]["resettable"]:
-                    raise AdminError(409, "feature_scope", "该功能不支持恢复默认")
-                self.feature_gate.clear_override(key, gid)
-                target = None
-            else:
-                target = _validate(models.Switch, data)["enabled"]
-                if gid is None:
-                    self.feature_gate.set_default(key, target)
-                else:
-                    self.feature_gate.set_enabled(key, gid, target)
+            self.feature_gate.set_enabled(key, gid, target)
         result = self.get_feature(key, gid)
-        if (reset and result["meta"]["source"] != "default") or (target is not None and result["config"]["enabled"] != target):
-            raise AdminError(500, "storage_failed", "配置未能保存")
+        if result["config"]["enabled"] != target:
+            raise AdminError(500, "storage_failed", "功能开关未能保存")
         return result
 
     def get_control(self, name: str, gid: Optional[int] = None):
@@ -505,18 +489,22 @@ class AdminService:
         except ConfigurationError as exc:
             raise _configuration_error(exc) from None
         raw = state.pop("raw", None)
-        group_explicit = gid is not None and raw[1] is not None
-        global_explicit = raw[0] is not None
+        explicit = raw[0] is not None if gid is None else raw[1] is not None
+        effective = bool(state["effective"])
+        if gid is not None and len(declaration.feature_keys) == 1:
+            feature = self.get_feature(declaration.feature_keys[0], gid)
+            effective = feature["meta"]["effective"]
+            raw = {"control": raw, "feature_revision": feature["revision"]}
         meta = {
-            "source": "group" if group_explicit else ("global" if global_explicit else "default"),
-            "resettable": group_explicit if gid is not None else global_explicit,
-            "effective": bool(state["effective"]),
+            "source": ("global" if gid is None else "group") if explicit else "default",
+            "resettable": False,
+            "effective": effective,
             "global_enabled": bool(state["global_enabled"]),
             "ready": bool(state["ready"]),
         }
         return self.resource(["control", name, gid], {"enabled": bool(state["enabled"])}, meta, raw)
 
-    def put_control(self, name: str, gid: Optional[int], data: Optional[dict], expected: Optional[str], *, reset: bool = False):
+    def put_control(self, name: str, gid: Optional[int], data: dict, expected: Optional[str]):
         current = self.get_control(name, gid)
         expected_value = self._expected(expected)
         if not hmac.compare_digest(current["revision"], expected_value):
@@ -524,13 +512,18 @@ class AdminService:
         entry = self.plugin(name)
         declaration = entry.declaration
         assert declaration is not None
-        enabled = None if reset else _validate(models.Switch, data)["enabled"]
+        enabled = _validate(models.Switch, data)["enabled"]
         try:
-            configuration.set_plugin_enabled(declaration.key, enabled, gid, actor="web_admin")
+            if gid is not None and len(declaration.feature_keys) == 1:
+                with config_write_context("web_admin", gid):
+                    self.feature_gate.set_enabled(declaration.feature_keys[0], gid, enabled)
+            else:
+                configuration.set_plugin_enabled(declaration.key, enabled, gid, actor="web_admin")
         except ConfigurationError as exc:
             raise _configuration_error(exc) from None
         result = self.get_control(name, gid)
-        if enabled is not None and result["config"]["enabled"] != enabled:
+        feature_matches = gid is None or len(declaration.feature_keys) != 1 or self.feature_gate.resolve(declaration.feature_keys[0], gid)[0] == enabled
+        if result["config"]["enabled"] != enabled or not feature_matches:
             raise AdminError(500, "storage_failed", "插件开关未能保存")
         return result
 
@@ -588,9 +581,7 @@ class AdminService:
         for key in declaration.feature_keys:
             try:
                 if gid is None:
-                    feature = self.feature_gate.get_feature(key)
-                    if feature is None or not feature.uses_shared_store:
-                        continue
+                    continue
                 state = self.get_feature(key, gid)
                 feature = self.feature_gate.get_feature(key)
                 descriptor["features"].append({

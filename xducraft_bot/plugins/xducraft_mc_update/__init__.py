@@ -32,7 +32,6 @@ feature_gate.register(feature_gate.Feature(
     key=FEATURE_KEY,
     name="MC 更新推送",
     description="Minecraft 正式版和快照发布时自动推送",
-    default_enabled=False,
     passive=True,
     getter=lambda group_id: int(group_id) in set(data_manager.get_subscribed_groups()),
     setter=lambda group_id, enabled: (
@@ -80,6 +79,8 @@ def normalize_command_action(raw_arg: str) -> str:
 
 @mc_command.handle()
 async def handle_mc_command(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
+    if not feature_gate.is_plugin_enabled("mc_update"):
+        return
     group_id = getattr(event, "group_id", None)
     if group_id is None:
         await mc_command.finish("请在群里使用该命令。")
@@ -96,17 +97,17 @@ async def handle_mc_command(bot: Bot, event: MessageEvent, args: Message = Comma
     if not action:
         await mc_command.finish(COMMAND_USAGE)
 
-    if action == "enable":
-        if data_manager.add_group(gid):
-            await mc_command.finish(f"✅ 已开启 Minecraft 更新推送（群号：{gid}）")
-        else:
-            await mc_command.finish("⚠️ 这个群已经开启了 Minecraft 更新推送。")
-
-    elif action == "disable":
-        if data_manager.remove_group(gid):
-            await mc_command.finish(f"🚫 已关闭 Minecraft 更新推送（群号：{gid}）")
-        else:
-            await mc_command.finish("⚠️ 这个群还没有开启 Minecraft 更新推送。")
+    enabled = action == "enable"
+    changed = feature_gate.set_enabled(FEATURE_KEY, gid, enabled)
+    if changed:
+        await mc_command.finish(
+            f"{'✅ 已开启' if enabled else '🚫 已关闭'} Minecraft 更新推送（群号：{gid}）"
+        )
+    await mc_command.finish(
+        "⚠️ 这个群已经开启了 Minecraft 更新推送。"
+        if enabled else
+        "⚠️ 这个群还没有开启 Minecraft 更新推送。"
+    )
 
 
 def parse_mojang_datetime(value: str) -> Optional[datetime]:

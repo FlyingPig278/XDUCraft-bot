@@ -13,7 +13,6 @@ export const authState = reactive<{
 export const connectionState = reactive({ connectedBots: 0, restartRequired: false })
 export const intendedRoute = ref<string | null>(null)
 
-export const lastGroupSelection = reactive<{ groupId: string; plugin: string }>({ groupId: '', plugin: '' })
 
 export interface MemoryResourceDraft {
   path: string
@@ -40,10 +39,6 @@ export function forgetResourceDraft(path: string): void {
   resourceDrafts.delete(path)
 }
 
-export function rememberGroupSelection(groupId: string, plugin: string): void {
-  lastGroupSelection.groupId = groupId
-  lastGroupSelection.plugin = plugin
-}
 
 const dirtyForms = reactive(new Map<string, { discard: () => void; saving: () => boolean }>())
 export const hasDirtyForms = computed(() => dirtyForms.size > 0 || resourceDrafts.size > 0)
@@ -61,7 +56,7 @@ export function clearDrafts(): void {
 
 export function confirmDiscardDrafts(): boolean {
   const entries = [...dirtyForms.entries()]
-  if (!entries.length) return true
+  if (!entries.length && !resourceDrafts.size) return true
   if (entries.some(([, entry]) => entry.saving())) {
     window.alert('当前配置正在保存或应用，请等待请求结束后再离开。')
     return false
@@ -71,6 +66,7 @@ export function confirmDiscardDrafts(): boolean {
     entry.discard()
     dirtyForms.delete(id)
   }
+  resourceDrafts.clear()
   return true
 }
 

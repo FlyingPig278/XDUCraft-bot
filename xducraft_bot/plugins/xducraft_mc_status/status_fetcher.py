@@ -288,8 +288,8 @@ async def get_single_server_status(ip: str, group_id: Optional[int] = None) -> D
     api_source = data_manager.DEFAULT_API_SOURCE
     custom_api_url = ""
     if group_id is not None:
-        api_source = data_manager.get_status_api_source(group_id)
-        custom_api_url, _ = data_manager.get_effective_status_api_url(group_id)
+        api_source = data_manager.get_group_status_api_source(group_id)
+        custom_api_url = data_manager.get_group_status_api_url(group_id)
 
     if api_source == "custom":
         return await _fetch_via_custom(ip, custom_api_url)

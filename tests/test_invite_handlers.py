@@ -16,6 +16,11 @@ ADMIN_ID = 90001
 CODE = "0123456789abcdef0123456789abcdef"
 
 
+@pytest.fixture(autouse=True)
+def running_invite(enable_plugin):
+    enable_plugin("invite", GROUP_ID)
+
+
 class HandlerFinished(Exception):
     pass
 
@@ -82,7 +87,6 @@ async def test_self_service_claims_before_delivery_and_cannot_issue_twice(mocker
     assert CODE in str(bot.send_private_msg.await_args_list[1].kwargs["message"])
     assert isolated_store.has_claim(USER_ID) is True
     assert isolated_store.stats().issuance_count == 1
-    assert "已经申请过" in str(bot.send_group_msg.await_args.kwargs["message"])
 
 
 @pytest.mark.asyncio
@@ -105,8 +109,6 @@ async def test_uncertain_final_delivery_still_permanently_claims_user(mocker, tm
     assert bot.send_private_msg.await_count == 2
     assert isolated_store.has_claim(USER_ID) is True
     assert isolated_store.stats().issuance_count == 1
-    first_notice = bot.send_group_msg.await_args_list[0].kwargs["message"]
-    assert "不能再次自助申请" in str(first_notice)
 
 
 @pytest.mark.asyncio
@@ -139,7 +141,6 @@ async def test_admin_issue_requires_force_for_existing_record(mocker, tmp_path):
         await invite.handle_admin(bot, event, args)
 
     client.generate.assert_not_awaited()
-    assert "force" in finish.await_args.args[0]
 
     finish.reset_mock()
     args.extract_plain_text.return_value = f"force {USER_ID}"
@@ -177,74 +178,45 @@ async def test_init_snapshots_current_members_and_opens_self_service(mocker, tmp
     assert isolated_store.get_state().self_service_enabled is True
     assert isolated_store.is_legacy(USER_ID) is True
     assert isolated_store.stats().legacy_count == 2
-    assert "已快照 2 名旧成员" in finish.await_args.args[0]
+
+
 
 
 @pytest.mark.asyncio
-async def test_slash_invite_in_configured_group_runs_self_service(mocker):
-    mocker.patch.object(invite, "GroupMessageEvent", FakeGroupEvent)
-    mocker.patch.object(
-        invite,
-        "SETTINGS",
-        InviteSettings(group_id=GROUP_ID, api_url="https://example.test", api_secret="secret"),
-    )
-    self_handler = mocker.patch.object(
-        invite,
-        "handle_self_service",
-        AsyncMock(),
-    )
+async def test_global_stop_prevents_invite_generation_and_delivery(mocker, tmp_path):
+    from xducraft_bot.shared.configuration import set_plugin_enabled
+
+    isolated_store, client = _isolated_plugin(mocker, tmp_path)
+    isolated_store.initialize([], initialized_at=100, initialized_by=ADMIN_ID)
+    set_plugin_enabled("invite", False)
     bot = MagicMock()
-    event = FakeGroupEvent()
-    args = MagicMock()
-    args.extract_plain_text.return_value = ""
-
-    await invite.handle_slash_self_service(bot, event, args)
-
-    self_handler.assert_awaited_once_with(bot, event)
-
+    bot.send_private_msg = AsyncMock()
+    bot.send_group_msg = AsyncMock()
+    await invite.handle_self_service(bot, FakeGroupEvent())
+    client.generate.assert_not_awaited()
+    bot.send_private_msg.assert_not_awaited()
+    bot.send_group_msg.assert_not_awaited()
+    assert isolated_store.has_claim(USER_ID) is False
 
 
 @pytest.mark.asyncio
-async def test_private_slash_invite_guides_non_manager_to_configured_group(mocker):
+async def test_stop_during_admin_generation_records_claim_without_delivering(mocker, tmp_path):
+    from xducraft_bot.shared.configuration import set_plugin_enabled
+
+    isolated_store, client = _isolated_plugin(mocker, tmp_path)
     mocker.patch.object(invite, "PrivateMessageEvent", FakePrivateEvent)
-    mocker.patch.object(
-        invite,
-        "SETTINGS",
-        InviteSettings(group_id=GROUP_ID, api_url="https://example.test", api_secret="secret"),
-    )
-    mocker.patch.object(invite, "_is_manager", AsyncMock(return_value=False))
-    finish = mocker.patch.object(
-        invite.admin_command,
-        "finish",
-        AsyncMock(side_effect=HandlerFinished),
-    )
+    mocker.patch.object(invite, "_is_manager", AsyncMock(return_value=True))
+    mocker.patch.object(invite, "_get_member_info", AsyncMock(return_value={"role": "member"}))
+    finish = mocker.patch.object(invite.admin_command, "finish", AsyncMock(side_effect=HandlerFinished))
+
+    async def pause_after_generation(_remark):
+        set_plugin_enabled("invite", False)
+        return _generated()
+
+    client.generate.side_effect = pause_after_generation
     args = MagicMock()
-    args.extract_plain_text.return_value = ""
-
-    with pytest.raises(HandlerFinished):
-        await invite.handle_admin(MagicMock(), FakePrivateEvent(USER_ID), args)
-
-    message = finish.await_args.args[0]
-    assert str(GROUP_ID) in message
-    assert "/邀请码" in message
-
-
-@pytest.mark.asyncio
-async def test_private_plain_invite_uses_same_group_guide(mocker):
-    mocker.patch.object(
-        invite,
-        "SETTINGS",
-        InviteSettings(group_id=GROUP_ID, api_url="https://example.test", api_secret="secret"),
-    )
-    finish = mocker.patch.object(
-        invite.private_invite_guide,
-        "finish",
-        AsyncMock(side_effect=HandlerFinished),
-    )
-
-    with pytest.raises(HandlerFinished):
-        await invite.handle_private_invite_guide()
-
-    message = finish.await_args.args[0]
-    assert str(GROUP_ID) in message
-    assert "/邀请码" in message
+    args.extract_plain_text.return_value = str(USER_ID)
+    await invite.handle_admin(MagicMock(), FakePrivateEvent(), args)
+    assert isolated_store.has_claim(USER_ID) is True
+    assert isolated_store.stats().issuance_count == 1
+    finish.assert_not_awaited()

@@ -15,7 +15,6 @@ from .utils import is_valid_api_url, is_valid_server_address
 
 AuthMode = Literal["", "official", "mua", "xdu", "yggdrasil", "offline", "mixed"]
 Source = Literal["protocol", "sjtu", "jsu", "custom", "auto", "auto_api_first"]
-GroupSource = Literal["", "protocol", "sjtu", "jsu", "custom", "auto", "auto_api_first"]
 
 
 def ui(group, order, *, scope="group", **extra):
@@ -45,24 +44,14 @@ class Server(ConfigModel):
 
 
 
-class MCGlobal(ConfigModel):
-    status_api_source: Source = Field(title="默认查询源", description="影响未单独配置查询源的群", json_schema_extra=ui("状态查询", 0, scope="global", default="auto"))
-    status_api_url: StrictStr = Field(title="默认 API 地址", description="留空表示未配置；非空须为合法 HTTP(S) 地址", json_schema_extra=ui("状态查询", 1, scope="global", default=""))
-
-    @field_validator("status_api_url")
-    @classmethod
-    def url(cls, value):
-        if value and not is_valid_api_url(value):
-            raise ValueError("api_url")
-        return value
 
 
 class MCGroup(ConfigModel):
     servers: list[Server] = Field(title="服务器树", description="地址全树唯一，最多十三层；同级按优先级和原顺序显示", json_schema_extra=ui("服务器列表", 0, default=[], **{"x-ui-widget": "tree", "x-ui-tree": {"children": "children", "label": "ip", "order": "priority", "default-order": 100, "max-depth": 13}}))
     footer: StrictStr = Field(title="页脚", description="状态列表底部文字", json_schema_extra=ui("显示", 1, default=""))
     show_offline_by_default: StrictBool = Field(title="默认显示离线服务器", description="总览是否包含离线节点", json_schema_extra=ui("显示", 2, default=False))
-    status_api_source: GroupSource = Field(title="本群查询源", description="空字符串继承全局查询源", json_schema_extra=ui("状态查询", 3, default="", **{"x-ui-inherit-value": ""}))
-    status_api_url: StrictStr = Field(title="本群 API 地址", description="空字符串继承全局 API 地址", json_schema_extra=ui("状态查询", 4, default="", **{"x-ui-inherit-value": ""}))
+    status_api_source: Source = Field(title="本群查询源", description="本群直接使用的查询源", json_schema_extra=ui("状态查询", 3, default="auto"))
+    status_api_url: StrictStr = Field(title="本群 API 地址", description="留空表示未配置自定义 API", json_schema_extra=ui("状态查询", 4, default=""))
     default_auth_mode: AuthMode = Field(title="默认登录认证", description="空字符串表示未设置默认认证", json_schema_extra=ui("状态查询", 5, default=""))
     auth_detect: StrictBool = Field(title="协议认证探测", description="协议无法可靠区分联合认证后端，建议关闭", json_schema_extra=ui("状态查询", 6, default=False))
     quiet_admin_replies: StrictBool = Field(title="管理回执私聊发送", description="减少群内管理回执", json_schema_extra=ui("显示", 7, default=True))
@@ -89,19 +78,11 @@ class MCGroup(ConfigModel):
         return self
 
 
-def read_global(ctx):
-    return ConfigSnapshot(dm.export_global_data())
-
 
 def read_group(ctx):
     raw = dm.export_group_data(ctx.group_id)
-    return ConfigSnapshot(raw, {"effective_status_api_source": dm.get_effective_status_api_source(ctx.group_id)[0],
-                                "effective_status_api_url": dm.get_effective_status_api_url(ctx.group_id)[0]},
-                          {"configured": ctx.group_id in dm.list_configured_groups(), "values": raw})
+    return ConfigSnapshot(raw, revision_data={"configured": ctx.group_id in dm.list_configured_groups(), "values": raw})
 
-
-def write_global(ctx, values):
-    dm.import_global_data(values)
 
 
 def write_group(ctx, values):
@@ -187,8 +168,7 @@ def validate_startup(values):
 
 DECLARATION = declare_config(PluginConfiguration(
     key="mc_status", name="MC 服务器状态", feature_keys=("mc_status",),
-    resources={"global": ConfigResource(MCGlobal, read_global, write_global),
-               "group": ConfigResource(MCGroup, read_group, write_group)},
+    resources={"group": ConfigResource(MCGroup, read_group, write_group)},
     list_groups=dm.list_configured_groups,
     startup=StartupConfig(MCStartup, active_startup, base_startup, normalize_startup,
                           validate_startup, startup_metadata),

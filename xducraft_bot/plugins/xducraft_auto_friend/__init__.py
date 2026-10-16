@@ -34,7 +34,6 @@ feature_gate.register(feature_gate.Feature(
     key=FEATURE_KEY,
     name="自动加好友",
     description="自动接受部署配置白名单中本群成员发来的好友申请",
-    default_enabled=False,
     passive=True,
 ))
 

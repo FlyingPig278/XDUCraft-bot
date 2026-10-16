@@ -122,26 +122,27 @@ def test_set_group_enabled_switch(tmp_path):
     assert manager.is_group_enabled(10001) is False
 
 
-def test_get_stopwords_from_stopwordsiso_and_additional(tmp_path):
+def test_get_stopwords_from_stopwordsiso_and_independent_group_words(tmp_path, monkeypatch):
     data_dir = tmp_path / "wordcloud"
     cfg_file = data_dir / "wordcloud_config.json"
     data_dir.mkdir(parents=True)
     cfg_file.write_text(
-        '{"enabled_groups": [], "additional_stopwords": ["自定义词"]}',
+        '{"enabled_groups": [10001], "additional_stopwords": ["自定义词"]}',
         encoding="utf-8",
     )
 
     fake_module = MagicMock()
     fake_module.stopwords.side_effect = lambda lang: {"zh": {"的"}, "en": {"the"}}.get(lang, set())
-    sys.modules["stopwordsiso"] = fake_module
+    monkeypatch.setitem(sys.modules, "stopwordsiso", fake_module)
 
     manager = ChatLogDataManager(data_dir=str(data_dir),
     db_file=str(data_dir / "chat_logs.db"), legacy_config_path=str(cfg_file))
 
-    words = manager.get_stopwords()
+    words = manager.get_stopwords(10001)
     assert "的" in words
     assert "the" in words
     assert "自定义词" in words
+    assert "自定义词" not in manager.get_stopwords(10002)
 
 
 def test_retention_days_config_and_floor(tmp_path):
@@ -160,12 +161,16 @@ def test_footer_subtitle_config(tmp_path):
     data_dir = tmp_path / "wordcloud"
     cfg_file = data_dir / "wordcloud_config.json"
     data_dir.mkdir(parents=True)
-    cfg_file.write_text('{"footer_subtitle": "  XDUCraft 群词云  "}', encoding="utf-8")
+    cfg_file.write_text(
+        '{"enabled_groups": [10001], "footer_subtitle": "  XDUCraft 群词云  "}',
+        encoding="utf-8",
+    )
 
     manager = ChatLogDataManager(data_dir=str(data_dir),
     db_file=str(data_dir / "chat_logs.db"), legacy_config_path=str(cfg_file))
 
-    assert manager.get_footer_subtitle() == "XDUCraft 群词云"
+    assert manager.get_footer_subtitle(10001) == "XDUCraft 群词云"
+    assert manager.get_footer_subtitle(10002) == ""
 
 
 def test_footer_branding_options(tmp_path):
@@ -173,16 +178,17 @@ def test_footer_branding_options(tmp_path):
     cfg_file = data_dir / "wordcloud_config.json"
     data_dir.mkdir(parents=True)
     cfg_file.write_text(
-        '{"footer_branding_enabled": false, "footer_branding_text": "  Powered by Test  "}',
+        '{"enabled_groups": [10001], "footer_branding_enabled": false, "footer_branding_text": "  Powered by Test  "}',
         encoding="utf-8",
     )
 
     manager = ChatLogDataManager(data_dir=str(data_dir),
     db_file=str(data_dir / "chat_logs.db"), legacy_config_path=str(cfg_file))
 
-    options = manager.get_footer_branding_options()
+    options = manager.get_footer_branding_options(10001)
     assert options["enabled"] is False
     assert options["text"] == "Powered by Test"
+    assert manager.get_footer_branding_options(10002)["enabled"] is True
 
 
 def test_ban_user_ids_normalization_and_switch(tmp_path):
@@ -202,104 +208,130 @@ def test_ban_user_ids_normalization_and_switch(tmp_path):
     assert manager.is_user_banned(10003) is False
 
 
-def test_group_overrides_resolve_without_read_side_effects(tmp_path):
+def test_legacy_values_freeze_once_and_new_groups_use_code_defaults(tmp_path):
     data_dir = tmp_path / "wordcloud"
     cfg_file = data_dir / "wordcloud_config.json"
     data_dir.mkdir(parents=True)
-    initial = {
+    legacy = {
         "enabled_groups": [10001, 10002],
         "ban_user_ids": [90001],
-        "min_word_length": 2,
-        "max_words": 200,
-        "additional_stopwords": ["root"],
-        "footer_subtitle": "root subtitle",
-        "footer_branding_enabled": True,
-        "footer_branding_text": "root branding",
+        "min_word_length": 4,
+        "max_words": 240,
+        "additional_stopwords": ["legacy"],
+        "footer_subtitle": "legacy subtitle",
+        "footer_branding_enabled": False,
+        "footer_branding_text": "legacy branding",
         "group_overrides": {
-            "10003": {"max_words": 88},
+            "10003": {
+                "min_word_length": None,
+                "max_words": None,
+                "additional_stopwords": None,
+                "footer_subtitle": None,
+                "footer_branding_enabled": None,
+                "footer_branding_text": None,
+            },
+            "10004": {
+                "max_words": 88,
+                "additional_stopwords": [],
+                "footer_subtitle": "",
+                "footer_branding_enabled": False,
+                "footer_branding_text": "",
+            },
         },
     }
-    cfg_file.write_text(json.dumps(initial, ensure_ascii=False), encoding="utf-8")
-    manager = ChatLogDataManager(data_dir=str(data_dir),
-    db_file=str(data_dir / "chat_logs.db"), legacy_config_path=str(cfg_file))
-
-    assert manager.export_group_config(10001) == {
-        "min_word_length": None,
-        "max_words": None,
-        "additional_stopwords": None,
-        "footer_subtitle": None,
-        "footer_branding_enabled": None,
-        "footer_branding_text": None,
-        "ban_user_ids": None,
-    }
-    assert manager.get_effective_group_config(10001)["min_word_length"] == 2
-    assert manager.list_configured_groups() == [10001, 10002, 10003]
-    assert manager.load_config()["group_overrides"] == {"10003": {"max_words": 88}}
-
-    saved = manager.update_group_config(
-        10001,
-        {
-            "min_word_length": 5,
-            "max_words": 60,
-            "additional_stopwords": [],
-            "footer_subtitle": "",
-            "footer_branding_enabled": False,
-            "footer_branding_text": "",
-            "ban_user_ids": [90002],
-        },
+    cfg_file.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+    manager = ChatLogDataManager(
+        data_dir=str(data_dir), db_file=str(data_dir / "chat_logs.db"),
+        legacy_config_path=str(cfg_file),
     )
-    assert saved["additional_stopwords"] == []
-    assert saved["footer_subtitle"] == ""
-    assert saved["footer_branding_text"] == ""
-    assert manager.get_effective_group_config(10001) == {
+    frozen = {
+        "ban_user_ids": [],
+        "min_word_length": 4,
+        "max_words": 240,
+        "additional_stopwords": ["legacy"],
+        "footer_subtitle": "legacy subtitle",
+        "footer_branding_enabled": False,
+        "footer_branding_text": "legacy branding",
+    }
+    for group_id in (10001, 10002, 10003):
+        assert manager.export_group_config(group_id) == frozen
+        assert manager.get_ban_user_ids(group_id) == [90001]
+    assert manager.export_group_config(10004) == {
+        **frozen, "max_words": 88, "additional_stopwords": [],
+        "footer_subtitle": "", "footer_branding_enabled": False, "footer_branding_text": "",
+    }
+
+    new_group = manager.export_group_config(10005)
+    assert new_group["min_word_length"] == 2
+    assert new_group["max_words"] == 200
+    assert new_group["additional_stopwords"] == []
+    assert new_group["footer_branding_enabled"] is True
+    assert new_group["footer_subtitle"] == ""
+    assert manager.list_configured_groups() == [10001, 10002, 10003, 10004]
+    manager.set_group_enabled(10005, True)
+    assert manager.export_group_config(10005) == new_group
+
+    legacy.update(min_word_length=9, max_words=999, additional_stopwords=["changed"])
+    cfg_file.write_text(json.dumps(legacy), encoding="utf-8")
+    reloaded = ChatLogDataManager(
+        data_dir=str(data_dir), db_file=str(data_dir / "chat_logs.db"),
+        legacy_config_path=str(cfg_file),
+    )
+    for group_id in (10001, 10002, 10003):
+        assert reloaded.export_group_config(group_id) == frozen
+    assert reloaded.export_group_config(10005) == new_group
+
+
+def test_full_group_replacement_is_isolated_and_preserves_empty_values(tmp_path):
+    data_dir = tmp_path / "wordcloud"
+    manager = ChatLogDataManager(
+        data_dir=str(data_dir), db_file=str(data_dir / "chat_logs.db"),
+        legacy_config_path=str(data_dir / "wordcloud_config.json"),
+    )
+    untouched = manager.export_group_config(10002)
+    values = {
+        **manager.export_group_config(10001),
         "min_word_length": 5,
         "max_words": 60,
         "additional_stopwords": [],
         "footer_subtitle": "",
         "footer_branding_enabled": False,
         "footer_branding_text": "",
-        "ban_user_ids": [90001, 90002],
+        "ban_user_ids": [90002],
     }
-    assert manager.get_effective_group_config(10002)["min_word_length"] == 2
-    assert manager.get_wordcloud_options(10001) == {
-        "min_word_length": 5,
-        "max_words": 60,
-    }
+    assert manager.update_group_config(10001, values) == values
+    assert manager.get_wordcloud_options(10001) == {"min_word_length": 5, "max_words": 60}
     assert manager.get_footer_subtitle(10001) == ""
-    assert manager.get_footer_branding_options(10001) == {
-        "enabled": False,
-        "text": "",
-    }
-    assert manager.get_footer_subtitle(10002) == "root subtitle"
+    assert manager.get_footer_branding_options(10001) == {"enabled": False, "text": ""}
+    assert manager.export_group_config(10002) == untouched
 
-    manager.update_global_config(
-        {
-            "min_word_length": 3,
-            "max_words": 240,
-            "additional_stopwords": ["new-root"],
-        }
+    manager.update_global_config({"ban_user_ids": [90001], "retention_days": 90})
+    assert manager.export_group_config(10001) == values
+    assert manager.export_group_config(10002) == untouched
+    assert manager.get_ban_user_ids(10001) == [90001, 90002]
+    assert manager.get_ban_user_ids(10002) == [90001]
+    assert manager.get_retention_days() == 90
+    reloaded = ChatLogDataManager(
+        data_dir=str(data_dir), db_file=str(data_dir / "chat_logs.db"),
+        legacy_config_path=str(data_dir / "wordcloud_config.json"),
     )
-    assert manager.get_effective_group_config(10001)["min_word_length"] == 5
-    assert manager.get_effective_group_config(10001)["additional_stopwords"] == []
-    assert manager.get_effective_group_config(10002)["min_word_length"] == 3
-    assert manager.get_effective_group_config(10002)["additional_stopwords"] == ["new-root"]
-    persisted = manager.load_config()
-    assert persisted["enabled_groups"] == [10001, 10002]
-    assert persisted["group_overrides"]["10003"] == {"max_words": 88}
+    assert reloaded.export_group_config(10001) == values
+    assert reloaded.export_group_config(10002) == untouched
 
-    reset = manager.update_group_config(
-        10001,
-        {
-            "min_word_length": None,
-            "additional_stopwords": None,
-            "footer_subtitle": None,
-        },
+
+def test_partial_or_null_group_update_rejected_without_losing_saved_values(tmp_path):
+    data_dir = tmp_path / "wordcloud"
+    manager = ChatLogDataManager(
+        data_dir=str(data_dir), db_file=str(data_dir / "chat_logs.db"),
+        legacy_config_path=str(data_dir / "wordcloud_config.json"),
     )
-    assert reset["min_word_length"] is None
-    assert reset["additional_stopwords"] is None
-    assert reset["footer_subtitle"] is None
-    assert manager.get_effective_group_config(10001)["min_word_length"] == 3
-    assert manager.get_effective_group_config(10001)["additional_stopwords"] == ["new-root"]
+    saved = manager.update_group_config(
+        10001, {**manager.export_group_config(10001), "max_words": 88},
+    )
+    for invalid in ({}, {"max_words": 60}, {**saved, "max_words": None}):
+        with pytest.raises(ValueError):
+            manager.update_group_config(10001, invalid)
+        assert manager.export_group_config(10001) == saved
 
 
 def test_group_bans_are_additional_to_global_bans(tmp_path):
@@ -350,7 +382,7 @@ def test_delete_messages_by_user_id(tmp_path):
 
 
 
-def test_wordcloud_declaration_preserves_empty_overrides_and_root_bans(tmp_path):
+def test_wordcloud_declaration_round_trip_preserves_concrete_values_and_global_safety(tmp_path):
     from xducraft_bot.shared.configuration import ConfigContext, ConfigurationError
     from xducraft_bot.plugins.xducraft_wordcloud.configuration import bind_configuration
     manager = ChatLogDataManager(
@@ -372,8 +404,8 @@ def test_wordcloud_declaration_preserves_empty_overrides_and_root_bans(tmp_path)
     assert manager.get_footer_branding_options(10001) == {"enabled": False, "text": ""}
     manager.set_group_user_banned(10001, 90001, False)
     assert manager.is_user_banned(90001, 10001)
-    manager.update_group_config(10001, {})
-    assert manager.get_group_ban_user_ids(10001) == [90002]
+    assert resource.read(ctx).values["ban_user_ids"] == ["90002"]
+    assert resource.read(ConfigContext(10002)).values["additional_stopwords"] == []
     draft["ban_user_ids"] = []
     draft["additional_stopwords"] = []
     resource.write(ctx, draft)
@@ -382,5 +414,68 @@ def test_wordcloud_declaration_preserves_empty_overrides_and_root_bans(tmp_path)
     with pytest.raises(ConfigurationError):
         resource.write(ctx, {**draft, "retention_days": 30})
     assert manager.get_retention_days() == 1095
-    resource.write(ctx, {key: None for key in draft})
-    assert resource.read(ctx).meta["overridden"] == []
+    saved = resource.read(ctx).values
+    for invalid in (
+        {key: None for key in draft},
+        {**draft, "max_words": None},
+        {**draft, "footer_branding_enabled": "false"},
+    ):
+        with pytest.raises(ConfigurationError):
+            resource.write(ctx, invalid)
+        assert resource.read(ctx).values == saved
+
+    global_resource = declaration.resources["global"]
+    global_values = global_resource.read(ConfigContext()).values
+    global_values.update(ban_user_ids=["090003", "90003"], retention_days=90)
+    global_resource.write(ConfigContext(), global_values)
+    assert global_resource.read(ConfigContext()).values == {
+        "ban_user_ids": ["90003"], "retention_days": 90,
+    }
+    assert resource.read(ctx).values == saved
+    assert manager.get_ban_user_ids(10001) == [90003]
+    assert manager.get_retention_days() == 90
+
+
+def test_sqlite_legacy_migration_does_not_seed_later_known_groups(
+    tmp_path, isolated_feature_gate,
+):
+    from xducraft_bot.shared.config_store import database
+
+    legacy = {
+        "enabled_groups": [10001],
+        "min_word_length": 5,
+        "max_words": 240,
+        "additional_stopwords": ["legacy-only"],
+        "footer_subtitle": "legacy",
+        "footer_branding_enabled": False,
+    }
+    with database().transaction() as connection:
+        connection.execute(
+            "INSERT INTO config_documents(namespace, value, revision) VALUES (?, ?, ?)",
+            ("wordcloud", json.dumps(legacy), 1),
+        )
+    data_dir = tmp_path / "wordcloud"
+    manager = ChatLogDataManager(
+        data_dir=str(data_dir), db_file=str(data_dir / "chat_logs.db"),
+        legacy_config_path=str(data_dir / "absent.json"),
+    )
+    assert manager.get_wordcloud_options(10001) == {"min_word_length": 5, "max_words": 240}
+    assert manager.get_footer_subtitle(10001) == "legacy"
+
+    isolated_feature_gate.register(
+        isolated_feature_gate.Feature(key="migration_probe", name="Migration probe"),
+    )
+    assert isolated_feature_gate.set_enabled("migration_probe", 10002, True)
+    assert 10002 in isolated_feature_gate.list_configured_groups()
+    assert manager.get_wordcloud_options(10002) == {"min_word_length": 2, "max_words": 200}
+    assert manager.export_group_config(10002)["additional_stopwords"] == []
+    assert manager.get_footer_subtitle(10002) == ""
+    assert manager.get_footer_branding_options(10002)["enabled"] is True
+    assert manager.get_wordcloud_options(10001) == {"min_word_length": 5, "max_words": 240}
+
+    reloaded = ChatLogDataManager(
+        data_dir=str(data_dir), db_file=str(data_dir / "chat_logs.db"),
+        legacy_config_path=str(data_dir / "absent.json"),
+    )
+    assert reloaded.export_group_config(10002) == manager.export_group_config(10002)
+    assert reloaded.get_wordcloud_options(10001) == {"min_word_length": 5, "max_words": 240}

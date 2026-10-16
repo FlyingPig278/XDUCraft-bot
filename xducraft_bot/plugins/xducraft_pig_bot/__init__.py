@@ -41,7 +41,6 @@ feature_gate.register(feature_gate.Feature(
     key=PIG_QUERY_FEATURE_KEY,
     name="猪猪图查询",
     description="/pig 手动查询猪猪图",
-    default_enabled=True,
     passive=False,
     getter=lambda group_id: pig_data_manager.get_group_config(group_id)["query_enabled"],
     setter=pig_data_manager.set_query_enabled,
@@ -51,7 +50,6 @@ feature_gate.register(feature_gate.Feature(
     key=PIG_AUTO_PUSH_FEATURE_KEY,
     name="猪猪图推送",
     description="定时向本群推送随机猪猪图",
-    default_enabled=False,
     passive=True,
     getter=lambda group_id: pig_data_manager.get_group_config(group_id)["auto_push_enabled"],
     setter=pig_data_manager.set_auto_push_enabled,
@@ -294,6 +292,9 @@ async def _finish_status(matcher, status_text: str) -> None:
 async def handle_pig_command(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
     raw = args.extract_plain_text().strip()
     arg_list = raw.split()
+    group_id = event.group_id if isinstance(event, GroupMessageEvent) else None
+    if not feature_gate.is_plugin_enabled("pig_bot"):
+        return
 
     if isinstance(event, GroupMessageEvent) and arg_list and arg_list[0].lower() in {"auto", "query", "status", "help"}:
         if not await _can_manage(bot, event):
@@ -324,24 +325,15 @@ async def handle_pig_command(bot: Bot, event: MessageEvent, args: Message = Comm
             return
 
         enabled = action == "enable"
-        if subcommand == "auto":
-            changed = pig_data_manager.set_auto_push_enabled(event.group_id, enabled)
-            if changed:
-                await _finish_status(pig_command, f"已{'开启' if enabled else '关闭'}本群自动推送猪猪图")
-                return
-            await _finish_status(pig_command, f"本群自动推送猪猪图已是{'开启' if enabled else '关闭'}状态")
-            return
-
-        changed = pig_data_manager.set_query_enabled(event.group_id, enabled)
+        feature_key = PIG_AUTO_PUSH_FEATURE_KEY if subcommand == "auto" else PIG_QUERY_FEATURE_KEY
+        changed = feature_gate.set_enabled(feature_key, event.group_id, enabled)
+        label = "自动推送猪猪图" if subcommand == "auto" else "猪猪图查询"
         if changed:
-            await _finish_status(pig_command, f"已{'开启' if enabled else '关闭'}本群猪猪图查询")
+            await _finish_status(pig_command, f"已{'开启' if enabled else '关闭'}本群{label}")
             return
-        await _finish_status(pig_command, f"本群猪猪图查询已是{'开启' if enabled else '关闭'}状态")
+        await _finish_status(pig_command, f"本群{label}已是{'开启' if enabled else '关闭'}状态")
         return
 
-    group_id = event.group_id if isinstance(event, GroupMessageEvent) else None
-    if not feature_gate.is_plugin_enabled("pig_bot", group_id):
-        return
     if isinstance(event, GroupMessageEvent):
         cfg = pig_data_manager.get_group_config(event.group_id)
         if not cfg["query_enabled"]:

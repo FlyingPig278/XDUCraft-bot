@@ -34,6 +34,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from nonebot.log import logger
 
+from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.config_store import ConfigDocumentStore
 from xducraft_bot.shared.json_store import as_bool, as_int, unique_ints
 
@@ -58,21 +59,14 @@ def message_id_variants(message_id: int) -> List[int]:
 
 def _default_config() -> Dict[str, Any]:
     return {
-        # 消息缓存保留时长：只影响“还没被撤回”的消息，撤回记录另有保留期。
+        "schema_version": 2,
         "cache_retention_hours": 48,
-        # 撤回记录保留天数。
         "recall_retention_days": 7,
-        # 一次查询最多返回多少条。
-        "max_query_results": 30,
-        # 是否下载并本地保存撤回消息里的图片。
         "save_media": True,
-        # 单个文件的下载上限（MB）。
         "max_media_mb": 20,
-        # 是否记录机器人自己发的消息被撤回。
         "include_self": False,
-        # 免于记录的用户（比如管理员自己不想被存）。
         "exempt_user_ids": [],
-        "group_overrides": {},
+        "groups": {},
     }
 
 
@@ -83,22 +77,31 @@ def _normalize_config(raw: Any) -> Dict[str, Any]:
 
     config["cache_retention_hours"] = as_int(raw.get("cache_retention_hours"), 48, minimum=1, maximum=24 * 30)
     config["recall_retention_days"] = as_int(raw.get("recall_retention_days"), 7, minimum=1, maximum=365)
-    config["max_query_results"] = as_int(raw.get("max_query_results"), 30, minimum=1, maximum=100)
     config["save_media"] = as_bool(raw.get("save_media"), True)
     config["max_media_mb"] = as_int(raw.get("max_media_mb"), 20, minimum=1, maximum=200)
     config["include_self"] = as_bool(raw.get("include_self"), False)
     config["exempt_user_ids"] = unique_ints(raw.get("exempt_user_ids"))
-    overrides = raw.get("group_overrides", {})
-    if isinstance(overrides, dict):
-        for group_id, values in overrides.items():
+
+    legacy = raw.get("schema_version") != 2
+    legacy_limit = as_int(raw.get("max_query_results"), 30, minimum=1, maximum=100)
+    groups = raw.get("group_overrides", {}) if legacy else raw.get("groups", {})
+    known_groups = set(feature_gate.list_configured_groups()) if legacy else set()
+    if isinstance(groups, dict):
+        for group_id, values in groups.items():
             try:
                 gid = int(group_id)
             except (TypeError, ValueError):
                 continue
-            if gid > 0 and isinstance(values, dict) and values.get("max_query_results") is not None:
-                config["group_overrides"][str(gid)] = {
-                    "max_query_results": as_int(values["max_query_results"], 30, minimum=1, maximum=100),
-                }
+            if gid <= 0:
+                continue
+            known_groups.add(gid)
+            value = values.get("max_query_results") if isinstance(values, dict) else None
+            config["groups"][str(gid)] = {
+                "max_query_results": as_int(value, legacy_limit if legacy else 30, minimum=1, maximum=100),
+            }
+    if legacy:
+        for gid in known_groups:
+            config["groups"].setdefault(str(gid), {"max_query_results": legacy_limit})
     return config
 
 
@@ -172,7 +175,7 @@ class AntiRecallStore:
         return self._config.load()
 
     def set_config_value(self, key: str, value: Any) -> bool:
-        if key == "group_overrides" or key not in _default_config():
+        if key in {"schema_version", "groups"} or key not in _default_config():
             return False
 
         def mutate(config: Dict[str, Any]) -> bool:
@@ -183,8 +186,8 @@ class AntiRecallStore:
         return True
 
     def update_config(self, changes: Dict[str, Any]) -> Dict[str, Any]:
-        """在一次存储事务中更新允许的反撤回全局参数。"""
-        allowed = set(_default_config()) - {"group_overrides"}
+        """Atomically update shared retention, media, and privacy policy."""
+        allowed = set(_default_config()) - {"schema_version", "groups"}
         if not isinstance(changes, dict):
             raise ValueError("anti_recall_config_must_be_object")
         unknown = set(changes) - allowed
@@ -195,42 +198,35 @@ class AntiRecallStore:
             candidate = dict(config)
             candidate.update(changes)
             normalized = _normalize_config(candidate)
-            config.update(normalized)
-            return dict(config)
+            for key in allowed:
+                config[key] = normalized[key]
+            return {key: config[key] for key in allowed}
 
         return self._config.mutate(mutate)
 
     def export_group_config(self, group_id: int) -> Dict[str, Any]:
-        overrides = self.get_config()["group_overrides"].get(str(int(group_id)), {})
-        return {"max_query_results": overrides.get("max_query_results")}
+        values = self.get_config()["groups"].get(str(int(group_id)), {})
+        return {"max_query_results": as_int(values.get("max_query_results"), 30, minimum=1, maximum=100)}
 
     def update_group_config(self, group_id: int, changes: Dict[str, Any]) -> Dict[str, Any]:
         gid = int(group_id)
-        if gid <= 0 or not isinstance(changes, dict) or set(changes) - {"max_query_results"}:
+        if gid <= 0 or not isinstance(changes, dict) or set(changes) != {"max_query_results"}:
             raise ValueError("invalid_anti_recall_group_config")
-        if "max_query_results" not in changes:
-            return self.export_group_config(gid)
-        value = changes.get("max_query_results")
-        if value is not None and (type(value) is not int or not 1 <= value <= 100):
+        value = changes["max_query_results"]
+        if type(value) is not int or not 1 <= value <= 100:
             raise ValueError("invalid_max_query_results")
 
         def mutate(config: Dict[str, Any]) -> Dict[str, Any]:
-            groups = config["group_overrides"]
-            if value is None:
-                groups.pop(str(gid), None)
-            else:
-                groups[str(gid)] = {"max_query_results": value}
+            config["groups"][str(gid)] = {"max_query_results": value}
             return {"max_query_results": value}
 
         return self._config.mutate(mutate)
 
     def get_effective_group_config(self, group_id: int) -> Dict[str, Any]:
-        config = self.get_config()
-        values = config["group_overrides"].get(str(int(group_id)), {})
-        return {"max_query_results": values.get("max_query_results", config["max_query_results"])}
+        return self.export_group_config(group_id)
 
     def list_configured_groups(self) -> List[int]:
-        return sorted(int(gid) for gid in self.get_config()["group_overrides"])
+        return sorted(int(gid) for gid in self.get_config()["groups"])
 
 
     def is_user_exempt(self, user_id: int) -> bool:

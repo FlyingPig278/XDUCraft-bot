@@ -12,8 +12,8 @@ from . import data_manager as dm
 from .reply_codec import MediaProvider, replies_to_segments, segments_to_replies
 
 
-def ui(group, order, *, scope="both", **extra):
-    return {"x-ui-group": group, "x-ui-order": order, "x-ui-scope": {"global": "global_only", "group": "group_only", "both": "group_overridable"}[scope],
+def ui(group, order, *, scope="group", **extra):
+    return {"x-ui-group": group, "x-ui-order": order, "x-ui-scope": {"group": "group_only"}[scope],
             "x-ui-effect-phase": "runtime", **extra}
 
 
@@ -60,7 +60,7 @@ Replies = list[MessageSegments]
 
 class Rule(ConfigModel):
     id: Optional[StrictStr] = Field(default=None, title="规则标识", description="新规则为 null；旧规则必须保留原标识", json_schema_extra={"readOnly": True})
-    keywords: list[Annotated[StrictStr, Field(min_length=1, max_length=64)]] = Field(min_length=1, title="关键词", description="去空白后每词最多 64 字；同作用域按 casefold 不重复", json_schema_extra=ui("触发条件", 0, **{"x-ui-widget": "tags"}))
+    keywords: list[Annotated[StrictStr, Field(min_length=1, max_length=64)]] = Field(min_length=1, title="关键词", description="去空白后每词最多 64 字；同一规则内不重复", json_schema_extra=ui("触发条件", 0, **{"x-ui-widget": "tags"}))
     match: Literal["contains", "exact", "prefix", "regex"] = Field("contains", title="匹配方式", description="包含、完全匹配、开头匹配或合法正则", json_schema_extra=ui("触发条件", 1))
     enabled: StrictBool = Field(True, title="启用规则", description="停用规则保留内容但不参与匹配", json_schema_extra=ui("触发条件", 2))
     cooldown: StrictInt = Field(0, ge=0, le=86400, title="冷却秒数", description="0 明确表示使用默认冷却", json_schema_extra=ui("触发条件", 3))
@@ -72,6 +72,8 @@ class Rule(ConfigModel):
         result = [value.strip() for value in values]
         if any(not value for value in result):
             raise ValueError("empty_keyword")
+        if len({value.casefold() for value in result}) != len(result):
+            raise ValueError("duplicate_keyword")
         return result
 
     @field_validator("id")
@@ -88,30 +90,20 @@ class Rule(ConfigModel):
         return self
 
 
-class KeywordGlobal(ConfigModel):
-    rules: list[Rule] = Field(max_length=200, title="全局规则", description="所有启用群共享；按列表顺序首个匹配生效", json_schema_extra=ui("规则", 0, scope="global", default=[], **{"x-ui-widget": "ordered_object_list", "x-ui-label-field": "keywords"}))
-    default_cooldown: StrictInt = Field(ge=0, le=3600, title="全局默认冷却", description="秒数；0 表示无冷却", json_schema_extra=ui("冷却", 1, scope="global", default=10))
+class KeywordGroup(ConfigModel):
+    rules: list[Rule] = Field(max_length=dm.MAX_RULES_PER_SCOPE, title="本群规则", description="按列表顺序首个匹配生效", json_schema_extra=ui("规则", 0, scope="group", default=[], **{"x-ui-widget": "ordered_object_list", "x-ui-label-field": "keywords"}))
+    join_replies: Replies = Field(max_length=8, title="入群欢迎", description="0–8 条；发送首条时自动 @ 新成员，不在配置中插入该 @", json_schema_extra=ui("入群欢迎", 1, scope="group", default=[], **{"x-ui-widget": "reply_variants", "x-ui-item-widget": "message_segments"}))
+    default_cooldown: StrictInt = Field(default=10, ge=0, le=3600, title="本群默认冷却", description="秒数；0 表示无冷却", json_schema_extra=ui("冷却", 2, scope="group", default=10))
 
     @model_validator(mode="after")
     def unique_rules(self):
-        seen_keywords, seen_ids = set(), set()
+        seen_ids = set()
         for rule in self.rules:
             if rule.id is not None:
                 if rule.id in seen_ids:
                     raise ValueError("duplicate_rule_id")
                 seen_ids.add(rule.id)
-            for keyword in rule.keywords:
-                folded = keyword.casefold()
-                if folded in seen_keywords:
-                    raise ValueError("duplicate_keyword")
-                seen_keywords.add(folded)
         return self
-
-
-class KeywordGroup(KeywordGlobal):
-    rules: list[Rule] = Field(max_length=200, title="本群规则", description="本群优先于全局；按列表顺序首个匹配生效", json_schema_extra=ui("规则", 0, scope="group", default=[], **{"x-ui-widget": "ordered_object_list", "x-ui-label-field": "keywords"}))
-    join_replies: Replies = Field(max_length=8, title="入群欢迎", description="0–8 条；发送首条时自动 @ 新成员，不在配置中插入该 @", json_schema_extra=ui("入群欢迎", 1, scope="group", default=[], **{"x-ui-widget": "reply_variants", "x-ui-item-widget": "message_segments"}))
-    default_cooldown: Optional[StrictInt] = Field(ge=0, le=3600, title="本群默认冷却", description="null 继承全局；0 明确表示无冷却", json_schema_extra=ui("冷却", 2, scope="group", default=None, **{"x-ui-inherit-value": None}))
 
 
 def read_scope(ctx):
@@ -119,15 +111,9 @@ def read_scope(ctx):
     values = dict(raw)
     values["rules"] = [{**{key: value for key, value in rule.items() if key not in ("created_at", "replies")},
                         "replies": replies_to_segments(rule["replies"])} for rule in raw["rules"]]
-    if ctx.group_id is not None:
-        values["join_replies"] = replies_to_segments(raw["join_replies"])
-    meta = {"rule_created_at": {rule["id"]: rule.get("created_at") for rule in raw["rules"]},
-            "effective_default_cooldown": dm.get_default_cooldown(ctx.group_id)}
-    revision = {"values": raw}
-    if ctx.group_id is not None:
-        revision["configured"] = str(ctx.group_id) in dm.get_config()["groups"]
-        revision["global_default_cooldown"] = dm.get_default_cooldown(None)
-    return ConfigSnapshot(values, meta, revision)
+    values["join_replies"] = replies_to_segments(raw["join_replies"])
+    meta = {"rule_created_at": {rule["id"]: rule.get("created_at") for rule in raw["rules"]}}
+    return ConfigSnapshot(values, meta, {"values": raw})
 
 
 def write_scope(ctx, values):
@@ -144,8 +130,7 @@ def write_scope(ctx, values):
                     raise ValueError("invalid_rule_id")
                 seen.add(identity)
             rule["replies"] = segments_to_replies(rule["replies"], old[identity]["replies"] if identity is not None else [])
-        if ctx.group_id is not None:
-            values["join_replies"] = segments_to_replies(values["join_replies"], raw["join_replies"])
+        values["join_replies"] = segments_to_replies(values["join_replies"], raw["join_replies"])
         dm.replace_scope_config(ctx.group_id, values)
     except ValueError:
         raise ConfigurationError("invalid_config", "消息段、规则引用或关键词不合法", {"rules": "请检查内容和原消息引用"}) from None
@@ -157,7 +142,6 @@ def list_groups():
 
 DECLARATION = declare_config(PluginConfiguration(
     key="keyword", name="关键词与入群欢迎", feature_keys=("keyword_reply",),
-    resources={"global": ConfigResource(KeywordGlobal, read_scope, write_scope),
-               "group": ConfigResource(KeywordGroup, read_scope, write_scope)},
+    resources={"group": ConfigResource(KeywordGroup, read_scope, write_scope)},
     list_groups=list_groups, media=MediaProvider,
 ))

@@ -153,17 +153,6 @@ def create_app(service: AdminService, auth: AdminAuth, static_dir: Path) -> Fast
     async def put_group_feature(gid: str, key: str, request: Request):
         return service.put_feature(key, gid_value(gid), await json_body(request), request.headers.get("if-match"))
 
-    @app.delete("/api/groups/{gid}/features/{key}")
-    async def reset_group_feature(gid: str, key: str, request: Request):
-        return service.put_feature(key, gid_value(gid), None, request.headers.get("if-match"), reset=True)
-
-    @app.get("/api/global/features/{key}")
-    async def global_feature(key: str):
-        return service.get_feature(key)
-
-    @app.put("/api/global/features/{key}")
-    async def put_global_feature(key: str, request: Request):
-        return service.put_feature(key, None, await json_body(request), request.headers.get("if-match"))
 
     @app.get("/api/groups/{gid}/plugins/{plugin}/enabled")
     async def group_control(gid: str, plugin: str):
@@ -173,9 +162,6 @@ def create_app(service: AdminService, auth: AdminAuth, static_dir: Path) -> Fast
     async def put_group_control(gid: str, plugin: str, request: Request):
         return service.put_control(plugin, gid_value(gid), await json_body(request), request.headers.get("if-match"))
 
-    @app.delete("/api/groups/{gid}/plugins/{plugin}/enabled")
-    async def reset_group_control(gid: str, plugin: str, request: Request):
-        return service.put_control(plugin, gid_value(gid), None, request.headers.get("if-match"), reset=True)
 
     @app.get("/api/plugins/{plugin}/enabled")
     async def global_control(plugin: str):
@@ -185,9 +171,6 @@ def create_app(service: AdminService, auth: AdminAuth, static_dir: Path) -> Fast
     async def put_global_control(plugin: str, request: Request):
         return service.put_control(plugin, None, await json_body(request), request.headers.get("if-match"))
 
-    @app.delete("/api/plugins/{plugin}/enabled")
-    async def reset_global_control(plugin: str, request: Request):
-        return service.put_control(plugin, None, None, request.headers.get("if-match"), reset=True)
 
     @app.get("/api/groups/{gid}/config/{plugin}")
     async def group_config(gid: str, plugin: str):

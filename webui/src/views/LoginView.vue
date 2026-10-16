@@ -19,7 +19,7 @@ async function submit(): Promise<void> {
     const session = await login(password.value)
     applySession(session)
     password.value = ''
-    const destination = intendedRoute.value ?? '/overview'
+    const destination = intendedRoute.value ?? '/groups'
     intendedRoute.value = null
     await router.replace(destination)
     message.success('登录成功')

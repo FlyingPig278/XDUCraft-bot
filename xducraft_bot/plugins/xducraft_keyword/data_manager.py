@@ -1,10 +1,7 @@
-"""关键词回复的配置存储。
+"""Independent per-group keyword reply storage.
 
-规则同时支持**群级**和**全局**两层：全局规则（如“新手教程”）在所有启用的群里
-都生效，群级规则只在本群生效；同一关键词命中时群级优先。
-
-回复内容按消息列表保存，每条消息以 CQ 码字符串表示。图片会在**添加时**下载到
-本地——预设回复是长期使用的，直接存 QQ 的临时 URL 过几天就会变成裂图。
+Legacy global rules and cooldowns are copied once into every then-known group;
+after migration no live global rule list remains.
 """
 
 from __future__ import annotations
@@ -13,8 +10,10 @@ import os
 import re
 import time
 import uuid
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.config_store import ConfigDocumentStore
 from xducraft_bot.shared.json_store import as_bool, as_int, as_str
 
@@ -41,16 +40,12 @@ MAX_MATCH_LENGTH = 500
 MAX_KEYWORD_LENGTH = 64
 MAX_REPLY_LENGTH = 4096
 MAX_REPLIES_PER_TRIGGER = 8
-MAX_RULES_PER_SCOPE = 200
+MAX_RULES_PER_SCOPE = 400
+_LEGACY_RULE_LIMIT = 200
 
 
 def _default_config() -> Dict[str, Any]:
-    return {
-        "global_rules": [],
-        "groups": {},
-        # 同一条规则在同一个群里的最小触发间隔（秒），防刷屏。
-        "default_cooldown": 10,
-    }
+    return {"schema_version": 2, "groups": {}}
 
 
 def _normalize_replies(raw: Any) -> List[str]:
@@ -100,11 +95,11 @@ def _normalize_rule(raw: Any) -> Optional[Dict[str, Any]]:
     }
 
 
-def _normalize_rules(raw: Any) -> List[Dict[str, Any]]:
+def _normalize_rules(raw: Any, *, limit: int = MAX_RULES_PER_SCOPE) -> List[Dict[str, Any]]:
     if not isinstance(raw, list):
         return []
     rules = []
-    for item in raw[:MAX_RULES_PER_SCOPE]:
+    for item in raw[:limit]:
         rule = _normalize_rule(item)
         if rule:
             rules.append(rule)
@@ -116,33 +111,52 @@ def _normalize_config(raw: Any) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         return config
 
-    config["global_rules"] = _normalize_rules(raw.get("global_rules"))
-    config["default_cooldown"] = as_int(raw.get("default_cooldown"), 10, minimum=0, maximum=3600)
-
+    legacy = raw.get("schema_version") != 2
+    global_rules = _normalize_rules(raw.get("global_rules"), limit=_LEGACY_RULE_LIMIT) if legacy else []
+    global_cooldown = as_int(raw.get("default_cooldown"), 10, minimum=0, maximum=3600)
     groups = raw.get("groups")
+    known_groups = set(feature_gate.list_configured_groups()) if legacy else set()
     if isinstance(groups, dict):
-        for group_id, group_data in groups.items():
+        for group_id in groups:
             try:
-                key = str(int(group_id))
+                gid = int(group_id)
             except (TypeError, ValueError):
                 continue
-            if not isinstance(group_data, dict):
-                continue
-            rules = _normalize_rules(group_data.get("rules"))
-            join_replies = _normalize_replies(group_data.get("join_replies"))
-            group_config: Dict[str, Any] = {"rules": rules}
-            if join_replies:
-                group_config["join_replies"] = join_replies
-            if "default_cooldown" in group_data:
-                group_config["default_cooldown"] = as_int(
-                    group_data.get("default_cooldown"),
-                    config["default_cooldown"],
-                    minimum=0,
-                    maximum=3600,
-                )
-            if rules or join_replies or "default_cooldown" in group_config:
-                config["groups"][key] = group_config
+            if gid > 0:
+                known_groups.add(gid)
 
+    for gid in known_groups:
+        group_data = groups.get(str(gid), groups.get(gid, {})) if isinstance(groups, dict) else {}
+        group_data = group_data if isinstance(group_data, dict) else {}
+        rules = _normalize_rules(
+            group_data.get("rules"),
+            limit=_LEGACY_RULE_LIMIT if legacy else MAX_RULES_PER_SCOPE,
+        )
+        if legacy:
+            used_ids = {rule["id"] for rule in rules}
+            for index, global_rule in enumerate(global_rules):
+                copied = deepcopy(global_rule)
+                identity = copied["id"]
+                attempt = 0
+                while identity in used_ids:
+                    identity = uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"keyword:{gid}:legacy-global:{index}:{copied['id']}:{attempt}",
+                    ).hex[:8]
+                    attempt += 1
+                copied["id"] = identity
+                used_ids.add(identity)
+                rules.append(copied)
+        config["groups"][str(gid)] = {
+            "rules": rules,
+            "join_replies": _normalize_replies(group_data.get("join_replies")),
+            "default_cooldown": as_int(
+                group_data.get("default_cooldown"),
+                global_cooldown if legacy else 10,
+                minimum=0,
+                maximum=3600,
+            ),
+        }
     return config
 
 
@@ -182,15 +196,9 @@ def get_group_rules(group_id: int) -> List[Dict[str, Any]]:
     return list(group["rules"]) if isinstance(group, dict) else []
 
 
-def get_global_rules() -> List[Dict[str, Any]]:
-    return list(_store.load()["global_rules"])
-
-
 def get_effective_rules(group_id: int) -> List[Dict[str, Any]]:
-    """本群实际生效的规则：群级在前（优先命中），全局在后。"""
-    group_rules = [{**rule, "scope": "group"} for rule in get_group_rules(group_id)]
-    global_rules = [{**rule, "scope": "global"} for rule in get_global_rules()]
-    return group_rules + global_rules
+    """Return this group's complete direct rule list."""
+    return [{**rule, "scope": "group"} for rule in get_group_rules(group_id)]
 
 
 def get_join_replies(group_id: int) -> List[str]:
@@ -205,31 +213,15 @@ _RULE_INPUT_KEYS = frozenset(
 )
 
 
-def export_scope_config(group_id: Optional[int]) -> Dict[str, Any]:
-    """导出一个群或全局规则 scope 的完整可编辑配置。"""
-    config = _store.load()
-    if group_id is None:
-        return {
-            "rules": list(config["global_rules"]),
-            "default_cooldown": int(config["default_cooldown"]),
-        }
-
-    group_key = str(int(group_id))
-    group = config["groups"].get(group_key)
+def export_scope_config(group_id: int) -> Dict[str, Any]:
+    """Export one group's complete editable configuration."""
+    group = _store.load()["groups"].get(str(int(group_id)))
     if not isinstance(group, dict):
-        return {
-            "rules": [],
-            "join_replies": [],
-            "default_cooldown": None,
-        }
+        return {"rules": [], "join_replies": [], "default_cooldown": 10}
     return {
         "rules": list(group.get("rules", [])),
         "join_replies": list(group.get("join_replies", [])),
-        "default_cooldown": (
-            int(group["default_cooldown"])
-            if "default_cooldown" in group
-            else None
-        ),
+        "default_cooldown": int(group.get("default_cooldown", 10)),
     }
 
 
@@ -255,18 +247,12 @@ def _validate_reply_list(raw: Any, *, allow_empty: bool) -> List[str]:
 
 
 def _validate_scope_payload(
-    group_id: Optional[int],
+    group_id: int,
     data: Dict[str, Any],
-) -> Tuple[List[Dict[str, Any]], List[str], Optional[int]]:
+) -> Tuple[List[Dict[str, Any]], List[str], int]:
     if not isinstance(data, dict):
         raise ValueError("scope_config_must_be_object")
-
-    expected = (
-        {"rules", "default_cooldown"}
-        if group_id is None
-        else {"rules", "join_replies", "default_cooldown"}
-    )
-    if set(data) != expected:
+    if set(data) != {"rules", "join_replies", "default_cooldown"}:
         raise ValueError("invalid_scope_config_fields")
 
     raw_rules = data["rules"]
@@ -276,7 +262,6 @@ def _validate_scope_payload(
         raise ValueError("too_many_rules")
 
     rules: List[Dict[str, Any]] = []
-    seen_keywords: set[str] = set()
     seen_ids: set[str] = set()
     for raw_rule in raw_rules:
         if not isinstance(raw_rule, dict) or set(raw_rule) != _RULE_INPUT_KEYS:
@@ -297,6 +282,7 @@ def _validate_scope_payload(
         if not isinstance(raw_keywords, list) or not raw_keywords:
             raise ValueError("keywords_required")
         keywords: List[str] = []
+        seen_keywords: set[str] = set()
         for raw_keyword in raw_keywords:
             if not isinstance(raw_keyword, str):
                 raise ValueError("keyword_must_be_string")
@@ -345,14 +331,8 @@ def _validate_scope_payload(
             }
         )
 
-    join_replies = (
-        []
-        if group_id is None
-        else _validate_reply_list(data["join_replies"], allow_empty=True)
-    )
+    join_replies = _validate_reply_list(data["join_replies"], allow_empty=True)
     default_cooldown = data["default_cooldown"]
-    if group_id is not None and default_cooldown is None:
-        return rules, join_replies, None
     if (
         isinstance(default_cooldown, bool)
         or not isinstance(default_cooldown, int)
@@ -363,28 +343,18 @@ def _validate_scope_payload(
 
 
 def replace_scope_config(
-    group_id: Optional[int],
+    group_id: int,
     data: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """严格校验并在一次 mutate 中完整替换一个规则 scope。"""
-    if group_id is not None and int(group_id) <= 0:
+    """Strictly validate and atomically replace one group's settings."""
+    if int(group_id) <= 0:
         raise ValueError("invalid_group_id")
-    rules, join_replies, default_cooldown = _validate_scope_payload(
-        group_id,
-        data,
-    )
-    group_key = str(int(group_id)) if group_id is not None else None
+    rules, join_replies, default_cooldown = _validate_scope_payload(group_id, data)
+    group_key = str(int(group_id))
 
     def mutate(config: Dict[str, Any]) -> Dict[str, Any]:
-        if group_key is None:
-            old_rules = config["global_rules"]
-        else:
-            old_group = config["groups"].get(group_key)
-            old_rules = (
-                old_group.get("rules", [])
-                if isinstance(old_group, dict)
-                else []
-            )
+        old_group = config["groups"].get(group_key)
+        old_rules = old_group.get("rules", []) if isinstance(old_group, dict) else []
 
         existing_by_id: Dict[str, Dict[str, Any]] = {}
         all_existing_ids: set[str] = set()
@@ -424,29 +394,13 @@ def replace_scope_config(
                 }
             )
 
-        if group_key is None:
-            config["global_rules"] = replacement
-            config["default_cooldown"] = default_cooldown
-            return {
-                "rules": replacement,
-                "default_cooldown": default_cooldown,
-            }
-
-        group: Dict[str, Any] = {"rules": replacement}
-        if join_replies:
-            group["join_replies"] = join_replies
-        if default_cooldown is not None:
-            group["default_cooldown"] = default_cooldown
-
-        if replacement or join_replies or default_cooldown is not None:
-            config["groups"][group_key] = group
-        else:
-            config["groups"].pop(group_key, None)
-        return {
+        group: Dict[str, Any] = {
             "rules": replacement,
             "join_replies": join_replies,
             "default_cooldown": default_cooldown,
         }
+        config["groups"][group_key] = group
+        return dict(group)
 
     return _store.mutate(mutate)
 
@@ -455,11 +409,11 @@ def replace_scope_config(
 def add_rule(
     keyword: str,
     replies: Sequence[str],
-    group_id: Optional[int] = None,
+    group_id: int,
     match: str = MATCH_CONTAINS,
     cooldown: int = 0,
 ) -> Optional[Dict[str, Any]]:
-    """新增一条规则。关键词重复或回复不合法时返回 None。"""
+    """新增一条规则，按列表顺序匹配；回复与单条规则关键词须合法。"""
     keyword = as_str(keyword)
     if isinstance(replies, (str, bytes)):
         return None
@@ -489,18 +443,12 @@ def add_rule(
     }
 
     def mutate(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        if group_id is None:
-            bucket = config["global_rules"]
-        else:
-            bucket = config["groups"].setdefault(str(int(group_id)), {"rules": []})["rules"]
+        group = config["groups"].setdefault(
+            str(int(group_id)),
+            {"rules": [], "join_replies": [], "default_cooldown": 10},
+        )
+        bucket = group["rules"]
 
-        target = keyword.casefold()
-        if any(
-            target == existing.casefold()
-            for rule in bucket
-            for existing in rule["keywords"]
-        ):
-            return None
         if len(bucket) >= MAX_RULES_PER_SCOPE:
             return None
 
@@ -510,19 +458,16 @@ def add_rule(
     return _store.mutate(mutate)
 
 
-def remove_rule(keyword: str, group_id: Optional[int] = None) -> bool:
+def remove_rule(keyword: str, group_id: int) -> bool:
     """按关键词或规则 ID 删除。"""
     target = as_str(keyword)
     folded = target.casefold()
 
     def mutate(config: Dict[str, Any]) -> bool:
-        if group_id is None:
-            bucket = config["global_rules"]
-        else:
-            group = config["groups"].get(str(int(group_id)))
-            if not group:
-                return False
-            bucket = group["rules"]
+        group = config["groups"].get(str(int(group_id)))
+        if not group:
+            return False
+        bucket = group["rules"]
 
         for index, rule in enumerate(bucket):
             if (
@@ -536,8 +481,8 @@ def remove_rule(keyword: str, group_id: Optional[int] = None) -> bool:
     return bool(_store.mutate(mutate))
 
 
-def find_rule(keyword: str, group_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    bucket = get_global_rules() if group_id is None else get_group_rules(group_id)
+def find_rule(keyword: str, group_id: int) -> Optional[Dict[str, Any]]:
+    bucket = get_group_rules(group_id)
     target = as_str(keyword)
     folded = target.casefold()
     for rule in bucket:
@@ -549,20 +494,17 @@ def find_rule(keyword: str, group_id: Optional[int] = None) -> Optional[Dict[str
     return None
 
 
-def update_rule(keyword: str, group_id: Optional[int], **changes: Any) -> bool:
+def update_rule(keyword: str, group_id: int, **changes: Any) -> bool:
     """修改规则的 match / enabled / cooldown / replies。"""
     target = as_str(keyword)
     folded = target.casefold()
     allowed = {"match", "enabled", "cooldown", "replies"}
 
     def mutate(config: Dict[str, Any]) -> bool:
-        if group_id is None:
-            bucket = config["global_rules"]
-        else:
-            group = config["groups"].get(str(int(group_id)))
-            if not group:
-                return False
-            bucket = group["rules"]
+        group = config["groups"].get(str(int(group_id)))
+        if not group:
+            return False
+        bucket = group["rules"]
 
         for rule in bucket:
             if (
@@ -593,7 +535,9 @@ def set_join_replies(group_id: int, replies: Sequence[str]) -> bool:
         return False
 
     def mutate(config: Dict[str, Any]) -> bool:
-        group = config["groups"].setdefault(str(int(group_id)), {"rules": []})
+        group = config["groups"].setdefault(
+            str(int(group_id)), {"rules": [], "join_replies": [], "default_cooldown": 10}
+        )
         if group.get("join_replies", []) == cleaned_replies:
             return False
         group["join_replies"] = cleaned_replies
@@ -603,12 +547,12 @@ def set_join_replies(group_id: int, replies: Sequence[str]) -> bool:
 
 
 def clear_join_replies(group_id: int) -> bool:
-    """清除本群入群欢迎消息。"""
+    """Clear this group's welcome messages while keeping direct settings."""
     def mutate(config: Dict[str, Any]) -> bool:
         group = config["groups"].get(str(int(group_id)))
-        if not isinstance(group, dict) or "join_replies" not in group:
+        if not isinstance(group, dict) or not group.get("join_replies"):
             return False
-        del group["join_replies"]
+        group["join_replies"] = []
         return True
 
     return bool(_store.mutate(mutate))
@@ -651,29 +595,21 @@ def match_rules(text: str, group_id: int) -> Optional[Dict[str, Any]]:
     return None
 
 
-def get_default_cooldown(group_id: Optional[int] = None) -> int:
-    """取默认冷却；群级设置优先，未配置时回退到全局默认。"""
-    config = _store.load()
-    if group_id is not None:
-        group = config["groups"].get(str(int(group_id)))
-        if isinstance(group, dict) and "default_cooldown" in group:
-            return int(group["default_cooldown"])
-    return int(config["default_cooldown"])
+def get_default_cooldown(group_id: int) -> int:
+    """Return this group's direct cooldown; fresh groups use the code default."""
+    group = _store.load()["groups"].get(str(int(group_id)))
+    return int(group.get("default_cooldown", 10)) if isinstance(group, dict) else 10
 
 
-def set_default_cooldown(seconds: int, group_id: Optional[int] = None) -> bool:
-    """设置默认冷却。``group_id`` 非空时只影响该群。"""
+def set_default_cooldown(seconds: int, group_id: int) -> bool:
+    """Set one group's direct default cooldown."""
     value = max(0, min(3600, int(seconds)))
 
     def mutate(config: Dict[str, Any]) -> bool:
-        if group_id is None:
-            if config["default_cooldown"] == value:
-                return False
-            config["default_cooldown"] = value
-            return True
-
-        group = config["groups"].setdefault(str(int(group_id)), {"rules": []})
-        if group.get("default_cooldown") == value:
+        group = config["groups"].setdefault(
+            str(int(group_id)), {"rules": [], "join_replies": [], "default_cooldown": 10}
+        )
+        if group.get("default_cooldown", 10) == value:
             return False
         group["default_cooldown"] = value
         return True
@@ -689,7 +625,7 @@ __all__ = [
     "MATCH_MODES", "MATCH_LABELS", "MATCH_CONTAINS", "MATCH_EXACT", "MATCH_PREFIX", "MATCH_REGEX",
     "MEDIA_DIR", "MAX_MATCH_LENGTH", "MAX_KEYWORD_LENGTH", "MAX_REPLY_LENGTH",
     "MAX_REPLIES_PER_TRIGGER", "MAX_RULES_PER_SCOPE",
-    "get_config", "get_group_rules", "get_global_rules", "get_effective_rules",
+    "get_config", "get_group_rules", "get_effective_rules",
     "get_join_replies", "set_join_replies", "clear_join_replies",
     "export_scope_config", "replace_scope_config",
     "add_rule", "remove_rule", "find_rule", "update_rule", "match_rules",

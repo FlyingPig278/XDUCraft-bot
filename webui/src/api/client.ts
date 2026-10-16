@@ -44,7 +44,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return response.status === 204 ? undefined as T : await response.json() as T
 }
 export function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> { return request<T>(path, { signal }) }
-export function apiWrite<T>(path: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown, revision?: string): Promise<T> {
+export function apiWrite<T>(path: string, method: 'POST' | 'PUT', body?: unknown, revision?: string): Promise<T> {
   const headers = new Headers()
   if (body !== undefined) headers.set('Content-Type', 'application/json')
   if (revision) headers.set('If-Match', revision)

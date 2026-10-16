@@ -92,12 +92,11 @@ USAGE_ADMIN = """【Web 编辑器（推荐）】
   验证方式可填：正版 / MUA / XDU / 外置 / 离线 / 混合
 ---
 【数据源】
-/mcs source — 查看当前生效的查询源
-/mcs source set <protocol|sjtu|jsu|custom|auto> — 设置本群查询源
-/mcs source clear — 清除本群覆盖，回退全局
-/mcs source global set|clear <...> — 设置/清除全局默认
-/mcs api set|clear <url> — 配置自定义后端地址
-/mcs api global set|clear <url> — 配置全局默认后端地址
+/mcs source — 查看本群查询源
+/mcs source set <protocol|sjtu|jsu|custom|auto|auto_api_first> — 设置本群查询源
+/mcs source clear — 重置为 auto
+/mcs api set <url> — 配置本群自定义后端地址
+/mcs api clear — 清空本群自定义后端地址
 ---
 【显示与开关】
 /mcs set <IP> <属性> <值> — tag / tag_color / comment / display_name /

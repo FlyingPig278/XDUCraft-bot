@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { NAlert, NButton, NCheckbox, NFormItem, NInput, NInputNumber, NSelect, NSpace, NTag, NUpload, useDialog, useMessage, type UploadCustomRequestOptions } from 'naive-ui'
 import type { ConfigValues, JsonSchema, SchemaContext } from '../../api/schema'
 import { assetUrl, uploadAsset } from '../../api/client'
-import { atPath, branchIndex, configured, creatable, effectiveSchema, errorText, isObject, makeDefault, nullable, numericBounds, orderedFields, own, resolve, safeLabel, schemaType, unsupported, variants, visible } from '../../schema/schema'
+import { atPath, branchIndex, configured, creatable, effectiveSchema, errorText, isObject, makeDefault, numericBounds, orderedFields, own, resolve, safeLabel, schemaType, unsupported, variants, visible } from '../../schema/schema'
 import SchemaArray from './SchemaArray.vue'
 import SchemaTree from './SchemaTree.vue'
 import SchemaPrimitiveList from './SchemaPrimitiveList.vue'
@@ -27,8 +27,8 @@ watch(() => props.modelValue, (next) => {
   if (isSecret.value && next === undefined) { modifyingSecret.value = false; draftSecret.value = '' }
 })
 const disabled = computed(() => props.context.readonly || Boolean(schema.value.readOnly || schema.value['x-ui-readonly']) || inherited.value || Boolean(branches.value[selectedBranch.value]?.readOnly || branches.value[selectedBranch.value]?.['x-ui-readonly']))
-const nativeOverride = computed(() => props.topLevel && props.context.overrideFields !== undefined)
-const inheritKey = computed(() => own(declared.value, 'x-ui-inherit-value') ? 'x-ui-inherit-value' : undefined)
+const nativeOverride = computed(() => props.context.scope !== 'group' && props.topLevel && props.context.overrideFields !== undefined)
+const inheritKey = computed(() => props.context.scope !== 'group' && own(declared.value, 'x-ui-inherit-value') ? 'x-ui-inherit-value' : undefined)
 const inherited = computed(() => nativeOverride.value ? !props.context.overrideFields!.includes(props.path) : Boolean(inheritKey.value && !legacyIndependent.value && Object.is(props.modelValue, declared.value[inheritKey.value])))
 const value = computed(() => inherited.value ? atPath(props.context.defaults, props.path) : props.modelValue)
 const selectedBranch = computed(() => branchIndex(branches.value, value.value, declared.value.discriminator?.propertyName))
@@ -83,7 +83,7 @@ function independent(): void {
   emit('update:modelValue', initial)
 }
 function inherit(): void {
-  dialog.warning({ title: '恢复继承', content: '当前独立设置将从草稿中移除；保存后才会生效。是否继续？', positiveText: '恢复继承', negativeText: '取消', onPositiveClick: () => {
+  dialog.warning({ title: '改用基础配置', content: '当前网页设置会从草稿中移除，保存后改用插件或启动环境提供的基础值。是否继续？', positiveText: '改用基础配置', negativeText: '取消', onPositiveClick: () => {
     if (nativeOverride.value) emit('update:overrideFields', props.context.overrideFields!.filter((field) => field !== props.path))
     else if (inheritKey.value) { legacyIndependent.value = false; emit('update:modelValue', declared.value[inheritKey.value]) }
   } })
@@ -109,30 +109,17 @@ function addMapKey(): void {
   patch(mapKey.value, makeDefault(additionalSchema.value, props.context.rootSchema))
   mapKey.value = ''
 }
-function setNull(enabled: boolean): void {
-  if (enabled) { update(null); return }
-  const source = { ...schema.value }
-  if (source.default === null) delete source.default
-  if (Array.isArray(source.type)) source.type = source.type.filter((item) => item !== 'null')
-  if (source.enum) source.enum = source.enum.filter((item) => item !== null)
-  update(makeDefault(source, props.context.rootSchema))
-}
 </script>
 
 <template>
   <NFormItem v-if="visible(declared, context, parentValue)" :label="root ? undefined : declared.title || path.split('.').at(-1)" :required="required" :validation-status="fieldError ? 'error' : undefined" :feedback="fieldError" :show-label="!root" class="schema-field">
     <div class="field-content">
       <p v-if="declared.description" class="field-help">{{ declared.description }}</p>
-      <NSpace v-if="!root && (declared['x-ui-scope'] || declared['x-ui-effect-phase'] || declared.readOnly)" size="small">
-        <NTag v-if="declared['x-ui-scope']" size="small">{{ declared['x-ui-scope'] === 'group_only' ? '仅本群' : declared['x-ui-scope'] === 'global_only' ? '全局统一' : declared['x-ui-scope'] === 'group_overridable' ? '可按群定制' : '作用域未识别' }}</NTag>
-        <NTag v-if="declared['x-ui-effect-phase']" size="small">{{ declared['x-ui-effect-phase'] === 'next_cleanup' ? '下次清理生效' : declared['x-ui-effect-phase'] === 'startup' ? '重启后生效' : declared['x-ui-effect-phase'] === 'runtime' ? '运行期生效' : declared['x-ui-effect-phase'] }}</NTag>
-        <NTag v-if="declared.readOnly" size="small">只读</NTag>
-      </NSpace>
       <NAlert v-if="unsupportedReason" type="warning" :show-icon="false">{{ unsupportedReason }}。原始值保留，请使用受支持的管理入口编辑。</NAlert>
       <template v-else>
         <NSpace v-if="nativeOverride || inheritKey" class="mode-controls">
-          <NTag size="small">{{ inherited ? '继承统一设置' : '独立设置' }}{{ type === 'object' ? '（整个配置块）' : '' }}</NTag>
-          <NButton size="small" :disabled="context.readonly || declared.readOnly" @click="inherited ? independent() : inherit()">{{ inherited ? '改为独立设置' : '恢复继承' }}</NButton>
+          <NTag size="small">{{ inherited ? (context.scope === 'startup' ? '使用现有启动配置' : '使用插件基础值') : (context.scope === 'startup' ? '使用网页保存值' : '使用此处设置') }}</NTag>
+          <NButton size="small" :disabled="context.readonly || declared.readOnly" @click="inherited ? independent() : inherit()">{{ inherited ? '在这里设置' : '改用基础配置' }}</NButton>
         </NSpace>
         <template v-if="isSecret">
           <NTag size="small">{{ configured(context, path) ? '已配置' : '未配置' }}</NTag>
@@ -143,11 +130,7 @@ function setNull(enabled: boolean): void {
           <NInput v-if="modifyingSecret" :value="draftSecret" type="password" show-password-on="click" autocomplete="new-password" :disabled="disabled" placeholder="输入新值（不会读取已有值）" @update:value="draftSecret = $event; update($event)" />
         </template>
         <template v-else>
-          <NSpace v-if="nullable(declared, context.rootSchema) && !inheritKey" size="small">
-            <NCheckbox :checked="value === null" :disabled="disabled" @update:checked="setNull">使用 null 空值（不是继承）</NCheckbox>
-          </NSpace>
-          <NTag v-if="value === null" size="small">null</NTag>
-          <template v-else-if="branches.length > 1">
+          <template v-if="branches.length > 1">
             <NSelect :value="selectedBranch < 0 ? null : selectedBranch" :disabled="disabled || (selectedBranch >= 0 && !creatable(branches[selectedBranch]!))" placeholder="选择内容类型" :options="branches.map((branch, index) => ({ label: branch.title || `类型 ${index + 1}`, value: index, disabled: !creatable(branch) }))" @update:value="chooseBranch(Number($event))" />
             <SchemaField v-if="selectedBranch >= 0" :schema="branches[selectedBranch]!" :model-value="value" :context="context" :path="path" :root="true" @update:model-value="update" />
             <NAlert v-else type="warning">现有值不匹配已声明类型，原值保持不变。</NAlert>
@@ -184,10 +167,10 @@ function setNull(enabled: boolean): void {
           </div>
           <SchemaColor v-else-if="type === 'string' && schema['x-ui-widget'] === 'color'" :schema="schema" :model-value="value" :disabled="disabled" @update:model-value="update" />
           <NInput v-else-if="type === 'string'" :value="typeof value === 'string' ? value : ''" :type="schema['x-ui-widget'] === 'textarea' || schema['x-ui-widget'] === 'multiline' ? 'textarea' : 'text'" :input-props="schema['x-ui-widget'] === 'id' ? { inputmode: 'numeric' } : undefined" :autosize="{ minRows: 2, maxRows: 12 }" :maxlength="schema.maxLength" :disabled="disabled" @update:value="update" />
-          <NTag v-else-if="type === 'null'">null</NTag>
+          <NTag v-else-if="type === 'null'">未设置</NTag>
           <NAlert v-else type="warning">不支持的 schema 类型或 widget，原始值保留，无法在此编辑。</NAlert>
-          <p v-if="schema.minLength || schema.maxLength || schema.pattern || schema.minimum !== undefined || schema.maximum !== undefined || schema.exclusiveMinimum !== undefined || schema.exclusiveMaximum !== undefined" class="field-help">
-            <span v-if="schema.minLength">最短 {{ schema.minLength }} 字符；</span><span v-if="schema.maxLength">最长 {{ schema.maxLength }} 字符；</span><span v-if="schema.pattern">格式 {{ schema.pattern }}；</span><span v-if="schema.minimum !== undefined">≥ {{ schema.minimum }}；</span><span v-if="schema.maximum !== undefined">≤ {{ schema.maximum }}；</span><span v-if="schema.exclusiveMinimum !== undefined">&gt; {{ schema.exclusiveMinimum }}；</span><span v-if="schema.exclusiveMaximum !== undefined">&lt; {{ schema.exclusiveMaximum }}</span>
+          <p v-if="schema.minLength || schema.maxLength || schema.minimum !== undefined || schema.maximum !== undefined || schema.exclusiveMinimum !== undefined || schema.exclusiveMaximum !== undefined" class="field-help">
+            <span v-if="schema.minLength">最短 {{ schema.minLength }} 字符；</span><span v-if="schema.maxLength">最长 {{ schema.maxLength }} 字符；</span><span v-if="schema.minimum !== undefined">≥ {{ schema.minimum }}；</span><span v-if="schema.maximum !== undefined">≤ {{ schema.maximum }}；</span><span v-if="schema.exclusiveMinimum !== undefined">&gt; {{ schema.exclusiveMinimum }}；</span><span v-if="schema.exclusiveMaximum !== undefined">&lt; {{ schema.exclusiveMaximum }}</span>
           </p>
         </template>
       </template>

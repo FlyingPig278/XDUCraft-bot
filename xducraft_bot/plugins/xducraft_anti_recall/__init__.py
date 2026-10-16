@@ -65,7 +65,6 @@ feature_gate.register(feature_gate.Feature(
     key=FEATURE_KEY,
     name="反撤回",
     description="记录本群被撤回的消息（仅私聊可查，群内不播报）",
-    default_enabled=False,
     passive=True,
 ))
 
@@ -253,13 +252,16 @@ async def handle_recall(bot: Bot, event: GroupRecallNoticeEvent):
         return
 
     config = store.get_config()
+    if not _group_enabled(event):
+        return
     if not config["save_media"]:
         return
 
     try:
         # 撤回通常发生在发出后两分钟内，此刻 URL 还有效；等用户来查就晚了。
-        if await download_media(cached["content"], store, config["max_media_mb"] * 1024 * 1024):
-            store.update_recall_content(event.group_id, record_message_id, cached["content"])
+        if _group_enabled(event) and await download_media(cached["content"], store, config["max_media_mb"] * 1024 * 1024):
+            if _group_enabled(event):
+                store.update_recall_content(event.group_id, record_message_id, cached["content"])
     except Exception as exc:
         logger.debug("[AntiRecall] 保存撤回媒体失败: {}", exc)
 
@@ -270,6 +272,8 @@ async def handle_recall(bot: Bot, event: GroupRecallNoticeEvent):
 
 @admin_command.handle()
 async def handle_admin(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
+    if not feature_gate.is_plugin_enabled("anti_recall"):
+        return
     if not isinstance(event, GroupMessageEvent):
         await admin_command.finish("这条命令请在群里使用。查询撤回消息请发送 /撤回。")
 
@@ -298,11 +302,10 @@ async def handle_admin(bot: Bot, event: MessageEvent, args: Message = CommandArg
         await admin_command.finish(f"已清空本群的 {removed} 条撤回记录及消息缓存。")
 
     if action in {"status", "状态"}:
-        enabled, source = feature_gate.resolve(FEATURE_KEY, group_id)
+        enabled, _ = feature_gate.resolve(FEATURE_KEY, group_id)
         config = store.get_config()
         await admin_command.finish(
-            f"本群反撤回：{'开启' if enabled else '关闭'}"
-            f"（{'本群配置' if source == feature_gate.SOURCE_GROUP else '默认值'}）\n"
+            f"本群反撤回：{'开启' if enabled else '关闭'}\n"
             f"已记录：{store.count_recalls(group_id)} 条\n"
             f"保留期：撤回记录 {config['recall_retention_days']} 天，消息缓存 {config['cache_retention_hours']} 小时\n"
             f"保存图片：{'是' if config['save_media'] else '否'}\n"
@@ -590,7 +593,8 @@ async def _send_group_records(
     group_id: int,
     limit: int,
 ) -> None:
-    if not feature_gate.is_plugin_enabled("anti_recall", group_id):
+    if (not feature_gate.is_plugin_enabled("anti_recall", group_id)
+            or not feature_gate.is_enabled(FEATURE_KEY, group_id)):
         return
     records = store.list_recalls(group_ids=[group_id], limit=limit)
     if not records:
@@ -600,7 +604,8 @@ async def _send_group_records(
     group_names = await _resolve_group_names(bot, {group_id})
     group_label = group_names.get(group_id, str(group_id))
     bundles = [_record_nodes(record, event.self_id) for record in records]
-    if not feature_gate.is_plugin_enabled("anti_recall", group_id):
+    if (not feature_gate.is_plugin_enabled("anti_recall", group_id)
+            or not feature_gate.is_enabled(FEATURE_KEY, group_id)):
         return
     token = _retrieval_group.set(group_id)
     try:
@@ -609,7 +614,8 @@ async def _send_group_records(
         )
     finally:
         _retrieval_group.reset(token)
-    if not delivered and feature_gate.is_plugin_enabled("anti_recall", group_id):
+    if (not delivered and feature_gate.is_plugin_enabled("anti_recall", group_id)
+            and feature_gate.is_enabled(FEATURE_KEY, group_id)):
         try:
             await bot.send_private_msg(
                 user_id=event.user_id,
@@ -624,12 +630,16 @@ async def _send_group_menu(
     event: PrivateMessageEvent,
     stats: Sequence[Dict[str, int]],
 ) -> None:
-    stats = [item for item in stats if feature_gate.is_plugin_enabled("anti_recall", item["group_id"])]
+    stats = [item for item in stats
+             if feature_gate.is_plugin_enabled("anti_recall", item["group_id"])
+             and feature_gate.is_enabled(FEATURE_KEY, item["group_id"])]
     if not stats:
         return
     group_ids = [item["group_id"] for item in stats]
     group_names = await _resolve_group_names(bot, set(group_ids))
-    stats = [item for item in stats if feature_gate.is_plugin_enabled("anti_recall", item["group_id"])]
+    stats = [item for item in stats
+             if feature_gate.is_plugin_enabled("anti_recall", item["group_id"])
+             and feature_gate.is_enabled(FEATURE_KEY, item["group_id"])]
     group_ids = [item["group_id"] for item in stats]
     if not stats:
         return
@@ -651,6 +661,8 @@ async def _send_group_menu(
 
 @selection_reply.handle()
 async def handle_selection_reply(bot: Bot, event: PrivateMessageEvent):
+    if not feature_gate.is_plugin_enabled("anti_recall"):
+        return
     group_ids = _get_pending_selection(event)
     if group_ids is None:
         return
