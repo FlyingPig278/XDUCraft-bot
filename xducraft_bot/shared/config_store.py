@@ -253,6 +253,22 @@ class ConfigDatabase:
             ).fetchall()
         return sorted(int(row[0]) for row in rows)
 
+    def list_known_groups(self):
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT scope_id FROM config_values WHERE scope='group' "
+                "UNION SELECT scope_id FROM plugin_controls WHERE scope_id!=''",
+            ).fetchall()
+        groups = set()
+        for row in rows:
+            try:
+                group_id = int(row[0])
+            except (TypeError, ValueError):
+                continue
+            if group_id > 0:
+                groups.add(group_id)
+        return sorted(groups)
+
     def materialize_feature_controls(
         self, plugin_id: str, feature_key: str, enabled_groups
     ) -> None:

@@ -1,7 +1,7 @@
 from typing import Any, Optional
 
 import pytest
-from pydantic import Field, StrictInt, StrictStr
+from pydantic import Field, StrictInt, StrictStr, model_validator
 
 from xducraft_bot.shared.config_store import database
 from xducraft_bot.shared.configuration import (
@@ -157,3 +157,38 @@ async def test_failed_global_independent_field_does_not_pause_groups_but_shared_
     await update_config("scope_failure_regression", {"set": {"shared": 2}})
     assert declaration.resources["group"].read(ConfigContext(10001)).meta["apply_status"] == "failed"
     assert not is_plugin_enabled("scope_failure_regression", 10001)
+    assert declaration.resources["group"].read(ConfigContext(10001)).meta["apply_scope"] == "global"
+    await recover_config("scope_failure_regression", ConfigContext(), rollback=True)
+    recovered = declaration.resources["group"].read(ConfigContext(10001))
+    assert recovered.meta["apply_status"] == "active"
+    assert recovered.meta["apply_scope"] == "group"
+    assert is_plugin_enabled("scope_failure_regression", 10001)
+
+
+@pytest.mark.asyncio
+async def test_group_can_be_prepared_under_applied_shared_policy_while_global_update_failed():
+    class Settings(ConfigModel):
+        value: StrictInt = 1
+        quota: StrictInt = Field(10, json_schema_extra={"x-ui-scope": "global_only"})
+
+        @model_validator(mode="after")
+        def within_quota(self):
+            if self.value > self.quota:
+                raise ValueError("over_quota")
+            return self
+
+    def apply(_context, _old, new):
+        if new.quota == 1:
+            raise RuntimeError("shared update failed")
+
+    register_config("paused_group_preparation", Settings, on_change=apply)
+    set_plugin_enabled("paused_group_preparation", True)
+    set_plugin_enabled("paused_group_preparation", True, 10001)
+    await update_config("paused_group_preparation", {"set": {"quota": 1}})
+    await update_config("paused_group_preparation", {"value": 5}, "group", 10001)
+    current = get_config("paused_group_preparation", "group", 10001)
+    assert (current.value, current.quota) == (5, 10)
+    assert not is_plugin_enabled("paused_group_preparation", 10001)
+    await recover_config("paused_group_preparation", ConfigContext(), rollback=True)
+    assert get_config("paused_group_preparation", "group", 10001).value == 5
+    assert is_plugin_enabled("paused_group_preparation", 10001)

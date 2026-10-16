@@ -35,6 +35,7 @@ class NativeConfiguration:
             if self.properties[key].get("x-ui-scope", "global_only") != "global_only":
                 raise ValueError("startup configuration is global-only")
         self.group_keys = self.allowed("group")
+        self.global_keys = self.allowed("global")
         self.shared_keys = {
             key for key, spec in self.properties.items()
             if spec.get("x-ui-scope") == "global_only"
@@ -91,7 +92,7 @@ class NativeConfiguration:
         if scope == "global":
             values.update({key: value for key, value in root[slot].items() if key in self.properties})
         else:
-            values.update({key: value for key, value in root[slot].items() if key in self.shared_keys})
+            values.update({key: value for key, value in root["applied"].items() if key in self.shared_keys})
             values.update({key: value for key, value in row[slot].items() if key in self.group_keys})
         if applied:
             values.update(deepcopy(self._startup))
@@ -151,11 +152,13 @@ class NativeConfiguration:
         return ConfigSnapshot(
             saved,
             {"defaults": defaults, "effective": published_applied, "applied": published_applied,
+             **({"overridden": sorted(key for key in row["desired"] if key in self.global_keys)} if scope == "global" else {}),
              "apply_status": status, "apply_error": apply_error,
+             "apply_scope": "global" if root_blocks_scope and root["status"] != "active" else scope,
              "invalid_fields": invalid, "applied_invalid_fields": applied_invalid, "orphaned_fields": unknown,
              "restart_required": any(desired.get(key) != applied.get(key) for key in self.startup_keys),
              "changed_startup_fields": sorted(key for key in self.startup_keys if desired.get(key) != applied.get(key))},
-            {"global": root, "local": row, "defaults": self.defaults},
+            {"local": row, "defaults": defaults},
         )
 
     def resources(self):
@@ -215,7 +218,10 @@ class NativeConfiguration:
                         raise ConfigurationError("schema_changed", "请明确移除已停用的旧字段后再保存")
                 else:
                     candidate = {key: deepcopy(value) for key, value in changes.items() if key in self.group_keys}
-                validated = self._effective_candidate(scope, candidate, root)
+                validated = self._effective_candidate(
+                    scope, candidate, root,
+                    root_slot="applied" if scope == "group" else "desired",
+                )
                 candidate = {key: validated[key] for key in candidate}
                 missing = object()
                 changed_fields = {
