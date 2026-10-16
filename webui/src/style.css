@@ -11,10 +11,10 @@ button, input, textarea, select { font: inherit; }
 .brand span { font-size: 20px; font-weight: 750; letter-spacing: .035em; }
 .brand small { font-size: 11px; font-weight: 600; opacity: .52; letter-spacing: .08em; }
 .app-header { position: sticky; z-index: 10; top: 0; height: 60px; padding: 0 20px; display: flex; flex-direction: column; justify-content: center; background: var(--n-color, Canvas); }
-.header-status { display: inline-flex; align-items: center; gap: 7px; color: #777; font-size: 13px; white-space: nowrap; }
-.header-dot { width: 8px; height: 8px; border-radius: 50%; background: #aaa; }
+.header-status { display: inline-flex; align-items: center; gap: 7px; color: color-mix(in srgb, currentColor 68%, transparent); font-size: 13px; white-space: nowrap; }
+.header-dot { width: 8px; height: 8px; border-radius: 50%; background: color-mix(in srgb, currentColor 32%, transparent); }
 .header-dot.online { background: #18a058; }
-.restart-link { color: #d9822b; font-size: 13px; text-decoration: none; white-space: nowrap; }
+.restart-link { color: #b35900; font-size: 13px; text-decoration: none; white-space: nowrap; }
 .restart-link:hover { text-decoration: underline; }
 .app-content { padding: 24px; min-width: 0; }
 .public-layout { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
@@ -37,6 +37,10 @@ button, input, textarea, select { font: inherit; }
 .page .n-card-header__main { overflow-wrap: anywhere; min-width: 0; }
 .page pre, .page code, .page table { max-width: 100%; }
 .page pre { overflow: auto; }
+.spin-container-min { min-height: 200px; }
+.feature-status-diff { color: #b35900; font-size: 12px; font-weight: 500; }
+html[data-theme="dark"] .restart-link { color: #f0a020; }
+html[data-theme="dark"] .feature-status-diff { color: #f0a020; }
 .mobile-only { display: none; }
 @media (max-width: 799px) {
   .app-header { padding: 0 8px; }

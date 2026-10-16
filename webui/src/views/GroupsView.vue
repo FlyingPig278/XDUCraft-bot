@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NEmpty, NIcon, NInput, NSpin, useMessage } from 'naive-ui'
-import { RefreshOutline } from '@vicons/ionicons5'
+import { RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { apiGet } from '../api/client'
 import type { GroupSummary, GroupsResponse } from '../api/types'
 import GroupIdentity from '../components/GroupIdentity.vue'
@@ -60,6 +60,10 @@ watch(search, value => {
   const query = value.trim()
   void router.replace({ name: 'groups', query: query ? { q: query } : {} })
 })
+watch(() => route.query.q, (newQ) => {
+  const val = typeof newQ === 'string' ? newQ : ''
+  if (val !== search.value) search.value = val
+})
 onMounted(load)
 </script>
 
@@ -79,10 +83,12 @@ onMounted(load)
     <NAlert v-for="warning in warnings" :key="warning" type="warning" class="group-warning">{{ warning }}</NAlert>
 
     <div class="group-finder">
-      <NInput id="group-search" v-model:value="search" clearable aria-label="搜索群聊" placeholder="搜索群名或群号" />
+      <NInput id="group-search" v-model:value="search" clearable aria-label="搜索群聊" placeholder="搜索群名或群号">
+        <template #prefix><NIcon :component="SearchOutline" /></template>
+      </NInput>
     </div>
 
-    <NSpin :show="loading">
+    <NSpin :show="loading" :class="{ 'spin-container-min': loading && !groups.length }">
       <section v-if="currentGroups.length" class="group-section" aria-labelledby="recent-groups">
         <div class="section-heading">
           <div>
@@ -130,7 +136,9 @@ onMounted(load)
           </button>
         </div>
       </section>
-      <NEmpty v-if="!loading && !matchingGroups.length" :description="search ? '没有匹配的群聊' : '尚未获取群聊，请连接 QQ 后刷新'" />
+      <NEmpty v-if="!loading && !matchingGroups.length" :description="search ? '没有匹配的群聊' : '尚未获取群聊，请连接 QQ 后刷新'">
+        <template v-if="search" #extra><NButton size="small" secondary @click="search = ''">清空搜索条件</NButton></template>
+      </NEmpty>
     </NSpin>
   </main>
 </template>
@@ -164,15 +172,16 @@ onMounted(load)
 .group-row:hover { background: color-mix(in srgb, #2080f0 7%, transparent); }
 .group-row:focus-visible { outline: 2px solid #2080f0; outline-offset: -2px; }
 .configured-row { background: color-mix(in srgb, currentColor 2%, transparent); }
-.row-status { display: flex; align-items: center; gap: 7px; color: #888; font-size: 12px; }
-.connection-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: #aaa; }
+.configured-row .row-action { grid-column: 3; }
+.row-status { display: flex; align-items: center; gap: 7px; opacity: .72; font-size: 12px; }
+.connection-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: color-mix(in srgb, currentColor 32%, transparent); }
 .connection-dot.online { background: #18a058; }
 .row-action { color: #2080f0; font-weight: 600; white-space: nowrap; }
 @media (max-width: 699px) {
   .page-intro { align-items:center; }
   .group-row { grid-template-columns:minmax(0,1fr) auto; gap:6px 12px; padding:13px; }
-  .row-status { grid-column:1; grid-row:2; margin-left:60px; }
+  .row-status { grid-column:1; grid-row:2; margin-left:70px; }
+  .configured-row .row-action { grid-column: 2; grid-row: 1; }
   .row-action { grid-column:2; grid-row:1 / span 2; }
-  .configured-row .row-action { grid-row:1; }
 }
 </style>

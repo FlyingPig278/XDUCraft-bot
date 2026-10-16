@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { NAlert, NButton, NCard, NEmpty, NIcon, NList, NListItem, NSkeleton, NSpace, NTag, useMessage } from 'naive-ui'
-import { RefreshOutline } from '@vicons/ionicons5'
+import { AppsOutline, ChatbubblesOutline, RefreshOutline } from '@vicons/ionicons5'
 import { apiGet } from '../api/client'
 import type { Overview, PluginsResponse } from '../api/types'
 import { connectionState } from '../state'
@@ -52,19 +52,34 @@ onMounted(load)
     <div v-else-if="overview" class="system-grid">
       <NCard title="Bot 连接">
         <NEmpty v-if="!overview.bots.length" description="当前没有 Bot 连接" />
-        <NList v-else><NListItem v-for="bot in overview.bots" :key="bot.bot_id"><NSpace justify="space-between"><span><strong>{{ bot.nickname || '昵称暂不可用' }}</strong><span class="bot-id">{{ bot.bot_id }}</span></span><NTag :type="bot.connected ? 'success' : 'warning'">{{ bot.connected ? '已连接' : '未连接' }}</NTag></NSpace></NListItem></NList>
+        <NList v-else>
+          <NListItem v-for="bot in overview.bots" :key="bot.bot_id">
+            <NSpace justify="space-between" align="center">
+              <div class="bot-info">
+                <div class="bot-avatar">{{ Array.from(bot.nickname || 'Bot').slice(0, 1).join('') }}</div>
+                <div>
+                  <strong>{{ bot.nickname || '昵称暂不可用' }}</strong>
+                  <span class="bot-id">QQ {{ bot.bot_id }}</span>
+                </div>
+              </div>
+              <NTag :type="bot.connected ? 'success' : 'warning'" :bordered="false" round>{{ bot.connected ? '已连接' : '未连接' }}</NTag>
+            </NSpace>
+          </NListItem>
+        </NList>
       </NCard>
       <NCard title="基础服务">
         <NEmpty v-if="catalog && !services.length" description="没有单独报告的基础服务" />
         <NEmpty v-else-if="!catalog" description="服务目录尚未确认" />
-        <NList v-else><NListItem v-for="service in services" :key="service.id"><NSpace justify="space-between"><span>{{ service.name }}</span><NTag :type="service.loaded ? 'success' : 'error'">{{ service.loaded ? '运行中' : '不可用' }}</NTag></NSpace><div v-if="service.reason" class="muted">{{ service.reason }}</div></NListItem></NList>
+        <NList v-else><NListItem v-for="service in services" :key="service.id"><NSpace justify="space-between" align="center"><span>{{ service.name }}</span><NTag :type="service.loaded ? 'success' : 'error'" :bordered="false" round>{{ service.loaded ? '运行中' : '不可用' }}</NTag></NSpace><div v-if="service.reason" class="muted">{{ service.reason }}</div></NListItem></NList>
       </NCard>
     </div>
-    <NSpace class="system-actions"><RouterLink to="/groups"><NButton type="primary">管理群聊</NButton></RouterLink><RouterLink to="/plugins"><NButton>管理插件</NButton></RouterLink></NSpace>
+    <NSpace class="system-actions"><RouterLink to="/groups"><NButton type="primary"><template #icon><NIcon :component="ChatbubblesOutline" /></template>管理群聊</NButton></RouterLink><RouterLink to="/plugins"><NButton><template #icon><NIcon :component="AppsOutline" /></template>管理插件</NButton></RouterLink></NSpace>
   </main>
 </template>
 
 <style scoped>
 .system-page { width:min(980px,100%); }.page-intro { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }.page-alert { margin-bottom:14px; }.system-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }.bot-id { display:block; margin-top:2px; opacity:.58; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px; }.system-actions { margin-top:20px; }
+.bot-info { display: flex; align-items: center; gap: 12px; }
+.bot-avatar { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 9px; background: color-mix(in srgb, #2080f0 14%, transparent); color: #2080f0; font-weight: 700; font-size: 14px; user-select: none; }
 @media(max-width:699px) { .page-intro { align-items:stretch; flex-direction:column; }.system-grid { grid-template-columns:minmax(0,1fr); } }
 </style>

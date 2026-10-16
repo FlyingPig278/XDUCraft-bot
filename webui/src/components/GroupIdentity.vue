@@ -16,7 +16,11 @@ const props = withDefaults(defineProps<{
 const imageFailed = ref(false)
 const avatarUrl = computed(() => `/api/groups/${encodeURIComponent(props.groupId)}/avatar`)
 const initials = computed(() => Array.from(props.name.trim() || '群').slice(0, 2).join(''))
-const avatarStyle = computed(() => ({ width: `${props.size}px`, height: `${props.size}px` }))
+const avatarStyle = computed(() => ({
+  width: `${props.size}px`,
+  height: `${props.size}px`,
+  fontSize: `${Math.max(12, Math.round(props.size * 0.36))}px`
+}))
 
 watch(() => props.groupId, () => { imageFailed.value = false })
 </script>
@@ -30,6 +34,7 @@ watch(() => props.groupId, () => { imageFailed.value = false })
         :src="avatarUrl"
         :alt="`${name}的 QQ 群头像`"
         :loading="eager ? 'eager' : 'lazy'"
+        draggable="false"
         @error="imageFailed = true"
       >
       <div v-else class="avatar-fallback" role="img" :aria-label="`${name}的 QQ 群头像不可用`">
@@ -47,8 +52,10 @@ watch(() => props.groupId, () => { imageFailed.value = false })
 .group-identity { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .avatar-frame { flex: 0 0 auto; overflow: hidden; border-radius: 12px; background: color-mix(in srgb, currentColor 10%, transparent); }
 .group-avatar { display: block; width: 100%; height: 100%; object-fit: cover; }
-.avatar-fallback { display: grid; width: 100%; height: 100%; place-items: center; font-weight: 700; font-size: 0.9rem; color: inherit; background: color-mix(in srgb, #2080f0 16%, transparent); }
+.avatar-fallback { display: grid; width: 100%; height: 100%; place-items: center; font-weight: 700; font-size: inherit; color: inherit; background: color-mix(in srgb, #2080f0 16%, transparent); user-select: none; }
 .identity-copy { min-width: 0; }
 .group-name { margin: 0; font-size: 1rem; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; word-break: break-word; }
-.group-number { margin-top: 3px; color: #8a8a8a; font-size: 0.86rem; line-height: 1.35; overflow-wrap: anywhere; }
+h1.group-name { font-size: 1.5rem; font-weight: 700; line-height: 1.25; }
+h2.group-name { font-size: 1.2rem; font-weight: 700; line-height: 1.3; }
+.group-number { margin-top: 3px; opacity: .64; font-size: 0.86rem; line-height: 1.35; overflow-wrap: anywhere; }
 </style>

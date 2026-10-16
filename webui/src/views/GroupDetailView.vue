@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NAlert, NButton, NEmpty, NIcon, NRadioButton, NRadioGroup, NSpin } from 'naive-ui'
+import { NAlert, NButton, NEmpty, NIcon, NRadioButton, NRadioGroup, NSpin, NTag } from 'naive-ui'
 import { ArrowBackOutline, RefreshOutline, SettingsOutline } from '@vicons/ionicons5'
 import { apiGet } from '../api/client'
 import type { GroupSummary, GroupsResponse, Overview, PluginDescriptor, PluginsResponse } from '../api/types'
@@ -30,6 +30,13 @@ const selectedPluginName = computed(() => typeof route.params.plugin === 'string
 const isPluginDetail = computed(() => Boolean(selectedPluginName.value))
 const plugins = computed(() => (response.value?.plugins ?? []).filter(plugin => plugin.managed))
 const activePlugin = computed(() => plugins.value.find(plugin => plugin.short_name === selectedPluginName.value))
+const globalEntryLabel = computed(() => {
+  const hasGlobal = Boolean(activePlugin.value?.resources.global)
+  const hasStartup = Boolean(activePlugin.value?.resources.startup)
+  if (hasGlobal && hasStartup) return '全局与启动设置'
+  if (hasStartup) return '启动设置'
+  return '全局设置'
+})
 const group = computed(() => groups.value.find(item => item.group_id === groupId.value))
 const groupName = computed(() => group.value?.name ?? `群 ${groupId.value}`)
 const groupsQuery = computed(() => typeof route.query.groups === 'string' ? route.query.groups : '')
@@ -135,6 +142,11 @@ watch(() => route.query.filter, value => {
       <div class="top-actions"><NButton text @click="backToGroups"><template #icon><NIcon :component="ArrowBackOutline" /></template>全部群聊</NButton><NButton :loading="loading" @click="load(true)"><template #icon><NIcon :component="RefreshOutline" /></template>刷新</NButton></div>
       <header class="group-header">
         <GroupIdentity :group-id="groupId" :name="groupName" :size="58" name-tag="h1" eager />
+        <div v-if="group" class="header-status-badge">
+          <NTag v-if="group.connected" size="small" type="success" :bordered="false" round>在线</NTag>
+          <NTag v-else-if="group.stale" size="small" type="warning" :bordered="false" round>最近连接</NTag>
+          <NTag v-else size="small" :bordered="false" round>未连接</NTag>
+        </div>
       </header>
       <NAlert v-if="error" type="error" class="page-alert">{{ error }} <NButton size="small" @click="load(true)">重试</NButton></NAlert>
       <NAlert v-for="warning in [...warnings, ...(response?.warnings ?? [])]" :key="warning" type="warning" class="page-alert">{{ warning }}</NAlert>
@@ -144,7 +156,7 @@ watch(() => route.query.filter, value => {
         </NRadioGroup>
         <span>{{ shownPlugins.length }} 个插件</span>
       </div>
-      <NSpin :show="loading">
+      <NSpin :show="loading" :class="{ 'spin-container-min': loading && !shownPlugins.length }">
         <div v-if="shownPlugins.length" class="plugin-grid">
           <PluginCard v-for="plugin in shownPlugins" :key="plugin.id" :plugin="plugin" :group-id="groupId" scope="group" variant="group-list" :refresh="() => load()" @configure="openPlugin(plugin)" />
         </div>
@@ -159,11 +171,11 @@ watch(() => route.query.filter, value => {
       <div class="top-actions"><NButton text @click="backToPlugins"><template #icon><NIcon :component="ArrowBackOutline" /></template>返回插件列表</NButton><NButton :loading="loading" @click="load(true)"><template #icon><NIcon :component="RefreshOutline" /></template>刷新</NButton></div>
       <header class="detail-header"><div><div class="detail-eyebrow">{{ groupName }}</div><h1 class="page-heading">{{ activePlugin?.name ?? selectedPluginName }}</h1></div></header>
       <NAlert v-if="error" type="error" class="page-alert">{{ error }} <NButton size="small" @click="load(true)">重试</NButton></NAlert>
-      <NSpin :show="loading">
+      <NSpin :show="loading" :class="{ 'spin-container-min': loading && !activePlugin }">
         <div v-if="activePlugin" class="detail-stack">
           <PluginCard :plugin="activePlugin" :group-id="groupId" scope="group" variant="detail" :refresh="() => load()" />
           <section v-if="activePlugin.resources.global || activePlugin.resources.startup" class="global-entry">
-            <NButton text @click="openGlobal(activePlugin.resources.global ? 'global' : 'startup')"><template #icon><NIcon :component="SettingsOutline" /></template>全局设置</NButton>
+            <NButton secondary size="small" @click="openGlobal(activePlugin.resources.global ? 'global' : 'startup')"><template #icon><NIcon :component="SettingsOutline" /></template>{{ globalEntryLabel }}</NButton>
           </section>
           <SchemaSettingsForm v-if="activePlugin.resources.group" :key="activePlugin.resources.group.path" :descriptor="activePlugin.resources.group" :media="activePlugin.media" title="本群配置" @saved="load()" />
         </div>

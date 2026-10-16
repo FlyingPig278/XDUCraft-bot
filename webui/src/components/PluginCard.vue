@@ -147,7 +147,7 @@ async function reload(): Promise<void> {
     <section v-if="variant === 'detail' && visibleFeatures.length" class="feature-section">
       <h3>功能选项</h3>
       <div v-for="feature in visibleFeatures" :key="feature.key" class="feature-row">
-        <div><strong>{{ feature.name || feature.key }}</strong><span v-if="feature.description">{{ feature.description }}</span><span v-if="feature.effective !== undefined && feature.effective !== feature.enabled">{{ feature.enabled ? '已保存开启，当前尚未生效' : '已保存关闭，但当前仍在运行' }}</span></div>
+        <div><strong>{{ feature.name || feature.key }}</strong><span v-if="feature.description">{{ feature.description }}</span><span v-if="feature.effective !== undefined && feature.effective !== feature.enabled" class="feature-status-diff">{{ feature.enabled ? '已保存开启，当前尚未生效' : '已保存关闭，但当前仍在运行' }}</span></div>
         <NSwitch
           :value="feature.enabled"
           :loading="busy[feature.key]"
@@ -162,7 +162,7 @@ async function reload(): Promise<void> {
 </template>
 
 <style scoped>
-.plugin-card { height:100%; }
+.plugin-card { height:100%; transition: border-color .2s ease, box-shadow .2s ease; }
 .card-heading,.plugin-identity,.primary-control,.feature-row { display:flex; align-items:center; }
 .card-heading,.primary-control,.feature-row { justify-content:space-between; gap:14px; }
 .plugin-identity { min-width:0; gap:11px; }
@@ -174,6 +174,7 @@ async function reload(): Promise<void> {
 .status-note { margin:10px 0 0; opacity:.72; font-size:13px; }
 .status-alert { margin-top:12px; }
 .primary-control { margin:0; padding:0; }
+.plugin-card--detail .primary-control { padding: 2px 0 12px; border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent); }
 .feature-row > div:first-child { display:flex; min-width:0; flex-direction:column; gap:3px; }
 .card-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:13px; flex-wrap:wrap; }
 .feature-section { margin-top:18px; padding-top:14px; border-top:1px solid color-mix(in srgb,currentColor 11%,transparent); }

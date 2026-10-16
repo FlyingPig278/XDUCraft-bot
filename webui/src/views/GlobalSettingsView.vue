@@ -65,12 +65,12 @@ onMounted(load)
 <template>
   <main class="page plugins-page">
     <div class="page-intro">
-      <div><h1 class="page-heading">插件</h1><p class="page-subtitle">全局总开关 · 关闭后所有群暂停运行</p></div>
+      <div><h1 class="page-heading">插件</h1><p class="page-subtitle">全局总开关 · 关闭后所有群暂停运行<span v-if="managedPlugins.length"> · 共 {{ managedPlugins.length }} 个业务插件</span></p></div>
       <NButton secondary :loading="loading" @click="load"><template #icon><NIcon :component="RefreshOutline" /></template>刷新</NButton>
     </div>
     <NAlert v-if="error" type="error" class="page-alert">{{ error }} <NButton size="small" @click="load">重试</NButton></NAlert>
     <NAlert v-for="warning in warnings" :key="warning" type="warning" class="page-alert">{{ warning }}</NAlert>
-    <NSpin :show="loading">
+    <NSpin :show="loading" :class="{ 'spin-container-min': loading && !managedPlugins.length }">
       <div v-if="managedPlugins.length" class="plugin-grid">
         <PluginCard
           v-for="plugin in managedPlugins"
@@ -97,6 +97,6 @@ onMounted(load)
 .page-alert { margin-bottom:12px; }
 .plugin-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
 .empty-state { padding:48px 0; }
-.focused-plugin { outline:2px solid #2080f0; outline-offset:3px; }
+.focused-plugin { outline: 2px solid #2080f0; outline-offset: 3px; border-radius: var(--n-border-radius, 8px); }
 @media(max-width:699px) { .page-intro { align-items:stretch; flex-direction:column; }.plugin-grid { grid-template-columns:minmax(0,1fr); } }
 </style>
