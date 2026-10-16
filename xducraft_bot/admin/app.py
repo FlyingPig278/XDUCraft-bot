@@ -117,7 +117,7 @@ def create_app(service: AdminService, auth: AdminAuth, static_dir: Path) -> Fast
 
     @app.get("/api/overview")
     async def overview():
-        return service.overview()
+        return await service.overview()
 
     @app.get("/api/groups")
     async def groups():

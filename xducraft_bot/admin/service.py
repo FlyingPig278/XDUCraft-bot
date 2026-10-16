@@ -33,6 +33,8 @@ _MISSING = object()
 _OMIT = object()
 _SECRET_META_KEYS = {"defaults", "effective", "active", "applied", "pending"}
 
+_BOT_INFO_TIMEOUT_SECONDS = 5
+
 
 class AdminError(Exception):
     def __init__(self, status: int, code: str, message: str = "操作失败", fields: Optional[dict] = None):
@@ -645,7 +647,7 @@ class AdminService:
         except (ValueError, OSError):
             raise AdminError(404, "media_not_found", "媒体不存在") from None
 
-    def overview(self):
+    async def overview(self):
         catalog = self.catalog()
         restart = False
         warning = None
@@ -658,8 +660,32 @@ class AdminService:
                     restart = restart or bool(snapshot.meta.get("restart_required"))
                 except ConfigurationError as exc:
                     warning = exc.code
+
+        async def bot_overview(bot_id: str, bot: Any) -> dict:
+            result = {"bot_id": bot_id, "connected": True}
+            try:
+                login_info = await asyncio.wait_for(
+                    bot.get_login_info(),
+                    _BOT_INFO_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                return result
+            if isinstance(login_info, Mapping):
+                nickname = login_info.get("nickname")
+                if isinstance(nickname, str) and nickname.strip():
+                    result["nickname"] = nickname
+            return result
+
+        bots = [
+            (str(bot_id), bot)
+            for bot_id, bot in self.bots().items()
+        ]
+        bot_rows = await asyncio.gather(*(
+            bot_overview(bot_id, bot)
+            for bot_id, bot in sorted(bots, key=lambda item: item[0])
+        ))
         return {
-            "bots": [{"bot_id": str(key), "connected": True} for key in sorted(self.bots())],
+            "bots": bot_rows,
             "plugins": [{"id": entry.id, "name": entry.name, "loaded": entry.loaded, "reason": None if entry.loaded else "插件未加载"} for entry in catalog.values()],
             "restart_required": restart,
             "deployment_warning": warning,

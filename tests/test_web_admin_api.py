@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 from pathlib import Path
 from types import SimpleNamespace
@@ -90,8 +91,15 @@ class ScopedNativeModel(ConfigModel):
 
 
 class SyntheticBot:
-    def __init__(self) -> None:
+    def __init__(self, nickname: str = "测试机器人") -> None:
         self.fail = False
+        self.login_fail = False
+        self.nickname = nickname
+
+    async def get_login_info(self):
+        if self.login_fail:
+            raise RuntimeError("offline")
+        return {"user_id": 999999, "nickname": self.nickname}
 
     async def get_group_list(self):
         if self.fail:
@@ -619,6 +627,49 @@ async def test_groups_merge_live_cache_and_declared_groups(environment: Environm
     second = (await env.client.get("/api/groups")).json()
     assert second["groups"][0]["stale"] is True
     assert second["warnings"]
+
+
+@pytest.mark.asyncio
+async def test_overview_keeps_bot_ids_and_isolates_login_info_timeout(
+    tmp_path: Path,
+    isolated_feature_gate,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class HangingBot(SyntheticBot):
+        async def get_login_info(self):
+            await asyncio.Event().wait()
+
+    bots = {
+        "10001": SyntheticBot("甲机器人"),
+        "20002": HangingBot("不应出现"),
+    }
+    service = AdminService(
+        lambda: {},
+        isolated_feature_gate,
+        SimpleNamespace(),
+        lambda: bots,
+        startup=SimpleNamespace(),
+    )
+    app = create_app(service, AdminAuth(PASSWORD), tmp_path / "missing-dist")
+    transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 12345))
+    monkeypatch.setattr("xducraft_bot.admin.service._BOT_INFO_TIMEOUT_SECONDS", 0.01)
+
+    async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
+        await client.post("/api/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+        first = await client.get("/api/overview")
+        assert first.status_code == 200
+        assert first.json()["bots"] == [
+            {"bot_id": "10001", "connected": True, "nickname": "甲机器人"},
+            {"bot_id": "20002", "connected": True},
+        ]
+
+        bots.clear()
+        bots["20002"] = SyntheticBot("乙机器人")
+        second = await client.get("/api/overview")
+        assert second.status_code == 200
+        assert second.json()["bots"] == [
+            {"bot_id": "20002", "connected": True, "nickname": "乙机器人"},
+        ]
 
 
 @pytest.mark.asyncio
