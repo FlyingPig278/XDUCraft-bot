@@ -32,13 +32,16 @@ onUnmounted(() => unregister?.())
 
 <template>
   <NCard :title="embedded ? undefined : title" :bordered="!embedded" :content-style="embedded ? { padding:'0' } : undefined" :footer-style="embedded ? { padding:'16px 0 0' } : undefined">
-    <template v-if="!embedded && dirty" #header-extra><span class="dirty-mark">未保存</span></template>
-    <p v-if="embedded && dirty" class="dirty-mark">未保存</p>
+    <template v-if="!embedded" #header-extra>
+      <span class="dirty-badge" :class="{ 'dirty-badge--visible': dirty }" :aria-hidden="!dirty">未保存</span>
+    </template>
     <p v-if="description" class="muted form-description">{{ description }}</p>
     <NAlert v-if="stale" type="warning" class="form-alert">
       配置已被 QQ 或其他页面修改。草稿已保留，不能直接覆盖；请比较差异，或明确放弃后重新加载。
       <slot name="conflict" />
-      <NButton size="small" :disabled="saving || loading" @click="confirmReload">放弃草稿并读取最新值</NButton>
+      <div class="stale-actions">
+        <NButton size="small" :disabled="saving || loading" @click="confirmReload">放弃草稿并读取最新值</NButton>
+      </div>
     </NAlert>
     <NAlert v-if="errors.resource && !stale" type="error" class="form-alert">{{ Array.isArray(errors.resource) ? errors.resource.join('；') : errors.resource }}</NAlert>
     <NCollapse v-if="Object.keys(errors).length" class="form-alert">
@@ -49,9 +52,19 @@ onUnmounted(() => unregister?.())
     <NSpin :show="loading"><slot /></NSpin>
     <template #footer>
       <div class="form-actions" :class="{ 'form-actions--dirty': dirty }">
-        <NButton quaternary :disabled="saving || loading" @click="confirmReload"><template #icon><NIcon :component="RefreshOutline" /></template>重新加载</NButton>
-        <NButton v-if="dirty" :disabled="saving || loading" @click="requestDiscard"><template #icon><NIcon :component="ArrowUndoOutline" /></template>放弃更改</NButton>
-        <NButton class="form-save" type="primary" :loading="saving" :disabled="disabled || !dirty || loading || saving || stale" @click="requestSave"><template #icon><NIcon :component="SaveOutline" /></template>{{ saveText }}</NButton>
+        <div class="form-actions-utility">
+          <NButton quaternary :disabled="saving || loading" @click="confirmReload">
+            <template #icon><NIcon :component="RefreshOutline" /></template>重新加载
+          </NButton>
+        </div>
+        <div class="form-actions-submit">
+          <NButton v-if="dirty" :disabled="saving || loading" @click="requestDiscard">
+            <template #icon><NIcon :component="ArrowUndoOutline" /></template>放弃更改
+          </NButton>
+          <NButton class="form-save" type="primary" :loading="saving" :disabled="disabled || !dirty || loading || saving || stale" @click="requestSave">
+            <template #icon><NIcon :component="SaveOutline" /></template>{{ saveText }}
+          </NButton>
+        </div>
       </div>
     </template>
   </NCard>
@@ -59,8 +72,62 @@ onUnmounted(() => unregister?.())
 <style scoped>
 .form-description { margin-top: 0; }
 .form-alert { margin-bottom: 16px; }
-.dirty-mark { color: #f0a020; font-size: 13px; }
+.stale-actions { margin-top: 8px; }
+.dirty-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: color-mix(in srgb, currentColor 35%, #d9822b);
+  background: color-mix(in srgb, #d9822b 14%, transparent);
+  border: 1px solid color-mix(in srgb, #d9822b 35%, transparent);
+  padding: 1px 7px;
+  border-radius: 9999px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease-in-out;
+  white-space: nowrap;
+  user-select: none;
+}
+.dirty-badge--visible {
+  opacity: 1;
+  pointer-events: auto;
+}
 .error-list { margin: 0; padding-left: 20px; overflow-wrap: anywhere; }
-.form-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; }
-@media (max-width:599px) { .form-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }.form-actions .n-button { min-height:40px; width:100%; }.form-actions--dirty .form-save { grid-column:1/-1; } }
+.form-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.form-actions-utility {
+  display: flex;
+  align-items: center;
+}
+.form-actions-submit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+@media (max-width: 599px) {
+  .form-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .form-actions-utility,
+  .form-actions-submit {
+    display: contents;
+  }
+  .form-actions .n-button {
+    min-height: 40px;
+    width: 100%;
+    white-space: nowrap;
+  }
+  .form-actions--dirty .form-save {
+    grid-column: 1 / -1;
+  }
+}
 </style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { NAlert, NButton, NCollapse, NCollapseItem, NEmpty, NSpace, useDialog } from 'naive-ui'
 import type { AssetCapability, JsonSchema, SchemaContext } from '../api/schema'
 import type { ResourceDescriptor } from '../api/types'
@@ -13,6 +13,7 @@ const emit = defineEmits<{ saved: []; state: [value: { dirty: boolean; saving: b
 const form = useResourceForm(() => props.descriptor)
 const { draft, saved, meta, overrideFields, loading, saving, stale, conflict, errors, dirty } = form
 const dialog = useDialog()
+const expandedSections = ref<string[]>([])
 const fields = computed(() => {
   const root = props.descriptor.schema
   const item = effectiveSchema(root, root)
@@ -94,7 +95,7 @@ const valueRows = computed(() => {
     const running = meta.value.active && own(meta.value.active, key) ? meta.value.active : meta.value.applied
     const hasActive = Boolean(running && own(running, key))
     const hasBase = Boolean(meta.value.defaults && own(meta.value.defaults, key))
-    const sensitive = secretPaths.some(path => path === key || path.startsWith(`${key}.`))
+    const sensitive = secretPaths.some(path => path === key || path.startsWith(`${key}.`)) || Boolean(field.writeOnly) || Boolean(field['x-ui-secret'])
     return {
       key, label: resolve(field, props.descriptor.schema).title ?? key,
       hasActive, hasBase, hasEffective: isObject(meta.value.effective) && own(meta.value.effective, key),
@@ -113,6 +114,17 @@ const changedRows = computed(() => valueRows.value.filter((row) =>
   conflict.value && (JSON.stringify(conflict.value.config[row.key]) !== JSON.stringify(draft.value?.[row.key]) || props.descriptor.write_mode === 'patch' && (conflict.value.meta.overridden ?? []).includes(row.key) !== overrideFields.value.includes(row.key)) ||
   (meta.value.changed_keys ?? []).includes(row.key) || (meta.value.changed_startup_fields ?? []).includes(row.key)
 ))
+const hasRuntimeDiagnostics = computed(() => Boolean(meta.value.active || meta.value.applied || isObject(meta.value.effective)))
+const filteredNotices = computed(() => {
+  if (props.descriptor.scope === 'group') return []
+  const desc = props.descriptor.schema.description?.trim()
+  return (meta.value.notices ?? []).map(notice).filter(item => item && item !== desc)
+})
+const showStartupScopeNote = computed(() => {
+  if (props.descriptor.scope !== 'startup' || meta.value.restart_required) return false
+  const desc = props.descriptor.schema.description ?? ''
+  return !desc.includes('对所有群生效') && !desc.includes('重启')
+})
 function notice(value: unknown): string {
   if (typeof value === 'string') return value
   if (isObject(value)) return String(value.message ?? value.reason ?? value.code ?? '请检查插件提供的状态说明')
@@ -130,7 +142,10 @@ function reload(): void {
 function restoreApplied(): void {
   dialog.warning({ title: '恢复上次已应用配置', content: '将调用插件的恢复接口，恢复其最后成功应用的状态。此操作也需要当前版本匹配；不会强制覆盖其他页面的更新。', positiveText: '确认恢复', negativeText: '取消', onPositiveClick: async () => { if (await form.rollback()) emit('saved') } })
 }
-watch(() => props.descriptor.path, () => { void form.load() }, { immediate: true })
+watch(() => props.descriptor.path, () => {
+  expandedSections.value = []
+  void form.load()
+}, { immediate: true })
 watch([dirty, saving], ([isDirty, isSaving]) => emit('state', { dirty: isDirty, saving: isSaving }), { immediate: true })
 </script>
 
@@ -141,33 +156,78 @@ watch([dirty, saving], ([isDirty, isSaving]) => emit('state', { dirty: isDirty, 
       <p v-else>最新值暂时无法读取；原版本与草稿均保留，没有自动重试覆盖。</p>
     </template>
     <NAlert v-if="unavailable" type="warning" class="resource-notice">{{ props.readonly ? '此处只显示声明的配置和状态，不能在当前页面修改。' : meta.reason || '插件声明此资源当前不可编辑；其它资源不受影响。' }}</NAlert>
-    <p v-for="(item, index) in descriptor.scope === 'group' ? [] : (meta.notices ?? [])" :key="index" class="resource-note">{{ notice(item) }}</p>
-    <p v-if="descriptor.scope === 'startup' && !meta.restart_required" class="resource-note">对所有群生效，保存后需重启机器人。</p>
+    <p v-for="(item, index) in filteredNotices" :key="index" class="resource-note">{{ item }}</p>
+    <p v-if="showStartupScopeNote" class="resource-note">对所有群生效，保存后需重启机器人。</p>
     <NAlert v-if="meta.restart_required" type="warning" class="resource-notice">设置已保存，重启后生效。</NAlert>
     <NAlert v-if="meta.apply_status && !['active', 'applied', 'success'].includes(meta.apply_status)" :type="['failed','invalid'].includes(meta.apply_status) ? 'error' : 'warning'" class="resource-notice">
       {{ sharedApplyFailure ? '共享配置应用失败，请打开全局设置处理。本群配置仍可独立保存。' : meta.apply_status === 'applying' ? '正在应用已保存配置。' : meta.apply_status === 'failed' ? '已保存配置应用失败，当前仍使用上次成功值。' : meta.apply_status === 'invalid' ? '已保存配置无效，请修正字段后保存。' : `应用状态：${meta.apply_status}` }}<p v-if="meta.apply_error">{{ notice(meta.apply_error) }}</p>
-      <NSpace v-if="descriptor.scope !== 'startup' && !sharedApplyFailure && meta.apply_status === 'failed'"><NButton :loading="saving" :disabled="dirty || stale || loading || unavailable || applying" @click="retry">重试应用已保存值</NButton><NButton :disabled="dirty || saving || stale || loading || unavailable || applying" @click="restoreApplied">恢复上次已应用值</NButton></NSpace>
+      <NSpace v-if="descriptor.scope !== 'startup' && !sharedApplyFailure && meta.apply_status === 'failed'" wrap :size="[8, 8]"><NButton :loading="saving" :disabled="dirty || stale || loading || unavailable || applying" @click="retry">重试应用已保存值</NButton><NButton :disabled="dirty || saving || stale || loading || unavailable || applying" @click="restoreApplied">恢复上次已应用值</NButton></NSpace>
       <p v-if="dirty">先保存或放弃草稿，再操作已保存配置。</p>
     </NAlert>
     <NAlert v-if="hasItems(meta.invalid_fields) || hasItems(meta.orphaned_fields)" type="warning" class="resource-notice">存在无效或不再声明的字段。{{ hasItems(meta.invalid_fields) ? `无效字段：${Array.isArray(meta.invalid_fields) ? meta.invalid_fields.join('、') : isObject(meta.invalid_fields) ? Object.keys(meta.invalid_fields).join('、') : '请检查字段错误'}` : '' }} {{ hasItems(meta.orphaned_fields) ? `未声明字段：${Array.isArray(meta.orphaned_fields) ? meta.orphaned_fields.join('、') : isObject(meta.orphaned_fields) ? Object.keys(meta.orphaned_fields).join('、') : '请检查插件声明'}` : '' }}</NAlert>
     <SchemaFormRenderer v-if="draft" :schema="schema" :model-value="draft" :scope="descriptor.scope" :readonly="Boolean(unavailable || applying || saving || loading)" :errors="errors" :defaults="meta.defaults ?? {}" :override-fields="descriptor.write_mode === 'patch' ? overrideFields : undefined" :secret-fields="meta.secret_fields ?? {}" :choices="meta.choices ?? {}" :media="media" @update:model-value="draft = $event" @update:override-fields="overrideFields = $event" />
     <NEmpty v-else-if="!loading" description="配置尚未读取，请使用重新加载" />
-    <NCollapse v-if="draft && descriptor.scope !== 'group' && (descriptor.scope === 'startup' || meta.active || meta.applied || meta.defaults || isObject(meta.effective) || dirty)" class="resource-comparisons" :default-expanded-names="[]">
+    <NCollapse v-if="draft && descriptor.scope !== 'group'" v-model:expanded-names="expandedSections" class="resource-comparisons">
       <NCollapseItem title="高级信息" name="diagnostics">
-        <div class="comparison-list">
+        <div v-if="valueRows.length" class="comparison-list">
+          <p v-if="!hasRuntimeDiagnostics && descriptor.scope !== 'startup'" class="diagnostics-hint">此插件当前未单独汇报运行时生效状态，下方仅列出已持久化的全局配置与默认值。</p>
           <div v-for="row in valueRows" :key="row.key" class="comparison-row">
-            <strong>{{ row.label }}</strong>
-            <span v-if="row.runningMatchesSaved">当前运行与已保存一致：{{ row.active }}</span>
-            <template v-else><span v-if="row.hasActive">当前运行：{{ row.active }}</span><span v-else-if="row.hasEffective">当前生效：{{ row.effective }}</span><span>{{ descriptor.scope === 'startup' ? '下次启动' : '已保存' }}：{{ row.pending }}</span></template>
+            <div class="comparison-row-header">
+              <strong>{{ row.label }}</strong>
+              <span v-if="meta.readonly_fields?.includes(row.key)" class="readonly-tag">只读</span>
+            </div>
+            <span v-if="row.runningMatchesSaved" class="comparison-tag comparison-tag--synced">当前运行与已保存一致：{{ row.active }}</span>
+            <template v-else>
+              <span v-if="row.hasActive">当前运行：{{ row.active }}</span>
+              <span v-else-if="row.hasEffective">当前生效：{{ row.effective }}</span>
+              <span>{{ descriptor.scope === 'startup' ? '下次启动' : '已保存' }}：{{ row.pending }}</span>
+            </template>
             <span v-if="row.hasBase && !row.baseMatchesSaved">{{ descriptor.scope === 'startup' ? '启动配置' : '默认值' }}：{{ row.inherited }}</span>
-            <span v-if="dirty && row.draftChanged">未保存：{{ row.draft }}</span>
-            <span v-if="meta.readonly_fields?.includes(row.key)">此项只读</span>
+            <span v-if="dirty && row.draftChanged" class="comparison-draft">未保存：{{ row.draft }}</span>
           </div>
         </div>
+        <NEmpty v-else description="暂无高级字段信息" size="small" class="comparison-empty" />
       </NCollapseItem>
     </NCollapse>
   </ConfigFormShell>
 </template>
 <style scoped>
-.resource-notice { margin-bottom:14px; }.resource-note { margin:0 0 12px; opacity:.72; font-size:13px; line-height:1.55; }.resource-comparisons { margin-top:20px; }.comparison-list { display:flex; flex-direction:column; gap:10px; margin:12px 0; }.comparison-row { display:flex; flex-direction:column; gap:5px; padding:10px 12px; border-radius:8px; background:color-mix(in srgb,currentColor 5%,transparent); font-size:13px; min-width:0; overflow-wrap:anywhere; white-space:pre-wrap; }
+.resource-notice { margin-bottom: 14px; }
+.resource-note { margin: 0 0 12px; opacity: .72; font-size: 13px; line-height: 1.55; }
+.resource-comparisons { margin-top: 20px; }
+.comparison-list { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+.diagnostics-hint { margin: 0 0 8px; font-size: 12px; opacity: .7; line-height: 1.5; }
+.comparison-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  font-size: 13px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.comparison-row-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.readonly-tag {
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  opacity: .8;
+}
+.comparison-tag--synced {
+  opacity: .85;
+}
+.comparison-draft {
+  color: color-mix(in srgb, currentColor 35%, #d9822b);
+}
+.comparison-empty {
+  padding: 16px 0;
+}
 </style>
