@@ -1,26 +1,29 @@
 from typing import Any, Optional
 
 import pytest
-from pydantic import Field, StrictInt
+from pydantic import Field, StrictInt, StrictStr
 
+from xducraft_bot.shared.config_store import database
 from xducraft_bot.shared.configuration import (
-    ConfigContext, ConfigModel, ConfigurationError, get_config, is_plugin_enabled,
-    recover_config, register_config, update_config,
+    ConfigContext, ConfigModel, ConfigurationError, get_config, get_declaration,
+    is_plugin_enabled, recover_config, register_config, set_plugin_enabled, update_config,
 )
 
 
 @pytest.mark.asyncio
-async def test_explicit_null_detaches_group_from_later_global_default():
+async def test_group_snapshot_uses_code_default_and_never_follows_global_changes():
     class Settings(ConfigModel):
         footer: Optional[str] = "initial"
 
-    register_config("nullable_scope_regression", Settings)
-    await update_config("nullable_scope_regression", {"set": {"footer": None}}, "group", 950582991)
+    declaration = register_config("nullable_scope_regression", Settings)
+    assert declaration.resources["group"].write_mode == "replace"
+    await update_config("nullable_scope_regression", {"set": {"footer": "global"}})
+    assert get_config("nullable_scope_regression", "group", 10002).footer == "initial"
+
+    await update_config("nullable_scope_regression", {"footer": None}, "group", 950582991)
     await update_config("nullable_scope_regression", {"set": {"footer": "changed"}})
     assert get_config("nullable_scope_regression", "group", 950582991).footer is None
-    assert get_config("nullable_scope_regression", "group", 10002).footer == "changed"
-    await update_config("nullable_scope_regression", {"unset": ["footer"]}, "group", 950582991)
-    assert get_config("nullable_scope_regression", "group", 950582991).footer == "changed"
+    assert get_config("nullable_scope_regression", "group", 10002).footer == "initial"
 
 
 @pytest.mark.asyncio
@@ -33,8 +36,14 @@ async def test_apply_failure_pauses_only_target_and_can_restore_last_applied():
             raise RuntimeError("private callback details must not reach API")
 
     register_config("apply_failure_regression", Settings, on_change=fail_change)
-    result = await update_config("apply_failure_regression", {"set": {"maximum": 6}}, "group", 950582991)
+    set_plugin_enabled("apply_failure_regression", True)
+    set_plugin_enabled("apply_failure_regression", True, 950582991)
+    set_plugin_enabled("apply_failure_regression", True, 10002)
+    result = await update_config("apply_failure_regression", {"maximum": 6}, "group", 950582991)
     assert result.meta["apply_status"] == "failed"
+    assert result.values["maximum"] == 6
+    assert result.meta["applied"]["maximum"] == 5
+    assert result.meta["effective"]["maximum"] == 5
     assert get_config("apply_failure_regression", "group", 950582991).maximum == 5
     assert not is_plugin_enabled("apply_failure_regression", 950582991)
     assert is_plugin_enabled("apply_failure_regression", 10002)
@@ -49,6 +58,7 @@ async def test_invalid_candidate_cannot_replace_committed_configuration():
         maximum: StrictInt = Field(5, ge=1, le=10)
 
     register_config("validation_regression", Settings)
+    set_plugin_enabled("validation_regression", True)
     with pytest.raises(ConfigurationError) as error:
         await update_config("validation_regression", {"set": {"maximum": 11}})
     assert error.value.code == "invalid_config"
@@ -64,3 +74,86 @@ def test_mutating_nested_runtime_value_cannot_change_declared_defaults():
     consumer = get_config("snapshot_isolation_regression")
     consumer.payload["items"].append("local mutation")
     assert get_config("snapshot_isolation_regression").payload == {"items": ["retained"]}
+
+
+def test_new_plugin_and_group_controls_are_independently_off():
+    class Settings(ConfigModel):
+        value: StrictInt = 1
+
+    register_config("safe_control_defaults", Settings)
+    assert not is_plugin_enabled("safe_control_defaults")
+    assert not is_plugin_enabled("safe_control_defaults", 10001)
+    set_plugin_enabled("safe_control_defaults", True)
+    assert is_plugin_enabled("safe_control_defaults")
+    assert not is_plugin_enabled("safe_control_defaults", 10001)
+    set_plugin_enabled("safe_control_defaults", True, 10001)
+    assert is_plugin_enabled("safe_control_defaults", 10001)
+    set_plugin_enabled("safe_control_defaults", False)
+    assert not is_plugin_enabled("safe_control_defaults", 10001)
+    set_plugin_enabled("safe_control_defaults", True)
+    assert is_plugin_enabled("safe_control_defaults", 10001)
+
+
+@pytest.mark.asyncio
+async def test_legacy_group_snapshot_freezes_desired_applied_split_once():
+    class Settings(ConfigModel):
+        value: StrictInt = 5
+        token: StrictStr = Field(
+            "code-secret",
+            json_schema_extra={
+                "x-ui-scope": "global_only",
+                "x-ui-effect-phase": "startup",
+            },
+        )
+
+    db = database()
+    db.write_values(
+        "legacy_snapshot_regression", "global", None,
+        desired={"value": 8, "token": "pending-secret"},
+        applied={"value": 7, "token": "active-secret"},
+        status="active",
+    )
+    db.write_values(
+        "legacy_snapshot_regression", "group", 10001,
+        desired={"token": "must-not-be-local"},
+        applied={"token": "must-not-be-local"},
+        status="active",
+    )
+    register_config("legacy_snapshot_regression", Settings)
+    snapshot = get_declaration("legacy_snapshot_regression").resources["group"].read(
+        ConfigContext(10001)
+    )
+    assert snapshot.values == {"value": 8}
+    assert snapshot.meta["applied"]["value"] == 7
+    assert snapshot.meta["apply_status"] == "active"
+    row = db.read_values("legacy_snapshot_regression", "group", 10001)
+    assert row["desired"] == {"value": 8}
+    assert row["applied"] == {"value": 7}
+    assert get_config("legacy_snapshot_regression", "group", 10002).value == 5
+
+
+@pytest.mark.asyncio
+async def test_failed_global_independent_field_does_not_pause_groups_but_shared_field_does():
+    class Settings(ConfigModel):
+        local: StrictInt = 5
+        shared: StrictInt = Field(
+            1,
+            json_schema_extra={"x-ui-scope": "global_only"},
+        )
+
+    def fail_change(context, old, new):
+        if new.local == 6 or new.shared == 2:
+            raise RuntimeError("apply failure")
+
+    declaration = register_config("scope_failure_regression", Settings, on_change=fail_change)
+    set_plugin_enabled("scope_failure_regression", True)
+    set_plugin_enabled("scope_failure_regression", True, 10001)
+    await update_config("scope_failure_regression", {"set": {"local": 6}})
+    assert declaration.resources["global"].read(ConfigContext()).meta["apply_status"] == "failed"
+    assert declaration.resources["group"].read(ConfigContext(10001)).meta["apply_status"] == "active"
+    assert is_plugin_enabled("scope_failure_regression", 10001)
+
+    await recover_config("scope_failure_regression", ConfigContext(), rollback=True)
+    await update_config("scope_failure_regression", {"set": {"shared": 2}})
+    assert declaration.resources["group"].read(ConfigContext(10001)).meta["apply_status"] == "failed"
+    assert not is_plugin_enabled("scope_failure_regression", 10001)
