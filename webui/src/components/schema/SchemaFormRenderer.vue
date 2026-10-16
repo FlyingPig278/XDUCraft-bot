@@ -31,5 +31,5 @@ function update(value: unknown): void {
 
 <style scoped>
 .schema-form { min-width: 0; width: 100%; overflow-wrap: anywhere; }
-.schema-form :deep(.n-form-item-blank), .schema-form :deep(.n-input-number), .schema-form :deep(.n-select) { min-width: 0; width: 100%; }
+.schema-form :deep(.n-form-item-blank), .schema-form :deep(.n-input), .schema-form :deep(.n-input-number), .schema-form :deep(.n-select) { min-width: 0; width: 100%; }
 </style>

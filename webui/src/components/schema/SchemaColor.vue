@@ -28,5 +28,5 @@ function pick(event: Event): void {
 <style scoped>
 .color-control { display: flex; align-items: center; gap: 10px; min-width: 0; width: 100%; }
 .color-control input[type='color'] { flex: 0 0 38px; width: 38px; height: 32px; padding: 2px; border: 1px solid #8886; border-radius: 4px; background: transparent; cursor: pointer; }
-.color-control :deep(.n-input) { min-width: 0; }
+.color-control :deep(.n-input) { min-width: 0; flex: 1 1 auto; }
 </style>

@@ -71,9 +71,9 @@ function itemTitle(value: unknown, index: number): string {
     <template v-else>
       <NCard v-for="(item, index) in modelValue" :key="keys[index]" size="small" :title="itemTitle(item, index)">
         <div class="list-actions">
-          <NButton size="tiny" :disabled="context.readonly || index === 0" @click="move(index, -1)">上移</NButton>
-          <NButton size="tiny" :disabled="context.readonly || index === modelValue.length - 1" @click="move(index, 1)">下移</NButton>
-          <NButton size="tiny" type="error" :disabled="context.readonly || (schema.minItems !== undefined && modelValue.length <= schema.minItems)" @click="remove(index)">删除</NButton>
+          <NButton size="tiny" :disabled="context.readonly || index === 0" :aria-label="`上移第 ${index + 1} 项`" @click="move(index, -1)">上移</NButton>
+          <NButton size="tiny" :disabled="context.readonly || index === modelValue.length - 1" :aria-label="`下移第 ${index + 1} 项`" @click="move(index, 1)">下移</NButton>
+          <NButton size="tiny" type="error" :disabled="context.readonly || (schema.minItems !== undefined && modelValue.length <= schema.minItems)" :aria-label="`删除第 ${index + 1} 项`" @click="remove(index)">删除</NButton>
         </div>
         <NCollapse v-if="isObjectList">
           <NCollapseItem title="编辑内容" :name="index">
@@ -95,5 +95,7 @@ function itemTitle(value: unknown, index: number): string {
 .schema-list { display: flex; flex-direction: column; gap: 12px; width: 100%; min-width: 0; }
 .list-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .list-count { font-size: 12px; opacity: .7; margin: 0; }
+.schema-list :deep(.n-card) { min-width: 0; width: 100%; }
+.schema-list :deep(.n-card__content) { min-width: 0; }
 .schema-list :deep(.n-card-header__main) { overflow-wrap: anywhere; min-width: 0; }
 </style>

@@ -54,13 +54,13 @@ function move(index: number, offset: number): void {
         </div>
         <NSpace size="small">
           <NButton size="tiny" :disabled="context.readonly || itemSchema.readOnly || Boolean(itemSchema['x-ui-readonly'])" @click="edit(index)">编辑</NButton>
-          <NButton size="tiny" :disabled="context.readonly || index === 0" @click="move(index, -1)">↑</NButton>
-          <NButton size="tiny" :disabled="context.readonly || index === modelValue.length - 1" @click="move(index, 1)">↓</NButton>
+          <NButton size="tiny" :disabled="context.readonly || index === 0" :aria-label="`上移第 ${index + 1} 项`" @click="move(index, -1)">↑</NButton>
+          <NButton size="tiny" :disabled="context.readonly || index === modelValue.length - 1" :aria-label="`下移第 ${index + 1} 项`" @click="move(index, 1)">↓</NButton>
           <NButton size="tiny" type="error" :disabled="context.readonly || (schema.minItems !== undefined && modelValue.length <= schema.minItems)" @click="remove(index)">删除</NButton>
         </NSpace>
       </div>
       <div v-if="!context.readonly" class="primitive-create">
-        <NInput v-model:value="draft" :input-props="schema['x-ui-widget'] === 'id-list' ? { inputmode: 'numeric' } : undefined" :maxlength="itemSchema.maxLength" :placeholder="editing === null ? itemSchema.title || '输入新项目' : '编辑所选项目'" @keydown.enter.prevent="commit" />
+        <NInput v-model:value="draft" :input-props="{ ...(schema['x-ui-widget'] === 'id-list' ? { inputmode: 'numeric' } : {}), 'aria-label': editing === null ? (itemSchema.title || '输入新项目') : '编辑所选项目' }" :maxlength="itemSchema.maxLength" :placeholder="editing === null ? itemSchema.title || '输入新项目' : '编辑所选项目'" @keydown.enter.prevent="commit" />
         <NSpace><NButton :disabled="!canCommit" @click="commit">{{ editing === null ? '添加' : '更新' }}</NButton><NButton v-if="editing !== null" @click="editing = null; draft = ''">取消编辑</NButton></NSpace>
       </div>
       <p class="list-help">{{ modelValue.length }} 项<span v-if="schema.minItems !== undefined">，最少 {{ schema.minItems }}</span><span v-if="schema.maxItems !== undefined">，最多 {{ schema.maxItems }}</span><span v-if="schema.uniqueItems">；项目不可重复</span></p>
@@ -71,7 +71,7 @@ function move(index: number, offset: number): void {
 <style scoped>
 .primitive-list { display: flex; flex-direction: column; gap: 10px; width: 100%; min-width: 0; }
 .primitive-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; justify-content: space-between; }
-.primitive-value { min-width: 0; max-width: 100%; }
+.primitive-value { min-width: 0; max-width: 100%; flex: 1 1 auto; }
 .primitive-value :deep(.n-tag) { max-width: 100%; height: auto; min-height: 28px; white-space: normal; overflow-wrap: anywhere; }
 .primitive-create { display: flex; flex-direction: column; gap: 8px; }
 .list-help, .item-error { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
