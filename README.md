@@ -135,7 +135,7 @@ nb run
 配置核心由独立的 `xducraft_bot.shared.configuration` 与 `config_store` 实现，完全解耦于 WebUI。
 
 ### 1. 数据持久化与平滑迁移
-- **存储介质**：SQLite 数据库 `xducraft_bot/shared/data/configuration.sqlite3`，启用 WAL 模式配合单进程事务锁与忙等待重试（`PRAGMA busy_timeout=5000`）。
+- **存储介质**：SQLite 数据库（默认旧布局为 `xducraft_bot/shared/data/configuration.sqlite3`，配置 `XDUCRAFT_DATA_DIR` 时为 `<ROOT>/core/configuration.sqlite3`，亦受 `XDUCRAFT_CONFIG_DB` 覆盖），启用 WAL 模式配合单进程事务锁与忙等待重试（`PRAGMA busy_timeout=5000`）。
 - **表结构划分**：
   - `config_documents` 表：存储既有业务整表/命名空间配置（如 MC 状态、关键词、词云、反撤回、猪猪图等文档）。首次启动从历史 JSON 单次迁移导入。
   - `config_values` 表：存储通过 `register_config` 接入的原生模型（记录 `desired`、`applied`、`status`、`error` 与 `revision`）。
@@ -173,6 +173,53 @@ nb run
 - 敏感配置（如邀请码 API 密钥）声明为 `SecretStr`、`writeOnly` 或 `x-ui-secret`。
 - API 响应中脱敏，在 `meta.secret_fields` 中返回布尔标记指示服务端是否已配置，正文中不返回明文字符串。
 - 保存表单时未修改的凭据字段不回传，提交空字符串 `""` 表示明确清空。审计日志中严禁记录敏感明文。
+
+---
+## 🗄️ 运行时数据布局与离线迁移（阶段 1）
+
+### 1. 独立运行目录与环境变量 (`XDUCRAFT_DATA_DIR`)
+- **运行目录环境变量**：`XDUCRAFT_DATA_DIR` 是进程级环境变量。若启用独立数据根，**必须在加载任何插件前设置为绝对路径**，且**严禁与机器人安装代码包目录发生包含或重叠**；未设置时完全保留旧源码内目录结构，**当前阶段不会自动切换用户现有部署**。
+- **纯标准库读取约束**：路径解析助手为无外部依赖的标准库实现，直接读取 `os.environ`。**仅在 `.env` 中写入无法确保在插件模块导入前生效**，必须在启动进程前于操作系统或系统服务中显式设置（如 Linux `export` 或 Windows PowerShell `$env:`）。
+- **新运行时数据布局**：
+  - `<ROOT>/core/`：核心配置与共享数据（`configuration.sqlite3`、`deployment_overrides.json` 等）。
+  - `<ROOT>/plugins/<plugin_key>/`：各业务插件持久化数据（如 `anti_recall`、`wordcloud`、`keyword` 等；内部 `images/`、`avatars/` 等原有子目录保持不变）。
+  - `<ROOT>/cache/mc_status/`：运行期状态缓存。
+  - *注：字体、静态素材（`resources/`）及 WebUI 前端产物不在此轮外部移动范围。*
+- **配置数据库优先级**：显式构造参数 `database(path)` > 环境变量 `XDUCRAFT_CONFIG_DB` > `<ROOT>/core/configuration.sqlite3`（旧布局下为 `xducraft_bot/shared/data/configuration.sqlite3`）。设置外部数据根不会覆盖已显式指定的外置配置库。
+
+### 2. 离线快照迁移与恢复工具 (`scripts/migrate_runtime_data.py`)
+- **离线操作约束**：运行迁移或恢复前**必须彻底停止 NoneBot 机器人及所有写进程**。工具不会自动终止运行中服务，亦无法判定是否有后台写入；跨 SQLite 数据库、JSON 配置及多媒体文件的一致性严格依赖停机离线。
+- **SQLite 事务备份保障**：工具在离线状态下将主库及 WAL 文件私有复制至临时区，再调用 `sqlite3.backup()` 执行事务备份并校验完整性，自动合并已提交事务；**不要把仅复制主库文件或复制 `.shm` 共享内存文件视为一致性备份方案**。
+- **元数据清单与凭据安全**：快照根目录包含清单文件 `.xducraft-runtime-data.json`，仅收录相对路径、文件大小、SHA-256 摘要与版本元数据，不包含配置值与敏感明文；但快照本身可能包含历史文件中的明文凭据，需置于受控目录妥善保管。
+- **目标路径要求**：执行命令前，**目标目录的父目录必须已存在，目标目录本身必须不存在**；工具拒绝软链接与重解析点。
+- **CLI 命令与操作规范（在项目仓库根目录下执行，PowerShell 示例）**：
+  - **从旧源码布局制作新快照**：
+    ```powershell
+    python scripts/migrate_runtime_data.py migrate --source "C:\bot\XDUCraft-bot" --destination "C:\bot\snapshots\v1"
+    ```
+    *说明：两种 `--source-layout`（`legacy` 与 `runtime`）均支持 `--config-db`。迁移工具检查的是当前终端自身继承的 `os.environ`，无法主动探测已停止实例的环境。无论哪种模式，若当前终端继承了 `XDUCRAFT_CONFIG_DB`，工具均强制要求显式传入 `--config-db "..."`；即使未继承，操作者也必须核实源实例实际使用的配置库（如 `--config-db "C:\db\configuration.sqlite3"`），绝不能靠默认文件存在来猜测。显式传入的数据库统一归档为快照中的 `core/configuration.sqlite3` 并替换既有核心库与侧车文件（恢复时写入旧布局默认位置，不修改外部环境）。*
+  - **幂等验证与防冲突**：对相同源与目标重复执行迁移时，工具在临时区根据源重新构建候选快照，**仅当当前源重新生成的快照与既有目标完全匹配时返回 `already-complete`**；若源发生变动或目标被篡改则报错拒绝。
+  - **导出活动运行副本并手动启用**：
+    制作快照后请保留该独立冷备份，**切勿直接将唯一的验证快照作为活动运行根**。可从快照目录为活动环境制作独立的工作副本（若需显式指定库，应选择冷备份内的 `"C:\bot\snapshots\v1\core\configuration.sqlite3"`，切勿误指向当前活跃运行库）：
+    ```powershell
+    python scripts/migrate_runtime_data.py migrate --source-layout runtime --source "C:\bot\snapshots\v1" --destination "C:\bot\runtime_data"
+    ```
+    后续若计划切换，需经审阅后由管理员手动设置环境变量（**当前阶段尚未切换现有部署**）：
+    ```powershell
+    $env:XDUCRAFT_DATA_DIR = "C:\bot\runtime_data"
+    ```
+    *重要提示：若原环境配置了 `XDUCRAFT_CONFIG_DB` 且仍指向旧路径，该外置配置库**不会被新的 `XDUCRAFT_DATA_DIR` 覆盖**。启用新 Root 时必须审阅并同步决定该变量是指向工作副本内的 `core/configuration.sqlite3` 还是继续使用独立外置库，切不可误以为仅设置数据根就已完成全部切换。*
+  - **为已产生新写入的运行目录重新快照**：
+    ```powershell
+    python scripts/migrate_runtime_data.py migrate --source-layout runtime --source "C:\bot\runtime_data" --destination "C:\bot\snapshots\v2"
+    ```
+    *若活动运行环境使用了外置配置库，重新快照时同样需传入实际活跃的外置库路径（`--config-db "..."`），以确保包含最新配置写入。*
+  - **恢复至全新旧布局根**：
+    ```powershell
+    python scripts/migrate_runtime_data.py restore --source "C:\bot\snapshots\v1" --destination "C:\bot\restored_legacy"
+    ```
+    *`restore` 仅将数据安全恢复至全新未占用的旧布局根目录，不会覆盖既有旧仓库、不恢复代码/依赖/`.env`，亦不会代为修改外置配置库的环境变量设置。*
+- **回退方案**：生产切换后的回退**绝不能仅靠 `git revert` 代码**；若切换后运行目录已产生新写入，必须先通过 `--source-layout runtime` 对最新运行目录完整快照并校验，再根据需要恢复至旧布局或安全切回。
 
 ---
 
@@ -387,7 +434,7 @@ async def set_welcome_text(group_id: int, text: str) -> None:
   **A**: 说明在此期间配置已被并发修改。为防止数据覆盖，系统已自动保留您当前的表单草稿，请确认无误后刷新页面获取最新配置再行提交。
 
 - **Q: 运行期间 SQLite 出现锁定或权限异常？**  
-  **A**: 请确保运行用户对 `xducraft_bot/shared/data/` 目录拥有读写权限；备份数据库时请连带备份 `.sqlite3-wal` 与 `.sqlite3-shm` 文件，或使用标准 SQLite 导出机制。
+  **A**: 请确保运行用户对数据目录拥有读写权限；不要把仅复制主库文件或复制 `.sqlite3-shm` 视为一致性备份方案，应在停止写进程后通过 `scripts/migrate_runtime_data.py` 制作离线快照，或使用 SQLite 标准备份 API（`backup()`）安全导出。
 
 - **Q: 全局设置中的“高级信息”面板是做什么的？**  
   **A**: “高级信息”是全局运行期和启动期配置的只读诊断折叠面板（群级表单不提供此项）。它以只读方式对比当前生效值、下次启动值/已保存值与基础默认值，且所有敏感机密字段均已脱敏处理。该面板加载后稳定存在且默认收起，用户对其展开或折叠的操作状态在同一资源编辑期间会持续保持，不会因字段变更或恢复默认而异常闪烁。
