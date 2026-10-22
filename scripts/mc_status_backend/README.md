@@ -22,9 +22,8 @@
 3. 启动服务：
    - `uvicorn scripts.mc_status_backend.app:app --host 0.0.0.0 --port 8099`
 
-也可以只复制 `app.py` 到目标机器后使用 `uvicorn app:app ...` 启动；此时会自动
-使用 `mcstatus` 兼容实现。放在完整仓库中运行时则复用机器人的原始状态协议实现，
-能保留更完整的 MOTD 和玩家样本信息。
+也可以只复制 `app.py` 到目标机器后使用 `uvicorn app:app ...` 进行单文件轻量启动；此时若环境未安装 Core，会自动回退使用 `mcstatus` 兼容实现（单文件方式仍完整支持）。
+共享协议实现（`xducraft_bot.shared.mc_protocol`）现来自已安装的 Core 包，不再仅因完整仓库位于 `sys.path` 就直接找到。只有在当前环境中安装了 Core 才会复用共享原始状态协议实现，以保留更完整的 MOTD 与玩家样本信息；在完整仓库按 `pip install -r requirements.txt` 安装自然满足该条件。
 
 ## 机器人配置建议
 

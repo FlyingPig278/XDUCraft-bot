@@ -20,8 +20,7 @@
 ---
 
 > [!NOTE]  
-> 本项目采用独立声明式配置核心（`xducraft_bot.shared.configuration`）配合 Naive UI 本地管理面板。业务群参数采用独立快照，共享与启动参数单独管理；业务总开关与群开关默认关闭，历史数据通过确定性单次迁移完成固化。
----
+> 本项目核心能力已抽离为独立公共包 `packages/core`（发行名 `nonebot-plugin-xducraft-core`，生命周期入口 `xducraft_config`，SDK 命名空间 `xducraft_bot.shared.*`），配合 Naive UI 本地管理面板。业务插件与前端目前仍留在本仓库未独立分发；业务群参数采用独立快照，共享与启动参数单独管理；业务总开关与群开关默认关闭，历史数据通过确定性单次迁移完成固化。
 
 ## 🚀 快速开始
 
@@ -43,9 +42,10 @@ venv\Scripts\activate
 # Linux / macOS:
 source venv/bin/activate
 
-# 安装机器人 Python 依赖
+# 安装机器人 Python 依赖（通过可编辑模式引入 packages/core[onebot]）
 pip install -r requirements.txt
 ```
+> 若此前拉取过旧版本源码，请重新执行 `pip install -r requirements.txt`，以确保在虚拟环境中通过可编辑模式安装独立的 `packages/core` 核心包。业务插件与前端管理面板仍作为源码在主仓库中运行。
 
 ### 3. 构建管理前端产物
 ```bash
@@ -132,7 +132,7 @@ nb run
 
 ## ⚙️ 声明式配置核心系统
 
-配置核心由独立的 `xducraft_bot.shared.configuration` 与 `config_store` 实现，完全解耦于 WebUI。
+配置核心已独立为 `nonebot-plugin-xducraft-core`（位于 `packages/core`，NoneBot 加载入口为 `xducraft_config`，提供 `xducraft_bot.shared.*` 命名空间），完全解耦于 WebUI 与特定适配器。
 
 ### 1. 数据持久化与平滑迁移
 - **存储介质**：SQLite 数据库（默认旧布局为 `xducraft_bot/shared/data/configuration.sqlite3`，配置 `XDUCRAFT_DATA_DIR` 时为 `<ROOT>/core/configuration.sqlite3`，亦受 `XDUCRAFT_CONFIG_DB` 覆盖），启用 WAL 模式配合单进程事务锁与忙等待重试（`PRAGMA busy_timeout=5000`）。
@@ -177,16 +177,29 @@ nb run
 ---
 ## 🗄️ 运行时数据布局与离线迁移（阶段 1）
 
-### 1. 独立运行目录与环境变量 (`XDUCRAFT_DATA_DIR`)
-- **运行目录环境变量**：`XDUCRAFT_DATA_DIR` 是进程级环境变量。若启用独立数据根，**必须在加载任何插件前设置为绝对路径**，且**严禁与机器人安装代码包目录发生包含或重叠**；未设置时完全保留旧源码内目录结构，**当前阶段不会自动切换用户现有部署**。
-- **纯标准库读取约束**：路径解析助手为无外部依赖的标准库实现，直接读取 `os.environ`。**仅在 `.env` 中写入无法确保在插件模块导入前生效**，必须在启动进程前于操作系统或系统服务中显式设置（如 Linux `export` 或 Windows PowerShell `$env:`）。
-- **新运行时数据布局**：
+### 1. 运行数据目录决策与环境变量 (`XDUCRAFT_DATA_DIR`)
+- **显式运行目录环境变量 (`XDUCRAFT_DATA_DIR`)**：
+  - 属于启动前进程级环境变量。若启用外部数据根，**必须在启动前设置为非空绝对路径**，且**严禁与机器人已安装代码包目录发生包含或重叠**（系统启动前执行绝对路径解析与代码重叠安全校验，重叠将直接阻断）。
+  - **启动前生效约束**：路径解析直接读取 `os.environ`。**仅在 `.env` 中写入无法确保在插件模块导入前生效**，必须在启动进程前于操作系统或系统服务中显式设置（如 Linux `export` 或 Windows PowerShell `$env:`）。显式指定优先于自动模式。
+- **未显式设置时的自动路径决策（数据模式合约）**：
+  - **自动旧宿主识别（无歧义才保留）**：
+    - 若未设置 `XDUCRAFT_DATA_DIR`，且检测到唯一存在的旧版 `xducraft_bot/shared/data` 目录；
+    - 或检测到旧平铺源码宿主标记（非 SDK 自身命名空间根目录下包含 `plugins` 目录且父目录存在 `pyproject.toml`，即使是全新的源码检出且 `shared/data` 从未创建，亦精准保留预期的旧版源码内目录）；
+    - 若检测到多个相互冲突的旧宿主候选路径，系统抛出 `DataPathError` 并拒绝猜测，要求管理员显式配置 `XDUCRAFT_DATA_DIR`。
+  - **全新独立安装（无旧宿主标记）**：
+    - 在通过 pip / wheel 独立安装 Core 且无上述源码宿主标记的纯净环境中，自动回退至操作系统标准用户数据目录（依赖 `platformdirs.user_data_path('xducraft', appauthor=False)`），绝不向 site-packages 等安装代码包目录写入运行时数据。
+    - 默认 OS 根目录同样严格解析并校验代码包重叠。
+    - **注意**：切勿将“未设置数据根”一律等同于 OS 用户目录/AppData，亦不可将 fresh 源码检出与全新独立安装 Core 混为一谈。
+- **配置数据库优先级与数据隔离**：
+  - 优先级为：显式构造参数 `database(path)` > 环境变量 `XDUCRAFT_CONFIG_DB` > 选定模式（shared legacy / core external）下的默认库文件。
+  - 外置配置库仅接管配置数据库本身，**不会自动搬迁、重定向或覆盖其他业务持久化数据**（聊天记录、反撤回媒体等）。
+- **外部数据根布局结构**（当指向外部根时）：
   - `<ROOT>/core/`：核心配置与共享数据（`configuration.sqlite3`、`deployment_overrides.json` 等）。
-  - `<ROOT>/plugins/<plugin_key>/`：各业务插件持久化数据（如 `anti_recall`、`wordcloud`、`keyword` 等；内部 `images/`、`avatars/` 等原有子目录保持不变）。
+  - `<ROOT>/plugins/<plugin_key>/`：各业务插件持久化数据（如 `anti_recall`、`wordcloud`、`keyword` 等；内部原有子目录保持不变）。
   - `<ROOT>/cache/mc_status/`：运行期状态缓存。
   - *注：字体、静态素材（`resources/`）及 WebUI 前端产物不在此轮外部移动范围。*
-- **配置数据库优先级**：显式构造参数 `database(path)` > 环境变量 `XDUCRAFT_CONFIG_DB` > `<ROOT>/core/configuration.sqlite3`（旧布局下为 `xducraft_bot/shared/data/configuration.sqlite3`）。设置外部数据根不会覆盖已显式指定的外置配置库。
-
+- **离线迁移工具约束**：
+  - `scripts/migrate_runtime_data.py` 快照与迁移工具保持独立，**系统绝不进行静默或自动迁移**。切换数据根须由管理员在停机状态下显式执行迁移。
 ### 2. 离线快照迁移与恢复工具 (`scripts/migrate_runtime_data.py`)
 - **离线操作约束**：运行迁移或恢复前**必须彻底停止 NoneBot 机器人及所有写进程**。工具不会自动终止运行中服务，亦无法判定是否有后台写入；跨 SQLite 数据库、JSON 配置及多媒体文件的一致性严格依赖停机离线。
 - **SQLite 事务备份保障**：工具在离线状态下将主库及 WAL 文件私有复制至临时区，再调用 `sqlite3.backup()` 执行事务备份并校验完整性，自动合并已提交事务；**不要把仅复制主库文件或复制 `.shm` 共享内存文件视为一致性备份方案**。
@@ -225,17 +238,25 @@ nb run
 
 ## 💻 插件接入指南（Pydantic 协议最小示例）
 
-业务插件通过 Pydantic 2 声明配置模型，并通过配置核心注册，即可自动接入统一存储与 WebUI 表单，无需编写前端代码：
+业务插件通过继承 `ConfigModel` 并调用 `register_config` 注册原生 Pydantic 2 配置模型，即可自动接入统一存储与 WebUI 表单，无需编写前端代码。
+
+> [!IMPORTANT]  
+> - **必须先 require 再导入使用 SDK**：业务插件在模块加载时应优先调用 `require("xducraft_config")`，确保门禁预处理器与核心存储生命周期生效。
+> - **独立存储不修改 NoneBot 配置缓存**：Core 原生模型配置持久化在 SQLite 中，各群与全局具备独立的生效快照，**绝不修改或污染 NoneBot 的 `get_plugin_config` 全局配置缓存**。业务中读取和更新请统一使用 Core 提供的 `get_config` 与 `update_config`，不要混用 `get_plugin_config`。
 
 ```python
 from typing import Optional
-from nonebot.plugin import PluginMetadata
+from nonebot.plugin import PluginMetadata, require
 from pydantic import Field
+
+# 1. 业务插件必须在导入使用 SDK 声明前先 require 核心生命周期
+require("xducraft_config")
+
 from xducraft_bot.shared.configuration import (
     PROTOCOL_KEY, ConfigModel, register_config, get_config, update_config, is_plugin_enabled,
 )
 
-# 1. 继承 ConfigModel 定义配置模型
+# 2. 继承 ConfigModel 定义配置模型
 class NoticeConfig(ConfigModel):
     # 群级独立字段：示范群专属参数，不在全局表单出现；新群默认采用代码声明值
     welcome_text: str = Field(
@@ -261,7 +282,7 @@ class NoticeConfig(ConfigModel):
         },
     )
 
-# 2. 注册原生配置（scopes 支持 ("global", "group")）
+# 3. 注册原生配置（scopes 支持 ("global", "group")）
 # 可选传入 on_change 回调：def callback(context, old_model, new_model)
 DECLARATION = register_config(
     "my_notice",
@@ -270,7 +291,7 @@ DECLARATION = register_config(
     scopes=("global", "group"),
 )
 
-# 3. 将协议声明挂载至 PluginMetadata.extra（供 WebUI 动态发现）
+# 4. 将协议声明挂载至 PluginMetadata.extra（供 WebUI 动态发现与生命周期门禁识别）
 __plugin_meta__ = PluginMetadata(
     name="群通知",
     description="演示接入声明式配置协议",
@@ -278,15 +299,14 @@ __plugin_meta__ = PluginMetadata(
     config=NoticeConfig,
     extra={PROTOCOL_KEY: DECLARATION},
 )
-
-# 4. 业务代码中读取与异步更新配置
+# 5. 业务代码中读取与异步更新配置
 def get_welcome_text(group_id: int) -> Optional[str]:
     """读取本群生效配置；仅当插件全局总关与本群开关均开启时才返回业务文本。"""
     # 消息预处理器会自动拦截 Matcher，主动发送或后台任务须显式自检双重门禁
     if not is_plugin_enabled("my_notice", group_id):
         return None
     # 群级读取返回完整独立的 NoticeConfig 实例，共享字段结合全局生效值
-    config: NoticeConfig = get_config("my_notice", "group", group_id)
+    config: NoticeConfig = get_config("my_notice", scope="group", scope_id=group_id)
     return config.welcome_text
 
 async def set_welcome_text(group_id: int, text: str) -> None:
