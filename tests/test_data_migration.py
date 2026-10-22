@@ -171,6 +171,57 @@ def test_runtime_source_generates_a_fresh_manifest_after_new_writes(tmp_path, mo
     assert [item["path"] for item in manifest["files"]].count(MANIFEST_NAME) == 0
 
 
+def test_runtime_layout_requires_and_honors_explicit_external_config(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    stale_db = runtime / "core/configuration.sqlite3"
+    stale_connection = _open_wal_database(stale_db, "stale")
+    stale_connection.close()
+    external_db = tmp_path / "runtime-external/configuration.sqlite3"
+    external_connection = _open_wal_database(external_db, "active")
+    monkeypatch.setenv("XDUCRAFT_CONFIG_DB", str(external_db))
+
+    def file_contents(root):
+        return {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file()
+        }
+
+    runtime_before = file_contents(runtime)
+    external_before = file_contents(external_db.parent)
+    assert set(runtime_before) == {"core/configuration.sqlite3"}
+    assert "configuration.sqlite3-wal" in external_before
+    ambiguous = tmp_path / "runtime-ambiguous"
+    with pytest.raises(MigrationError, match="--config-db"):
+        migrate(runtime, ambiguous, source_layout="runtime")
+    assert not ambiguous.exists()
+
+    snapshot = tmp_path / "runtime-snapshot"
+    try:
+        assert migrate(
+            runtime, snapshot, source_layout="runtime", config_db=external_db,
+        ) == "migrated"
+        assert migrate(
+            runtime, snapshot, source_layout="runtime", config_db=external_db,
+        ) == "already-complete"
+        assert file_contents(runtime) == runtime_before
+        assert file_contents(external_db.parent) == external_before
+
+        restored = tmp_path / "runtime-restored"
+        assert restore(snapshot, restored) == "restored"
+        for database in (
+            snapshot / "core/configuration.sqlite3",
+            restored / "xducraft_bot/shared/data/configuration.sqlite3",
+        ):
+            copied = sqlite3.connect(str(database))
+            try:
+                assert copied.execute("SELECT value FROM records").fetchall() == [("active",)]
+            finally:
+                copied.close()
+    finally:
+        external_connection.close()
+
+
 def test_rejects_ambiguous_or_unknown_legacy_sources(tmp_path, monkeypatch):
     legacy = tmp_path / "legacy"
     config_db = legacy / "xducraft_bot/shared/data/configuration.sqlite3"

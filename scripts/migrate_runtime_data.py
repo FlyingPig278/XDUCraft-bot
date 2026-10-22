@@ -229,7 +229,7 @@ def _validate_plugin_data_roots(project_root: Path) -> None:
             raise MigrationError("unknown legacy plugin data directory: {}".format(entry.name))
 
 
-def _legacy_inventory(project_root: Path, config_db: Optional[PathLike]) -> _Inventory:
+def _legacy_inventory(project_root: Path) -> _Inventory:
     _validate_plugin_data_roots(project_root)
     parts: List[_Inventory] = []
     shared_data = project_root / "xducraft_bot" / "shared" / "data"
@@ -239,30 +239,35 @@ def _legacy_inventory(project_root: Path, config_db: Optional[PathLike]) -> _Inv
         parts.append(_scan_tree(legacy, PurePosixPath("plugins") / key))
     image_cache = project_root / "xducraft_bot" / "plugins" / "xducraft_mc_status" / "image_cache"
     parts.append(_scan_tree(image_cache, PurePosixPath("cache") / "mc_status"))
-    inventory = _merge_inventory(parts)
+    return _merge_inventory(parts)
 
+
+def _apply_configuration_override(
+    inventory: _Inventory,
+    config_db: Optional[PathLike],
+) -> _Inventory:
     env_config = os.environ.get("XDUCRAFT_CONFIG_DB")
     if env_config is not None and config_db is None:
         raise MigrationError(
             "XDUCRAFT_CONFIG_DB is set; pass --config-db explicitly instead of relying on process environment"
         )
-    if config_db is not None:
-        config_path = _absolute_path(config_db, "config-db")
-        _check_path_chain(config_path, "config-db")
-        if not config_path.is_file() or _is_reparse(config_path):
-            raise MigrationError("config-db must be an existing ordinary file")
-        if not _is_sqlite(config_path):
-            raise MigrationError("config-db is not a SQLite database")
-        target = "core/configuration.sqlite3"
-        replaced_paths = {target + suffix for suffix in ("",) + _SIDECAR_SUFFIXES}
-        inventory.files = [
-            item for item in inventory.files
-            if item.relative.as_posix() not in replaced_paths
-        ]
-        inventory.files.append(_SourceFile(config_path, PurePosixPath(target)))
-        inventory.files.sort(key=lambda item: item.relative.as_posix())
-    if not inventory.files and not inventory.directories:
-        raise MigrationError("no recognized legacy runtime data was found")
+    if config_db is None:
+        return inventory
+
+    config_path = _absolute_path(config_db, "config-db")
+    _check_path_chain(config_path, "config-db")
+    if not config_path.is_file() or _is_reparse(config_path):
+        raise MigrationError("config-db must be an existing ordinary file")
+    if not _is_sqlite(config_path):
+        raise MigrationError("config-db is not a SQLite database")
+    target = "core/configuration.sqlite3"
+    replaced_paths = {target + suffix for suffix in ("",) + _SIDECAR_SUFFIXES}
+    inventory.files = [
+        item for item in inventory.files
+        if item.relative.as_posix() not in replaced_paths
+    ]
+    inventory.files.append(_SourceFile(config_path, PurePosixPath(target)))
+    inventory.files.sort(key=lambda item: item.relative.as_posix())
     return inventory
 
 
@@ -309,8 +314,6 @@ def _runtime_inventory(runtime_root: Path) -> _Inventory:
         _scan_tree(cache, PurePosixPath("cache")),
     ]
     inventory = _merge_inventory(parts)
-    if not inventory.files and not inventory.directories:
-        raise MigrationError("no runtime data was found")
     return inventory
 
 
@@ -593,8 +596,6 @@ def migrate(
     source_path, destination_path = _validate_endpoints(source, destination)
     if source_layout not in ("legacy", "runtime"):
         raise MigrationError("source_layout must be 'legacy' or 'runtime'")
-    if source_layout == "runtime" and config_db is not None:
-        raise MigrationError("config_db applies only to a legacy source layout")
 
     existing_manifest: Optional[Mapping[str, object]] = None
     if _lexists(destination_path):
@@ -603,10 +604,13 @@ def migrate(
         existing_manifest = _validated_manifest(destination_path)
 
     inventory = (
-        _legacy_inventory(source_path, config_db)
+        _legacy_inventory(source_path)
         if source_layout == "legacy"
         else _runtime_inventory(source_path)
     )
+    inventory = _apply_configuration_override(inventory, config_db)
+    if not inventory.files and not inventory.directories:
+        raise MigrationError("no recognized runtime data was found")
     destination_real = _resolved(destination_path)
     for item in inventory.files:
         if _inside(_resolved(item.source), destination_real):
@@ -702,7 +706,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     migrate_parser.add_argument(
         "--config-db",
-        help="absolute active external configuration SQLite database for a legacy source",
+        help="absolute authoritative configuration SQLite database for either source layout",
     )
     restore_parser = subparsers.add_parser("restore", help="restore a verified snapshot to a new legacy-layout root", epilog=warning)
     restore_parser.add_argument("--source", required=True, help="absolute verified runtime-layout snapshot")
