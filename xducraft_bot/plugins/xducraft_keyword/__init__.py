@@ -20,8 +20,7 @@ from __future__ import annotations
 import re
 import time
 from typing import Dict, List, Optional, Sequence, Tuple
-
-from nonebot import on_command, on_message, on_notice
+from nonebot import on_command, on_message, on_notice, require
 from nonebot.adapters.onebot.v11 import (
     Bot,
     GroupIncreaseNoticeEvent,
@@ -36,6 +35,8 @@ from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
 from nonebot.typing import T_State
+
+require("xducraft_config")
 
 from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.configuration import PROTOCOL_KEY

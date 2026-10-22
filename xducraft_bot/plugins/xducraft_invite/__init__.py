@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, Optional
 
-from nonebot import get_driver, on_command, on_message
+from nonebot import get_driver, on_command, on_message, require
 from nonebot.adapters.onebot.v11 import (
     Bot,
     GroupMessageEvent,
@@ -18,6 +18,8 @@ from nonebot.log import logger
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
+
+require("xducraft_config")
 
 from xducraft_bot.shared.onebot import notify_privately
 from xducraft_bot.shared.permissions import can_manage_group, is_superuser

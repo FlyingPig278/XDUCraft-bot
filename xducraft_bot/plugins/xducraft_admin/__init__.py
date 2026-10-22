@@ -5,9 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
-from nonebot import get_driver
+from nonebot import get_driver, require
 from nonebot.log import logger
 from nonebot.plugin import PluginMetadata
+
+require("xducraft_config")
 
 from xducraft_bot.admin.settings import (
     WebAdminSettings,

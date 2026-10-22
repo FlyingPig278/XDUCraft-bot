@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from typing import Optional
 
-from nonebot import on_request
+from nonebot import on_request, require
 from nonebot.adapters.onebot.v11 import Bot, FriendRequestEvent
 from nonebot.log import logger
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
+
+require("xducraft_config")
 
 from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.configuration import PROTOCOL_KEY

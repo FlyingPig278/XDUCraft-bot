@@ -7,10 +7,12 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
-from nonebot import on_command
+from nonebot import on_command, require
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageEvent, PrivateMessageEvent
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
+
+require("xducraft_config")
 
 from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.configuration import PROTOCOL_KEY

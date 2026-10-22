@@ -7,30 +7,24 @@
 
     uvicorn app:app --host 0.0.0.0 --port 8000
 
-协议实现与机器人共用 ``xducraft_bot.shared.mc_protocol``，不再各留一份拷贝。
-单文件部署（只拷这个 app.py 出去）时会自动回退到 ``mcstatus``。
+协议实现来自已安装 Core 包的 ``xducraft_bot.shared.mc_protocol``。
+未安装 Core 的单文件部署仍使用 ``mcstatus``。
 """
 
 from __future__ import annotations
 
 import os
-import sys
 from typing import Any, Dict
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Query
 from mcstatus import JavaServer
 
-# 允许直接从仓库里跑（app.py 在 scripts/mc_status_backend/ 下，往上两级是仓库根）。
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
-
 try:
-    from xducraft_bot.shared import mc_protocol  # type: ignore  # noqa: E402
+    from xducraft_bot.shared import mc_protocol  # type: ignore
 except ModuleNotFoundError:
-    # 兼容旧部署方式：只把 app.py 单独复制到服务器上时没有 xducraft_bot 包，
-    # 仍可通过 mcstatus 返回同一套字段（仓库内运行则始终走共享原始协议实现）。
+    # 单文件部署可不安装 Core；完整仓库按 requirements.txt 安装后复用共享协议。
+    # mcstatus 继续为未安装 Core 的独立后端提供同一套响应字段。
     mc_protocol = None
 
 STATUS_QUERY_TIMEOUT = float(os.getenv("MC_STATUS_BACKEND_TIMEOUT", "3.0"))

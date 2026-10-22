@@ -16,10 +16,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from nonebot import on_command
+from nonebot import on_command, require
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageEvent
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
+
+require("xducraft_config")
 
 from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.permissions import can_manage, can_manage_group, is_superuser

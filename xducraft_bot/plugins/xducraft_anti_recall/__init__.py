@@ -39,6 +39,8 @@ from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
 
+require("xducraft_config")
+
 from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.configuration import PROTOCOL_KEY
 from xducraft_bot.shared.onebot import MAX_FORWARD_NODES, make_node

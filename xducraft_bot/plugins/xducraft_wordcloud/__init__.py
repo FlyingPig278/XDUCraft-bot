@@ -28,6 +28,8 @@ from nonebot.rule import Rule
 from PIL import Image, ImageDraw, ImageFont
 from wordcloud import WordCloud
 
+require("xducraft_config")
+
 from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.configuration import PROTOCOL_KEY
 from xducraft_bot.shared.permissions import is_admin

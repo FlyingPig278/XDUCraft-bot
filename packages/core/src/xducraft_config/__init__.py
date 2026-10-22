@@ -15,8 +15,11 @@ DECLARATION = declare_config(PluginConfiguration(
 ))
 
 __plugin_meta__ = PluginMetadata(
-    name="配置核心", description="独立配置声明、SQLite 存储和插件执行门禁；不依赖网页管理启用。",
-    usage="业务插件声明配置后自动接入。", extra={PROTOCOL_KEY: DECLARATION},
+    name="XDUCraft 配置核心",
+    description="独立的声明式配置、SQLite 存储与插件执行门禁，不依赖 WebUI。",
+    usage='在业务插件导入配置声明前调用 require("xducraft_config")。',
+    type="library",
+    extra={PROTOCOL_KEY: DECLARATION},
 )
 
 
