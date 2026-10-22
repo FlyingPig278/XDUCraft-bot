@@ -7,9 +7,10 @@ from typing import Any, Dict, List
 
 from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.config_store import ConfigDocumentStore
+from xducraft_bot.shared.data_paths import plugin_data_dir
 from xducraft_bot.shared.json_store import as_str
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+DATA_DIR = str(plugin_data_dir("happy_bot", os.path.join(os.path.dirname(__file__), "data")))
 DATA_FILE = os.path.join(DATA_DIR, "emoji_like_config.json")
 DEFAULT_EMOJI_ID = "123"
 

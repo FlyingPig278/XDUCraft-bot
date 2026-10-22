@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Mapping, Optional, Type, TypeVar
 from nonebot.compat import model_dump, type_validate_python
 from pydantic import BaseModel
 
+from .data_paths import shared_data_dir
 from .json_store import JsonStore
 
 T = TypeVar("T", bound=BaseModel)
@@ -25,9 +26,7 @@ DEPLOYMENT_CONFIG_INVALID = "deployment_config_invalid"
 DEPLOYMENT_CONFIG_WRITE_FAILED = "deployment_config_write_failed"
 
 
-DEPLOYMENT_OVERRIDES_PATH = (
-    Path(__file__).resolve().parent / "data" / "deployment_overrides.json"
-)
+DEPLOYMENT_OVERRIDES_PATH = shared_data_dir().resolve() / "deployment_overrides.json"
 
 
 class DeploymentConfigError(RuntimeError):

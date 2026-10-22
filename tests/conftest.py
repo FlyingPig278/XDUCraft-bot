@@ -16,6 +16,8 @@ shutil.copytree(
     ignore=shutil.ignore_patterns("data", "image_cache", "__pycache__"),
 )
 sys.path.insert(0, str(_root))
+os.environ["XDUCRAFT_DATA_DIR"] = str(_root / "runtime-data")
+os.environ["XDUCRAFT_CONFIG_DB"] = str(_root / "runtime-data" / "core" / "configuration.sqlite3")
 
 import nonebot  # noqa: E402
 

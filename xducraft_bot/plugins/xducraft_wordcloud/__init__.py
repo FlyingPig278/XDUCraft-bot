@@ -32,7 +32,7 @@ from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.configuration import PROTOCOL_KEY
 from xducraft_bot.shared.permissions import is_admin
 
-from .data_manager import chat_log_data_manager
+from .data_manager import DEFAULT_DATA_DIR, chat_log_data_manager
 from .configuration import DECLARATION
 
 require("nonebot_plugin_apscheduler")
@@ -155,7 +155,7 @@ def _draw_spaced_text(
 
 
 def _load_random_footer_avatar(avatar_size: int) -> Optional[Image.Image]:
-    avatar_dir = Path(__file__).resolve().parent / "data" / "avatars"
+    avatar_dir = Path(DEFAULT_DATA_DIR) / "avatars"
     if not avatar_dir.exists():
         return None
 
@@ -191,7 +191,7 @@ def _load_random_footer_avatar(avatar_size: int) -> Optional[Image.Image]:
 
 
 def _download_group_avatar_cached(group_id: int, cache_ttl_seconds: int = 86400) -> Optional[Path]:
-    cache_dir = Path(__file__).resolve().parent / "data" / "group_avatar_cache"
+    cache_dir = Path(DEFAULT_DATA_DIR) / "group_avatar_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_file = cache_dir / f"group_{group_id}.png"
 
@@ -264,7 +264,7 @@ def _build_wordcloud_image(group_id: int, output_label: str, words: List[str]) -
     if not words:
         return None
 
-    output_dir = os.path.join(os.path.dirname(__file__), "data", "images")
+    output_dir = os.path.join(DEFAULT_DATA_DIR, "images")
     os.makedirs(output_dir, exist_ok=True)
 
     output_path = os.path.join(output_dir, f"wordcloud_{group_id}_{output_label}.png")

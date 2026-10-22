@@ -25,7 +25,9 @@ from urllib.parse import urlparse
 import httpx
 from nonebot.log import logger
 
-CACHE_DIR = Path(__file__).resolve().parent / "image_cache"
+from xducraft_bot.shared.data_paths import plugin_cache_dir
+
+CACHE_DIR = plugin_cache_dir("mc_status", Path(__file__).resolve().parent / "image_cache")
 CACHE_TTL = 60 * 60
 DOWNLOAD_TIMEOUT = 5.0
 

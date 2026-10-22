@@ -16,9 +16,10 @@ from nonebot.log import logger
 
 from .config_store import ConfigDocumentStore, database
 from .configuration import is_plugin_enabled, owner_of_feature, set_plugin_enabled
+from .data_paths import shared_data_dir
 from .json_store import as_bool
 
-SHARED_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+SHARED_DATA_DIR = str(shared_data_dir())
 FEATURE_STATE_FILE = os.path.join(SHARED_DATA_DIR, "feature_gate.json")
 
 # is_enabled 的判定来源，用于在 /功能 里告诉管理员“为什么是这个值”。

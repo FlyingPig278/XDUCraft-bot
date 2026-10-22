@@ -8,6 +8,8 @@
 
 import os
 
+from xducraft_bot.shared.data_paths import plugin_data_dir
+
 # ==============================================================================
 # 1. 核心路径
 # ==============================================================================
@@ -19,7 +21,7 @@ TEXTURES_PATH = os.path.join(_current_dir, "resources", "textures")
 DEFAULT_SERVER_ICON_PATH = os.path.join(_current_dir, "resources", "images", "default_server_icon.png")
 OFFLINE_SERVER_ICON_PATH = os.path.join(_current_dir, "resources", "images", "offline_server_icon.png")
 FIRE_ICON_PATH = os.path.join(_current_dir, "resources", "images", "fire.png")
-SAVE_IMG_DIR = os.path.join(_current_dir, "data", "images")
+SAVE_IMG_DIR = os.path.join(plugin_data_dir("mc_status", os.path.join(_current_dir, "data")), "images")
 
 # ==============================================================================
 # 2. Minecraft 颜色码

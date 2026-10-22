@@ -7,12 +7,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.config_store import ConfigDocumentStore
+from xducraft_bot.shared.data_paths import plugin_data_dir
 from xducraft_bot.shared.json_store import as_bool, as_str
 
 from .auth_mode import CONFIGURABLE_MODES
 from .constants import DEFAULT_SERVER_PRIORITY
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+DATA_DIR = str(plugin_data_dir("mc_status", os.path.join(os.path.dirname(__file__), "data")))
 DATA_FILE = os.path.join(DATA_DIR, "server_data.json")
 SCHEMA_VERSION_KEY = "__schema_version__"
 

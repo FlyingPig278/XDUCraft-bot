@@ -12,8 +12,10 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Callable, Dict, Generic, Optional, TypeVar
 
+from .data_paths import shared_data_dir
+
 T = TypeVar("T")
-_DEFAULT_DATABASE = str(Path(__file__).parent / "data" / "configuration.sqlite3")
+_DEFAULT_DATABASE = str(shared_data_dir() / "configuration.sqlite3")
 _databases: Dict[str, "ConfigDatabase"] = {}
 _database_lock = RLock()
 _write_identity = ContextVar("configuration_write_identity", default=("plugin", None))

@@ -3,7 +3,9 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+from xducraft_bot.shared.data_paths import plugin_data_dir
+
+DEFAULT_DATA_DIR = str(plugin_data_dir("mc_update", os.path.join(os.path.dirname(__file__), "data")))
 DEFAULT_DATA_FILE = os.path.join(DEFAULT_DATA_DIR, "subscription.json")
 
 

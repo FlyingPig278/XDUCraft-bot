@@ -10,7 +10,9 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Iterable, Optional
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+from xducraft_bot.shared.data_paths import plugin_data_dir
+
+DATA_DIR = str(plugin_data_dir("invite", os.path.join(os.path.dirname(__file__), "data")))
 DB_FILE = os.path.join(DATA_DIR, "invitations.db")
 LEASE_TTL_SECONDS = 180
 
