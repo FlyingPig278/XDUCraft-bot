@@ -61,6 +61,11 @@ def _normalize_state(raw: Any) -> Dict[str, Any]:
 _store = ConfigDocumentStore("feature_gate", _default_state, _normalize_state, legacy_path=FEATURE_STATE_FILE)
 
 
+def migrate_legacy_state() -> Dict[str, Any]:
+    """Import the former feature-gate JSON once, then use SQLite only."""
+    return _store.load()
+
+
 @dataclass
 class Feature:
     """一个可被群管理员开关的功能。

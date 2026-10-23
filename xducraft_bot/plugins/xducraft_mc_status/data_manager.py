@@ -160,6 +160,11 @@ _store = ConfigDocumentStore(
 )
 
 
+def migrate_legacy_config() -> Dict[str, Any]:
+    """Eagerly establish the one-way legacy JSON import at process startup."""
+    return _store.load()
+
+
 def configure_storage(database_path: str, *, legacy_path: Optional[str] = None) -> None:
     """注入隔离配置数据库；旧 JSON 只允许用作首次导入来源。"""
     global _store

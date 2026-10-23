@@ -25,7 +25,9 @@ def bind_configuration(manager):
     return PluginConfiguration(
         key="pig_bot", name="猪猪图", resources={
             "group": ConfigResource(PigGroup, read_group, write_group),
-        }, feature_keys=("pig_query", "pig_auto_push"), list_groups=manager.list_configured_groups,
+        }, feature_keys=("pig_query", "pig_auto_push"),
+        list_groups=manager.list_configured_groups,
+        migrate_legacy=manager.list_configured_groups,
     )
 
 

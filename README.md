@@ -20,8 +20,7 @@
 ---
 
 > [!NOTE]  
-> 本项目核心能力已抽离为独立公共包 `packages/core`（发行名 `nonebot-plugin-xducraft-core`，生命周期入口 `xducraft_config`，SDK 命名空间 `xducraft_bot.shared.*`），首个业务插件亦已独立为 `packages/happy-bot`（发行名 `nonebot-plugin-xducraft-happy-bot`，加载名 `xducraft_happy_bot`），配合 Naive UI 本地管理面板。主仓库仍包含其余业务插件（当前尚未全部独立分发）与前端；业务群参数采用独立快照，共享与启动参数单独管理；业务总开关与群开关默认关闭，历史数据通过确定性单次迁移完成固化。
-
+> 本项目核心能力已抽离为独立公共包 `packages/core`（发行名 `nonebot-plugin-xducraft-core` 0.3.0，生命周期入口 `xducraft_config`，SDK 命名空间 `xducraft_bot.shared.*`），首个业务插件亦已独立为 `packages/happy-bot`（发行名 `nonebot-plugin-xducraft-happy-bot` 0.2.0，加载名 `xducraft_happy_bot`，依赖 `nonebot-plugin-xducraft-core[onebot]>=0.3.0,<0.4.0`），配合 Naive UI 本地管理面板。主仓库仍包含其余业务插件（当前尚未全部独立分发）与前端；业务群参数采用独立快照，共享与启动参数单独管理；业务总开关与群开关默认关闭，历史数据通过确定性单次迁移完成固化。
 ## 🚀 快速开始
 
 ### 1. 运行环境要求
@@ -132,14 +131,20 @@ nb run
 
 ## ⚙️ 声明式配置核心系统
 
-配置核心已独立为 `nonebot-plugin-xducraft-core`（位于 `packages/core`，NoneBot 加载入口为 `xducraft_config`，提供 `xducraft_bot.shared.*` 命名空间），完全解耦于 WebUI 与特定适配器。
+配置核心已独立为 `nonebot-plugin-xducraft-core` 0.3.0（位于 `packages/core`，NoneBot 加载入口为 `xducraft_config`，提供 `xducraft_bot.shared.*` 命名空间），完全解耦于 WebUI 与特定适配器。
 
 ### 1. 数据持久化与平滑迁移
-- **存储介质**：SQLite 数据库（默认旧布局为 `xducraft_bot/shared/data/configuration.sqlite3`，配置 `XDUCRAFT_DATA_DIR` 时为 `<ROOT>/core/configuration.sqlite3`，亦受 `XDUCRAFT_CONFIG_DB` 覆盖），启用 WAL 模式配合单进程事务锁与忙等待重试（`PRAGMA busy_timeout=5000`）。
-- **表结构划分**：
-  - `config_documents` 表：存储既有业务整表/命名空间配置（如 MC 状态、关键词、词云、反撤回、猪猪图等文档）。首次启动从历史 JSON 单次迁移导入。
+- **存储介质**：活跃配置统一持久化于 SQLite 数据库（默认旧布局为 `xducraft_bot/shared/data/configuration.sqlite3`，配置 `XDUCRAFT_DATA_DIR` 时为 `<ROOT>/core/configuration.sqlite3`，亦受 `XDUCRAFT_CONFIG_DB` 覆盖），启用 WAL 模式配合单进程事务锁与忙等待重试（`PRAGMA busy_timeout=5000`）。在 POSIX 系统上，Core 自动将 SQLite 数据库文件及其 WAL、SHM 侧车文件权限严格限制为 `0600`（仅属主用户读写）。
+- **表结构与活跃文档存储**：
+  - `config_documents` 表：存储各命名空间的完整业务配置文档。当前已接入的文档命名空间包括：功能门禁 `feature_gate`、部署期启动覆盖 `deployment_overrides`，以及各业务插件配置文档 `anti_recall`、`happy_bot`、`keyword`、`mc_status`、`pig_bot`、`wordcloud`。
+  - **单次导入与写入边界**：历史插件 JSON 与历史 `deployment_overrides.json` 仅作为一次性导入源（one-time import inputs）。导入成功并确立 SQLite 活跃文档后，旧文件绝不再作为写入者（never a second writer），也不会被删除或重写。
   - `config_values` 表：存储通过 `register_config` 接入的原生模型（记录 `desired`、`applied`、`status`、`error` 与 `revision`）。
-- **业务存储独立**：聊天日志、反撤回媒体、MC 状态游标等业务数据严格保存在独立存储中，不与配置库混同。
+- **启动期声明式迁移与中断策略**：
+  - NoneBot 启动且所有插件模块加载完成后（`on_startup`），Core 统一驱动各命名空间的历史数据导入迁移。
+  - Core 先后执行 `feature_gate` 与 `deployment_overrides` 的历史导入，随后按稳定的插件 key 字母顺序依次调用各插件在 `PluginConfiguration` 中声明的可选 `migrate_legacy` 回调。
+  - `migrate_legacy` 回调具备幂等性，仅负责确立该插件自身在 SQLite 中的活跃配置文档。
+  - **启动失败策略（Abort on Error）**：若历史 JSON 文件或部署覆盖损坏、语法错误或无法解析，系统将立即抛出异常并中断 NoneBot 启动；**绝对严禁**吞没错误或在历史数据损坏时静默回退至代码默认值或环境变量默认值，防止历史配置静默丢失。
+- **业务存储严格独立**：聊天日志、反撤回媒体、MC 状态游标等纯业务持久化数据严格保留在独立存储中，绝不作为配置处理，亦不混入核心配置数据库。
 
 ### 2. 双重门禁与群独立快照机制
 - **业务全局总关 + 群级开关双重门禁**：
@@ -156,11 +161,12 @@ nb run
 
 ### 3. 运行期生效 (Runtime) 与 启动期参数 (Startup)
 - **原生运行期配置**：即时保存入库，并通过异步回调通知插件实时刷新。
-- **启动期配置参数**：
-  - 声明为 `x-ui-effect-phase: startup` 的原生字段（必须为 `global_only`）保存在 `config_values`；既有部署期参数保存在 `deployment_overrides.json`。
+- **启动期配置参数与部署覆盖**：
+  - 声明为 `x-ui-effect-phase: startup` 的原生字段（必须为 `global_only`）保存在 `config_values`。
+  - 部署期下次启动覆盖项存储于 Core SQLite 的 `deployment_overrides` 命名空间中。历史 `deployment_overrides.json` 现仅作为一次性导入源，不再作为活动存储。
+  - **`.env` 基线策略**：`.env` 保持为启动引导与环境变量基线，**绝不全量复制到 SQLite 数据库中**。在管理面板或 API 中移除某个显式覆盖项（unset）时，将在下一次进程重启时自动恢复为 `.env` 或进程环境变量所定义的基准值。
   - 启动期参数修改后即时更新期望值（`desired`），标记为 `restart_required`，**必须重启 NoneBot 机器人进程后生效**（重启后对齐 `desired` 与 `applied`）。
-- **既有部署覆盖容灾**：若 `deployment_overrides.json` 损坏，系统安全回退至环境变量配置，面板仅对部署配置资源返回 503，其余运行期功能仍可正常管理。
-
+- **部署覆盖错误处理策略**：启动阶段读取或导入部署覆盖时，若底层数据损坏或校验失败，将直接抛出 `DeploymentConfigError` 中断启动，绝不会在历史覆盖不可读时静默回退至环境变量基准值。
 ### 4. 原生回调容灾与显式恢复
 - 原生模型配置变更触发 `on_change(context, old_model, new_model)` 回调（支持同步/异步，超时 30 秒，插件应保证操作幂等）。
 - 若回调执行失败或超时：
@@ -194,7 +200,7 @@ nb run
   - 优先级为：显式构造参数 `database(path)` > 环境变量 `XDUCRAFT_CONFIG_DB` > 选定模式（shared legacy / core external）下的默认库文件。
   - 外置配置库仅接管配置数据库本身，**不会自动搬迁、重定向或覆盖其他业务持久化数据**（聊天记录、反撤回媒体等）。
 - **外部数据根布局结构**（当指向外部根时）：
-  - `<ROOT>/core/`：核心配置与共享数据（`configuration.sqlite3`、`deployment_overrides.json` 等）。
+  - `<ROOT>/core/`：核心配置与共享数据（`configuration.sqlite3` 等，历史 `deployment_overrides.json` 仅作为一次性导入源）。
   - `<ROOT>/plugins/<plugin_key>/`：各业务插件持久化数据（如 `anti_recall`、`wordcloud`、`keyword` 等；内部原有子目录保持不变）。
   - `<ROOT>/cache/mc_status/`：运行期状态缓存。
   - *注：字体、静态素材（`resources/`）及 WebUI 前端产物不在此轮外部移动范围。*
@@ -317,6 +323,8 @@ async def set_welcome_text(group_id: int, text: str) -> None:
 ### SDK 核心 API 签名速查
 - **`register_config(plugin_id: str, model: Type[BaseModel], *, scopes=("global", "group"), on_change=None, name: Optional[str] = None, feature_keys: Tuple[str, ...] = ()) -> PluginConfiguration`**  
   注册原生模型配置并绑定到统一数据库。
+- **`PluginConfiguration(key: str, name: str, resources: Mapping[str, ConfigResource] = ..., feature_keys: Tuple[str, ...] = ..., list_groups: Optional[...] = None, startup: Optional[...] = None, status: Optional[...] = None, media: Optional[...] = None, managed: bool = True, migrate_legacy: Optional[Callable[[], Any]] = None)`**
+  插件配置声明数据结构。Core 0.3.0 新增可选的 `migrate_legacy` 声明式回调，在所有插件加载完成后由 Core 统一驱动执行幂等的单次导入，仅确立自身在 SQLite 中的活跃配置文档。
 - **`get_config(plugin_id: str, scope: str = "global", scope_id: Optional[int] = None) -> BaseModel`**  
   读取当前生效配置（`scope="global"` 时无需 `scope_id`；`scope="group"` 时需传入整数群号）。
 - **`async update_config(plugin_id: str, values: dict, scope: str = "global", scope_id: Optional[int] = None, *, actor: str = "plugin") -> ConfigSnapshot`**  
@@ -391,7 +399,7 @@ async def set_welcome_text(group_id: int, text: str) -> None:
 
 ### 6. 😊 表情回应（xducraft_happy_bot）
 - **独立分发说明**：
-  - 本插件为首个完成独立包拆分的业务插件（源码位于 `packages/happy-bot`，发行名 `nonebot-plugin-xducraft-happy-bot`，加载名 `xducraft_happy_bot`），在根 `pyproject.toml` 的 `plugins` 中显式加载。
+  - 本插件为首个完成独立包拆分的业务插件（源码位于 `packages/happy-bot`，发行名 `nonebot-plugin-xducraft-happy-bot` 0.2.0，加载名 `xducraft_happy_bot`，依赖 `nonebot-plugin-xducraft-core[onebot]>=0.3.0,<0.4.0`），在根 `pyproject.toml` 的 `plugins` 中显式加载。
 - **功能特性**：
   - 群内被 `@` 机器人或收到群成员针对机器人的回复时，调用 OneBot v11 扩展接口 `set_msg_emoji_like` 进行表情回应。
   - 属于被动响应规则（优先级 `99`，`block=False`），不阻断后续其他功能插件的消息接收；协议端若不支持贴表情 API 则记录调试日志，不打断消息链。
@@ -402,7 +410,7 @@ async def set_welcome_text(group_id: int, text: str) -> None:
 - **配置与门禁规范**：
   - **双重门禁**：受管插件全局总开关（`happy_bot`）与群功能开关（`emoji_reaction`）默认均为关闭（OFF），须同时开启方可生效。
   - **每群完全独立配置**：表情 ID（`emoji_id`，默认 `123`）完全在每群独立设置与持久化。管理面板不提供全局表情修改入口，避免单群操作意外污染其他群。
-
+  - **声明式单次迁移与中断策略**：通过 `PluginConfiguration` 声明 `migrate_legacy` 回调，NoneBot 启动时由 Core 按序驱动，将历史 `emoji_like_config.json` 一次性导入至 Core SQLite（`happy_bot` 命名空间）；历史 JSON 仅作为导入输入，旧文件不再写入亦不被删除；若历史文件损坏则直接中断启动，绝不静默使用默认配置覆盖。
 ### 7. 🤝 自动好友申请（xducraft_auto_friend）
 - **功能特性**：
   - 针对加好友申请，自动核实申请人是否属于受信任群成员，确认后自动同意好友。

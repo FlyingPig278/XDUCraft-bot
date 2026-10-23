@@ -57,6 +57,11 @@ def _normalize(raw: Any) -> Dict[str, Any]:
 _store = ConfigDocumentStore("happy_bot", _default_data, _normalize, legacy_path=DATA_FILE)
 
 
+def migrate_legacy_config() -> Dict[str, Any]:
+    """Eagerly establish the one-way legacy JSON import at process startup."""
+    return _store.load()
+
+
 def get_emoji_id(group_id: int) -> str:
     """Return this group's direct value; a fresh group uses the code default."""
     value = _store.load()["groups"].get(str(int(group_id)))
@@ -99,5 +104,6 @@ __all__ = [
     "get_emoji_id",
     "list_configured_groups",
     "set_emoji_id",
+    "migrate_legacy_config",
     "DEFAULT_EMOJI_ID",
 ]

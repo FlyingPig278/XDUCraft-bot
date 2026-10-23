@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
 import os
 import stat
+import json
 from pathlib import Path
 
 import pytest
@@ -11,14 +11,21 @@ from pydantic import BaseModel, Field, SecretStr, StrictInt
 from xducraft_bot.admin.startup import StartupResources
 from xducraft_bot.shared.configuration import ConfigModel, ConfigurationError, PluginConfiguration, StartupConfig
 from xducraft_bot.shared import deployment_config as deployment
-from xducraft_bot.shared.json_store import JsonStore
+from xducraft_bot.shared.config_store import ConfigDocumentStore
 
 
 @pytest.fixture
 def isolated_deployment(tmp_path, monkeypatch):
     path = tmp_path / "deployment_overrides.json"
+    database_path = tmp_path / "configuration.sqlite3"
     monkeypatch.setattr(deployment, "DEPLOYMENT_OVERRIDES_PATH", path)
-    monkeypatch.setattr(deployment, "_STORE", JsonStore(str(path), dict))
+    monkeypatch.setattr(deployment, "_STORE", ConfigDocumentStore(
+        "deployment_overrides",
+        dict,
+        deployment._validate_overrides,
+        legacy_path=str(path),
+        database_path=str(database_path),
+    ))
     monkeypatch.setattr(deployment, "_STARTUP_READY", False)
     monkeypatch.setattr(deployment, "_STARTUP_OVERRIDES", {})
     monkeypatch.setattr(deployment, "_STARTUP_ERROR", None)
@@ -47,7 +54,7 @@ def startup_resource(isolated_deployment):
 
 
 def test_declared_sparse_update_preserves_unloaded_plugin_values(startup_resource, isolated_deployment):
-    isolated_deployment.write_text(json.dumps({"unloaded_plugin_option": 42}), encoding="utf-8")
+    deployment.update_overrides({"unloaded_plugin_option": 42}, [])
     helper, declaration = startup_resource
     result = helper.write(declaration, {"set": {"width": 800, "api_key": "pending-secret"}})
     assert result.values["width"] == 800
@@ -59,7 +66,7 @@ def test_declared_sparse_update_preserves_unloaded_plugin_values(startup_resourc
     assert "width" not in deployment.read_overrides()
     assert deployment.read_overrides()["unloaded_plugin_option"] == 42
     if os.name != "nt":
-        assert stat.S_IMODE(isolated_deployment.stat().st_mode) == 0o600
+        assert stat.S_IMODE(Path(deployment._STORE.path).stat().st_mode) == 0o600
 
 
 @pytest.mark.parametrize("patch", [
@@ -68,13 +75,13 @@ def test_declared_sparse_update_preserves_unloaded_plugin_values(startup_resourc
     {"set": {"width": 800}, "unset": ["width"]}, {"unset": ["width", "width"]},
     {"unset": ["unknown"]}, {"set": []},
 ])
-def test_invalid_candidate_never_replaces_saved_file(startup_resource, isolated_deployment, patch):
+def test_invalid_candidate_never_replaces_saved_overrides(startup_resource, isolated_deployment, patch):
     helper, declaration = startup_resource
     helper.write(declaration, {"set": {"width": 800}})
-    original = isolated_deployment.read_bytes()
+    original = deployment.read_overrides()
     with pytest.raises(ConfigurationError):
         helper.write(declaration, patch)
-    assert isolated_deployment.read_bytes() == original
+    assert deployment.read_overrides() == original
     assert helper.read(declaration).values["width"] == 800
 
 
@@ -89,13 +96,28 @@ def test_corrupt_document_never_falls_back_or_rewrites(isolated_deployment, cont
     assert isolated_deployment.read_bytes() == original
 
 
+def test_legacy_deployment_json_imports_once_into_sqlite(isolated_deployment):
+    isolated_deployment.write_text('{"width":800}', encoding="utf-8")
+    assert deployment.migrate_legacy_overrides() == {"width": 800}
+    assert Path(deployment._STORE.path).is_file()
+
+    isolated_deployment.write_text('{"width":900}', encoding="utf-8")
+    assert deployment.read_overrides() == {"width": 800}
+
+    updated_legacy_json = '{"width":900}'
+    isolated_deployment.write_text(updated_legacy_json, encoding="utf-8")
+    deployment.update_overrides({"width": 700}, [])
+    assert isolated_deployment.read_text(encoding="utf-8") == updated_legacy_json
+    assert deployment.read_overrides() == {"width": 700}
+
+
 def test_semantically_invalid_saved_value_is_not_silently_normalized(startup_resource, isolated_deployment):
     helper, declaration = startup_resource
-    isolated_deployment.write_text('{"width":"invalid"}', encoding="utf-8")
-    original = isolated_deployment.read_bytes()
+    deployment.update_overrides({"width": "invalid"}, [])
+    original = deployment.read_overrides()
     with pytest.raises(ConfigurationError):
         helper.read(declaration)
-    assert isolated_deployment.read_bytes() == original
+    assert deployment.read_overrides() == original
 
 
 def test_startup_snapshot_and_base_remain_immutable_after_save(isolated_deployment):

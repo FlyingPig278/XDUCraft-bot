@@ -64,6 +64,7 @@ def bind_configuration(manager):
             "global": ConfigResource(AntiRecall, read_global, write_global),
             "group": ConfigResource(AntiRecallGroup, read_group, write_group),
         }, feature_keys=("anti_recall",), list_groups=manager.list_configured_groups,
+        migrate_legacy=manager.get_config,
     )
 
 

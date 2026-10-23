@@ -72,6 +72,11 @@ class ConfigDatabase:
         """)
         self.connection.commit()
 
+        if os.name != "nt":
+            for candidate in (Path(path), Path(path + "-wal"), Path(path + "-shm")):
+                if candidate.exists():
+                    candidate.chmod(0o600)
+
     @contextmanager
     def transaction(self):
         with self.lock, self.connection:

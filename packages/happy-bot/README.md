@@ -1,4 +1,4 @@
-# XDUCraft Happy Bot (`nonebot-plugin-xducraft-happy-bot`)
+# XDUCraft Happy Bot (`nonebot-plugin-xducraft-happy-bot`) 0.2.0
 
 基于 NoneBot 2 与 OneBot v11 适配器的群聊表情回应插件。
 
@@ -20,9 +20,7 @@
 
 为避免命名混淆，请明确区分以下三个维度的标识：
 
-| 维度 | 名称 / 标识 | 说明 |
-| :--- | :--- | :--- |
-| **发行包名 (Distribution Name)** | `nonebot-plugin-xducraft-happy-bot` | `pip` 安装、依赖声明及构建 wheel 时使用的发行包名（版本 `0.1.0`）。 |
+| **发行包名 (Distribution Name)** | `nonebot-plugin-xducraft-happy-bot` | `pip` 安装、依赖声明及构建 wheel 时使用的发行包名（版本 `0.2.0`）。 |
 | **插件加载名 (Plugin Name)** | `xducraft_happy_bot` | NoneBot 插件生命周期加载标识，用于 `pyproject.toml` 中的 `plugins` 配置。 |
 | **依赖的 Core SDK 命名空间** | `xducraft_bot.shared.*` | 引用 Core 提供的功能门禁、配置系统及数据路径等 SDK 接口。 |
 | **配置项键 (Config Key)** | `happy_bot` | 插件在 Core 声明式配置体系中注册的配置命名空间。 |
@@ -47,10 +45,9 @@
 
 > [!NOTE]
 > 本软件包目前处于内部演进阶段，**尚未发布至公共 PyPI 仓库**。请勿尝试直接执行 `pip install nonebot-plugin-xducraft-happy-bot`。
-> 安装前必须确保宿主环境已安装 Core 核心包（`nonebot-plugin-xducraft-core[onebot]>=0.2.0,<0.3.0`）。
+> 安装前必须确保宿主环境已安装 Core 核心包（`nonebot-plugin-xducraft-core[onebot]>=0.3.0,<0.4.0`）。
 
 ### 1. 本地源码可编辑模式安装（推荐）
-
 在主仓库开发环境中，根目录 `requirements.txt` 已包含 `-e ./packages/happy-bot`。如需单独安装：
 
 ```bash
@@ -69,7 +66,7 @@ python -m build --outdir dist packages/happy-bot
 构建完成后，可在目标宿主虚拟环境中直接安装生成的 wheel 文件：
 
 ```bash
-pip install dist/nonebot_plugin_xducraft_happy_bot-0.1.0-py3-none-any.whl
+pip install dist/nonebot_plugin_xducraft_happy_bot-0.2.0-py3-none-any.whl
 ```
 
 ---
@@ -101,13 +98,13 @@ plugins = [
 
 插件的活跃群表情配置实际托管于 Core 声明式配置系统的 SQLite 数据库中（即 `config_documents` 表中的 `happy_bot` 命名空间），**绝不向文件系统读写实时 JSON 配置文件**：
 
-- **活跃配置存储位置**：活跃配置持久化于 Core 所选的 SQLite 数据库（优先级：显式 `database(path)` > 环境变量 `XDUCRAFT_CONFIG_DB` > 默认 `<ROOT>/core/configuration.sqlite3`）。
-- **单次导入机制**：插件内部通过 `ConfigDocumentStore("happy_bot", ..., legacy_path=DATA_FILE)` 访问配置。在首次访问时，若 SQLite 中尚无 `happy_bot` 命名空间，`ConfigDocumentStore` 会从历史路径读取 `emoji_like_config.json` 并一次性导入至 SQLite。
-- **无第二写入者**：一旦 SQLite 中存在该命名空间，所有配置读取与更新（如 `/ans set <emoji_id>`）均严格持久化于 SQLite；后续对旧 JSON 文件的任何外部修改均不会生效，旧文件绝不会成为第二写入源（second writer）。
+- **活跃配置存储位置**：活跃配置持久化于 Core 所选的 SQLite 数据库（优先级：显式 `database(path)` > 环境变量 `XDUCRAFT_CONFIG_DB` > 默认 `<ROOT>/core/configuration.sqlite3`），在 POSIX 环境下由 Core 严格受限于 `0600` 文件权限。
+- **启动期声明式单次导入机制**：Happy Bot 通过 `bind_configuration()` 注册 `PluginConfiguration`，并显式挂载 `migrate_legacy=manager.migrate_legacy_config` 回调。在 NoneBot 启动且所有插件加载完毕后，Core 按稳定插件 key 顺序统一调用该迁移入口。
+- **启动中断故障策略（Abort on Error）**：在迁移导入过程中，若历史 `emoji_like_config.json` 损坏、包含无效 JSON 或不可读，系统将立即抛出异常并中断 NoneBot 启动；**绝对严禁**吞没异常或静默使用代码默认配置（如默认表情 `123` 或空映射）覆盖不可读的历史数据，以杜绝历史配置丢失。
+- **无第二写入源（No Second Writer）**：一旦 SQLite 中成功确立 `happy_bot` 命名空间活跃文档，所有读取与写入（如 `/ans set <emoji_id>`）均严格持久化于 SQLite；历史 `emoji_like_config.json` 仅作为一次性导入源，后续外部修改该旧文件绝不会生效，系统亦不会删除或重写旧文件。
 - **全新环境无文件开销**：在全新独立环境中，`ConfigDocumentStore` 直接以代码默认文档（`{"schema_version": 2, "groups": {}}`）在 Core 选定的 SQLite 数据库中初始化，**绝不自动创建任何 JSON 目录，也绝不进行任何文件复制或搬迁**。
 
 ### 历史配置导入路径查找逻辑
-
 Core 提供的 `plugin_data_dir("happy_bot", ..., legacy_relative_path=LEGACY_DATA_PATH)` 仅用于决策**历史配置文件（`emoji_like_config.json`）的单次导入回退查找位置**：
 
 1. **显式数据根目录（`XDUCRAFT_DATA_DIR`）**：若启动前配置了环境变量 `XDUCRAFT_DATA_DIR`，仅将 `<ROOT>/plugins/happy_bot/` 作为历史 JSON 的查找位置；活跃配置依然存储于 `<ROOT>/core/configuration.sqlite3`（除非通过 `XDUCRAFT_CONFIG_DB` 或显式数据库路径另行指定）。

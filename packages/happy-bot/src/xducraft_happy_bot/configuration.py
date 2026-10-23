@@ -33,8 +33,10 @@ def bind_configuration(manager=data_manager):
         manager.set_emoji_id(clean["emoji_id"], group_id=ctx.group_id)
 
     return PluginConfiguration(
-        key="happy_bot", name="表情回应", resources={"group": ConfigResource(Happy, read, write)},
+        key="happy_bot", name="表情回应",
+        resources={"group": ConfigResource(Happy, read, write)},
         feature_keys=("emoji_reaction",), list_groups=manager.list_configured_groups,
+        migrate_legacy=manager.migrate_legacy_config,
     )
 
 

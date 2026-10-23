@@ -77,6 +77,7 @@ class PluginConfiguration:
     status: Optional[Callable[[ConfigContext], Dict[str, Any]]] = None
     media: Optional[Callable[[], Any]] = None
     managed: bool = True
+    migrate_legacy: Optional[Callable[[], Any]] = None
 
 
 _registry: Dict[str, PluginConfiguration] = {}
@@ -90,8 +91,37 @@ def declare_config(declaration: PluginConfiguration) -> PluginConfiguration:
         raise ValueError("invalid configuration key")
     if set(declaration.resources) - {"global", "group"}:
         raise ValueError("only global and group configuration scopes are supported")
+    if declaration.migrate_legacy is not None and not callable(declaration.migrate_legacy):
+        raise ValueError("legacy migration callback must be callable")
     _registry[declaration.key] = declaration
     return declaration
+
+
+async def migrate_legacy_configurations() -> Tuple[str, ...]:
+    """Run each declared, idempotent legacy import after all plugins load.
+
+    Callbacks must only establish their own active configuration document.  A
+    failure aborts startup instead of replacing unreadable historical values
+    with defaults.
+    """
+    completed = []
+    for key in sorted(_registry):
+        callback = _registry[key].migrate_legacy
+        if callback is None:
+            continue
+        try:
+            result = callback()
+            if inspect.isawaitable(result):
+                await result
+        except ConfigurationError:
+            raise
+        except Exception as exc:
+            raise ConfigurationError(
+                "legacy_migration_failed",
+                f"插件 {key} 的历史配置迁移失败",
+            ) from exc
+        completed.append(key)
+    return tuple(completed)
 
 
 def register_config(plugin_id: str, model: Type[BaseModel], *, scopes=("global", "group"),

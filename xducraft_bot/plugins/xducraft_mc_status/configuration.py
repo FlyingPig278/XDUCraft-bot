@@ -172,4 +172,5 @@ DECLARATION = declare_config(PluginConfiguration(
     list_groups=dm.list_configured_groups,
     startup=StartupConfig(MCStartup, active_startup, base_startup, normalize_startup,
                           validate_startup, startup_metadata),
+    migrate_legacy=dm.migrate_legacy_config,
 ))

@@ -166,6 +166,11 @@ _store = ConfigDocumentStore(
 )
 
 
+def migrate_legacy_config() -> Dict[str, Any]:
+    """Eagerly establish the one-way legacy JSON import at process startup."""
+    return _store.load()
+
+
 def _compile(rule: Dict[str, Any]) -> Optional[List[re.Pattern]]:
     """正则规则预编译；非法正则直接判为不可用。"""
     if rule["match"] != MATCH_REGEX:

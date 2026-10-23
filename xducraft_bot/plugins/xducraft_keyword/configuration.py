@@ -143,5 +143,5 @@ def list_groups():
 DECLARATION = declare_config(PluginConfiguration(
     key="keyword", name="关键词与入群欢迎", feature_keys=("keyword_reply",),
     resources={"group": ConfigResource(KeywordGroup, read_scope, write_scope)},
-    list_groups=list_groups, media=MediaProvider,
+    list_groups=list_groups, media=MediaProvider, migrate_legacy=dm.migrate_legacy_config,
 ))

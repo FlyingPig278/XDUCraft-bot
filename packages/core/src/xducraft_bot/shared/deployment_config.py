@@ -1,24 +1,21 @@
 """Validated deployment overrides applied once during process startup.
 
-The override file deliberately contains only explicit web-admin overrides.  It is
-not a copy of NoneBot's environment configuration: removing a key restores the
+Deployment overrides are active only in Core SQLite.  A former JSON override
+file is accepted once as an import input; removing a persisted key restores the
 value captured from the process environment on the next restart.
 """
 
 from __future__ import annotations
 
 import json
-import os
 from copy import deepcopy
-from pathlib import Path
 from threading import RLock
 
 from typing import Any, Dict, List, Mapping, Optional, Type, TypeVar
 from nonebot.compat import model_dump, type_validate_python
 from pydantic import BaseModel
-
+from .config_store import ConfigDocumentStore
 from .data_paths import shared_data_dir
-from .json_store import JsonStore
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -37,9 +34,6 @@ class DeploymentConfigError(RuntimeError):
         super().__init__(code)
 
 
-_STORE: JsonStore[Dict[str, Any]] = JsonStore(
-    str(DEPLOYMENT_OVERRIDES_PATH), dict
-)
 _LOCK = RLock()
 _STARTUP_READY = False
 _STARTUP_OVERRIDES: Dict[str, Any] = {}
@@ -66,48 +60,28 @@ def _validate_overrides(raw: Any) -> Dict[str, Any]:
     return deepcopy(raw)
 
 
-def _store_path() -> Path:
-    return Path(_STORE.path)
-
-
-def _read_file_strict() -> Dict[str, Any]:
-    try:
-        with open(_store_path(), "r", encoding="utf-8") as handle:
-            raw = json.load(handle)
-    except FileNotFoundError:
-        return {}
-    except (OSError, UnicodeError, ValueError, RecursionError):
-        raise _invalid() from None
-    return _validate_overrides(raw)
+_STORE = ConfigDocumentStore(
+    "deployment_overrides",
+    dict,
+    _validate_overrides,
+    legacy_path=str(DEPLOYMENT_OVERRIDES_PATH),
+)
 
 
 def read_overrides() -> Dict[str, Any]:
-    """Read and fully validate the latest override file.
-
-    A missing file is an empty override set.  Invalid or unreadable files are
-    never treated as empty, rewritten, or cached as defaults.
-    """
-
+    """Read persisted next-start values from the unified configuration DB."""
     with _LOCK:
-        return deepcopy(_read_file_strict())
+        try:
+            return deepcopy(_STORE.load())
+        except DeploymentConfigError:
+            raise
+        except Exception:
+            raise _invalid() from None
 
 
-def _replace_store_data(data: Dict[str, Any]) -> None:
-    def replace(current: Dict[str, Any]) -> None:
-        if not isinstance(current, dict):
-            raise _invalid()
-        current.clear()
-        current.update(deepcopy(data))
-
-    try:
-        _STORE.invalidate()
-        _STORE.mutate(replace)
-        if os.name != "nt":
-            os.chmod(_store_path(), 0o600)
-    except DeploymentConfigError:
-        raise
-    except Exception:
-        raise DeploymentConfigError(DEPLOYMENT_CONFIG_WRITE_FAILED) from None
+def migrate_legacy_overrides() -> Dict[str, Any]:
+    """Import the old deployment JSON exactly once into Core SQLite."""
+    return read_overrides()
 
 
 def update_overrides(values: Dict[str, Any], unset: List[str]) -> Dict[str, Any]:
@@ -121,15 +95,24 @@ def update_overrides(values: Dict[str, Any], unset: List[str]) -> Dict[str, Any]
         raise _invalid()
 
     validated_values = _validate_overrides(values)
-    with _LOCK:
-        current = _read_file_strict()
-        updated = dict(current)
+
+    def mutate(current: Dict[str, Any]) -> Dict[str, Any]:
+        updated = dict(_validate_overrides(current))
         updated.update(validated_values)
         for key in unset:
             updated.pop(key, None)
         updated = _validate_overrides(updated)
-        _replace_store_data(updated)
+        current.clear()
+        current.update(updated)
         return deepcopy(updated)
+
+    with _LOCK:
+        try:
+            return _STORE.mutate(mutate)
+        except DeploymentConfigError:
+            raise
+        except Exception:
+            raise DeploymentConfigError(DEPLOYMENT_CONFIG_WRITE_FAILED) from None
 
 
 def _copy_model(config: T) -> T:
@@ -147,7 +130,7 @@ def _initialize_startup_snapshot() -> None:
         return
 
     try:
-        overrides = _read_file_strict()
+        overrides = read_overrides()
     except DeploymentConfigError as exc:
         _STARTUP_OVERRIDES = {}
         _STARTUP_ERROR = exc.code
@@ -223,6 +206,7 @@ __all__ = [
     "get_startup_base",
     "get_startup_failure",
     "get_startup_overrides",
+    "migrate_legacy_overrides",
     "read_overrides",
     "update_overrides",
 ]

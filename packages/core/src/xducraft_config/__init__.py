@@ -3,11 +3,13 @@ from nonebot import get_driver
 from nonebot.adapters import Event
 from nonebot.exception import IgnoredException
 from nonebot.matcher import Matcher
+from nonebot.log import logger
 from nonebot.message import run_preprocessor
 from nonebot.plugin import PluginMetadata
 
 from xducraft_bot.shared.configuration import (
-    PROTOCOL_KEY, ConfigurationError, PluginConfiguration, declare_config, get_declaration, is_plugin_enabled,
+    PROTOCOL_KEY, ConfigurationError, PluginConfiguration, declare_config,
+    get_declaration, is_plugin_enabled, migrate_legacy_configurations,
 )
 
 DECLARATION = declare_config(PluginConfiguration(
@@ -43,6 +45,19 @@ async def guard_plugin_execution(matcher: Matcher, event: Event):
     if not is_plugin_enabled(declaration.key, group_id):
         raise IgnoredException("plugin_disabled_or_configuration_not_applied")
 
+
+
+@get_driver().on_startup
+async def migrate_legacy_configuration_data():
+    """Finish one-way imports only after every declared plugin has loaded."""
+    from xducraft_bot.shared.deployment_config import migrate_legacy_overrides
+    from xducraft_bot.shared.feature_gate import migrate_legacy_state
+
+    migrate_legacy_state()
+    migrate_legacy_overrides()
+    migrated = await migrate_legacy_configurations()
+    if migrated:
+        logger.info("[Config] 已确认历史配置迁移：{}", ", ".join(migrated))
 
 @get_driver().on_shutdown
 async def close_configuration_storage():

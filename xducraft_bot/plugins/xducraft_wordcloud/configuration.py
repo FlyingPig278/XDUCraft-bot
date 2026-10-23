@@ -84,6 +84,7 @@ def bind_configuration(manager):
             "global": ConfigResource(Wordcloud, read_global, write_global),
             "group": ConfigResource(WordcloudGroup, read_group, write_group),
         }, feature_keys=("wordcloud",), list_groups=manager.list_configured_groups,
+        migrate_legacy=manager.load_config,
     )
 
 
