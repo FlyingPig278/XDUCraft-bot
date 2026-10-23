@@ -20,7 +20,7 @@
 ---
 
 > [!NOTE]  
-> 本项目核心能力已抽离为独立公共包 `packages/core`（发行名 `nonebot-plugin-xducraft-core`，生命周期入口 `xducraft_config`，SDK 命名空间 `xducraft_bot.shared.*`），配合 Naive UI 本地管理面板。业务插件与前端目前仍留在本仓库未独立分发；业务群参数采用独立快照，共享与启动参数单独管理；业务总开关与群开关默认关闭，历史数据通过确定性单次迁移完成固化。
+> 本项目核心能力已抽离为独立公共包 `packages/core`（发行名 `nonebot-plugin-xducraft-core`，生命周期入口 `xducraft_config`，SDK 命名空间 `xducraft_bot.shared.*`），首个业务插件亦已独立为 `packages/happy-bot`（发行名 `nonebot-plugin-xducraft-happy-bot`，加载名 `xducraft_happy_bot`），配合 Naive UI 本地管理面板。主仓库仍包含其余业务插件（当前尚未全部独立分发）与前端；业务群参数采用独立快照，共享与启动参数单独管理；业务总开关与群开关默认关闭，历史数据通过确定性单次迁移完成固化。
 
 ## 🚀 快速开始
 
@@ -42,10 +42,10 @@ venv\Scripts\activate
 # Linux / macOS:
 source venv/bin/activate
 
-# 安装机器人 Python 依赖（通过可编辑模式引入 packages/core[onebot]）
+# 安装机器人 Python 依赖（通过可编辑模式引入 packages/core[onebot] 与 packages/happy-bot）
 pip install -r requirements.txt
 ```
-> 若此前拉取过旧版本源码，请重新执行 `pip install -r requirements.txt`，以确保在虚拟环境中通过可编辑模式安装独立的 `packages/core` 核心包。业务插件与前端管理面板仍作为源码在主仓库中运行。
+> 若此前拉取过旧版本源码，请重新执行 `pip install -r requirements.txt`，以确保在虚拟环境中通过可编辑模式安装独立的 `packages/core` 核心包与首个独立业务包 `packages/happy-bot`。主仓库仍保留其余业务插件（尚未全部独立分发）与前端管理面板。
 
 ### 3. 构建管理前端产物
 ```bash
@@ -390,13 +390,18 @@ async def set_welcome_text(group_id: int, text: str) -> None:
   - **群级配置**：合并转发随机抽取上限（`max_forward_results`，群级独立配置快照，无全局继承回退）。
 
 ### 6. 😊 表情回应（xducraft_happy_bot）
+- **独立分发说明**：
+  - 本插件为首个完成独立包拆分的业务插件（源码位于 `packages/happy-bot`，发行名 `nonebot-plugin-xducraft-happy-bot`，加载名 `xducraft_happy_bot`），在根 `pyproject.toml` 的 `plugins` 中显式加载。
 - **功能特性**：
-  - 针对特定触发场景发送表情回应。
-- **常用命令**：
-  - `/ans set <表情ID>`：设置本群回应表情。
-  - `/ans on|off|status`：开关与状态查询。
-- **配置与作用域**：
-  - **每群完全独立配置**：表情 ID 完全在每群独立设置与持久化。管理面板不提供全局表情修改入口，避免单群操作意外污染其他群。
+  - 群内被 `@` 机器人或收到群成员针对机器人的回复时，调用 OneBot v11 扩展接口 `set_msg_emoji_like` 进行表情回应。
+  - 属于被动响应规则（优先级 `99`，`block=False`），不阻断后续其他功能插件的消息接收；协议端若不支持贴表情 API 则记录调试日志，不打断消息链。
+- **常用命令与权限**：
+  - `/ans`（别名 `/answer`、`/表情回应`）：查看本群当前表情回应启用状态与当前表情 ID（群成员均可使用）。
+  - `/ans set <emoji_id>`：设置本群表情回应 ID（`emoji_id` 必须为纯数字，受群管理员权限限制）。
+  - `/功能 on 表情回应` / `/功能 off 表情回应`：快捷开关本群表情回应功能（亦可在网页管理面板群卡片中开关）。
+- **配置与门禁规范**：
+  - **双重门禁**：受管插件全局总开关（`happy_bot`）与群功能开关（`emoji_reaction`）默认均为关闭（OFF），须同时开启方可生效。
+  - **每群完全独立配置**：表情 ID（`emoji_id`，默认 `123`）完全在每群独立设置与持久化。管理面板不提供全局表情修改入口，避免单群操作意外污染其他群。
 
 ### 7. 🤝 自动好友申请（xducraft_auto_friend）
 - **功能特性**：

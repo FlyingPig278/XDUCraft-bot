@@ -440,8 +440,8 @@ def test_pig_declaration_validates_independent_group_revisions():
 def test_happy_declaration_only_changes_selected_group(tmp_path, monkeypatch):
     from xducraft_bot.shared.config_store import ConfigDocumentStore
     from xducraft_bot.shared.configuration import ConfigContext, ConfigurationError
-    from xducraft_bot.plugins.xducraft_happy_bot import data_manager as happy
-    from xducraft_bot.plugins.xducraft_happy_bot.configuration import bind_configuration
+    from xducraft_happy_bot import data_manager as happy
+    from xducraft_happy_bot.configuration import bind_configuration
     monkeypatch.setattr(happy, "_store", ConfigDocumentStore(
         "happy_bot", happy._default_data, happy._normalize,
         database_path=str(tmp_path / "happy.sqlite3"),

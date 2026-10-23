@@ -10,7 +10,14 @@ from xducraft_bot.shared.config_store import ConfigDocumentStore
 from xducraft_bot.shared.data_paths import plugin_data_dir
 from xducraft_bot.shared.json_store import as_str
 
-DATA_DIR = str(plugin_data_dir("happy_bot", os.path.join(os.path.dirname(__file__), "data")))
+LEGACY_DATA_PATH = os.path.join(
+    "xducraft_bot", "plugins", "xducraft_happy_bot", "data",
+)
+DATA_DIR = str(plugin_data_dir(
+    "happy_bot",
+    os.path.join(os.path.dirname(__file__), "data"),
+    legacy_relative_path=LEGACY_DATA_PATH,
+))
 DATA_FILE = os.path.join(DATA_DIR, "emoji_like_config.json")
 DEFAULT_EMOJI_ID = "123"
 

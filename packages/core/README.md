@@ -9,7 +9,7 @@ XDUCraft NoneBot 插件体系的独立配置存储、生命周期门禁与共享
 ## 定位与架构边界
 
 - **核心包职责**：提供基于 SQLite 的声明式配置管理（原生 Pydantic 模型支持）、NoneBot 消息与事件前置门禁控制（`@run_preprocessor`）、数据目录路径决策（`data_paths`）及公共 SDK。
-- **与业务插件/前端的边界**：业务插件（如 `xducraft_mc_status`、`xducraft_wordcloud` 等）与管理后台 WebUI 仍留在上层主项目仓库中，当前尚未作为独立包分发；Core 仅包含纯净的 SDK 核心与生命周期入口。
+- **与业务插件/前端的边界**：`packages/happy-bot`（`nonebot-plugin-xducraft-happy-bot`）现已作为首个独立业务插件包拆分试点，业务插件显式声明并加载 Core；其余业务插件（如 `xducraft_mc_status`、`xducraft_wordcloud` 等）与管理后台 WebUI 仍留在上层主项目仓库中，当前尚未全部作为独立包分发。Core 仅包含纯净的 SDK 核心与生命周期入口。
 - **双重门禁与系统服务定位**：受管业务插件的全局总开关与群级开关**默认均为关闭（OFF）**，需显式开启全局与群级双重门禁方可响应运行。Core 配置生命周期插件自身声明为非受管基础设施（`managed=False`），不受业务门禁拦截，不可作为业务插件关闭。
 - **基础依赖精简**：基础安装仅依赖 `nonebot2`、`pydantic` 与 `platformdirs`，不包含 OneBot 适配器、FastAPI 或 WebUI 任何源码。针对权限判定（`permissions`）与私聊推送（`onebot`）等辅助工具，需启用可选依赖 `[onebot]`。
 
@@ -62,10 +62,10 @@ python -m build --outdir dist packages/core
 构建完成后，可在独立宿主环境中直接安装生成的 wheel 产物：
 
 ```bash
-pip install dist/nonebot_plugin_xducraft_core-0.1.0-py3-none-any.whl
+pip install dist/nonebot_plugin_xducraft_core-0.2.0-py3-none-any.whl
 
 # 若需要 OneBot 适配器扩展支持：
-pip install "dist/nonebot_plugin_xducraft_core-0.1.0-py3-none-any.whl[onebot]"
+pip install "dist/nonebot_plugin_xducraft_core-0.2.0-py3-none-any.whl[onebot]"
 ```
 
 ---
@@ -79,7 +79,7 @@ NoneBot 启动初始化时，生命周期绑定必须在 `nonebot.init()` 之后
 - **配置文件加载**（项目根目录 `pyproject.toml`）：
   ```toml
   [tool.nonebot]
-  plugins = ["xducraft_config"]
+  plugins = ["xducraft_config", "xducraft_happy_bot"]
   plugin_dirs = ["xducraft_bot/plugins"]
   ```
 - **代码中显式声明依赖**：在所有依赖 Core 门禁与配置存储的业务插件入口顶部，优先调用 `require("xducraft_config")`。
@@ -207,3 +207,14 @@ Core 通过 `xducraft_bot.shared.data_paths` 统一确定运行时数据根目�
 
 - **配置数据库优先级**：显式构造参数 `database(path)` > 环境变量 `XDUCRAFT_CONFIG_DB` > 所选数据根目录下的默认配置库（`<ROOT>/core/configuration.sqlite3`，旧布局为 `xducraft_bot/shared/data/configuration.sqlite3`）。
 - **外置配置数据库不自动搬迁数据**：指定外置配置数据库仅接管配置存储本身，系统绝不会自动搬迁、重定向或覆盖其他业务持久化数据（如聊天记录、反撤回媒体、MC 状态游标等）。
+
+### 3. 插件独立数据路径决策与旧宿主兼容 (Core 0.2.0)
+
+Core 既有的 `plugin_data_dir` 与 `plugin_cache_dir` 决策机制用于为业务插件提供通用的数据与缓存目录路径约定。插件可根据自身设计将此类目录用作直接持久化目录，亦可仅将其作为历史数据或配置文件的兼容导入路径——业务插件的活跃存储状态最终由其自身选用的存储适配器（如 Core 的 `ConfigDocumentStore` 或独立数据库）决定。
+
+Core 0.2.0 为既有 `plugin_data_dir` / `plugin_cache_dir` 新增了可选的 `legacy_relative_path` 参数支持，使独立分发的业务插件在未设置外部数据根时，能够准确定位旧源码宿主中的历史数据目录：
+
+- **显式数据根目录优先**：若配置了 `XDUCRAFT_DATA_DIR` 环境变量，业务插件数据根目录位于 `<ROOT>/plugins/<plugin_key>/`（缓存位于 `<ROOT>/cache/<plugin_key>/`）。若插件采用 Core 文档存储，该位置仅作为历史文件查找路径。
+- **旧源码宿主兼容定位**：当独立分发的插件包安装于包含旧插件数据目录的源码宿主时，通过 `legacy_relative_path` 可在未设置外部数据根时精准定位旧宿主内的历史位置（例如独立试点包 `happy_bot` 使用 `legacy_relative_path="xducraft_bot/plugins/xducraft_happy_bot/data"` 定位历史 `emoji_like_config.json` 执行单次导入，导入后活跃数据完全由 Core SQLite 接管，绝不向旧目录进行实时持久化写入）。
+- **全新独立安装**：在无旧源码宿主标记且未配置外部数据根的全新独立环境中，自动落入操作系统标准用户数据目录（通过 `platformdirs.user_data_path("xducraft", appauthor=False)`），绝不向代码包安装目录写入运行时数据。
+- **设计边界**：`plugin_data_dir` 仅执行纯路径计算与查询，**绝不自动创建目录，也绝不自动搬迁或复制既有数据**；此机制为**数据存放位置兼容**，而非 Python 模块导入兼容 shim。

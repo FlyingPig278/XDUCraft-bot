@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68,<81", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nonebot-plugin-xducraft-happy-bot"
+version = "0.1.0"
+description = "Per-group emoji reactions for NoneBot OneBot v11."
+readme = "README.md"
+requires-python = ">=3.9,<4"
+dependencies = [
+    "nonebot2~=2.4.3",
+    "nonebot-adapter-onebot~=2.4.6",
+    "nonebot-plugin-xducraft-core[onebot]>=0.2.0,<0.3.0",
+    "pydantic>=2,<3",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["xducraft_happy_bot"]
+include-package-data = false
