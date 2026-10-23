@@ -38,7 +38,7 @@ def _namespace_roots() -> Iterator[Path]:
             continue
 
 
-def _legacy_shared_data_dir() -> Optional[Path]:
+def _legacy_namespace_root() -> Optional[Path]:
     candidates = set()
     for package in _namespace_roots():
         legacy = package / "shared" / "data"
@@ -48,12 +48,17 @@ def _legacy_shared_data_dir() -> Optional[Path]:
             and (package / "plugins").is_dir()
             and (package.parent / "pyproject.toml").is_file()
         ):
-            candidates.add(legacy.resolve())
+            candidates.add(package)
     if len(candidates) > 1:
         raise DataPathError(
             "Multiple legacy data layouts found; set XDUCRAFT_DATA_DIR explicitly"
         )
     return next(iter(candidates), None)
+
+
+def _legacy_shared_data_dir() -> Optional[Path]:
+    package = _legacy_namespace_root()
+    return package / "shared" / "data" if package is not None else None
 
 
 def runtime_data_root() -> Optional[Path]:
@@ -95,13 +100,42 @@ def shared_data_dir() -> Path:
     return legacy
 
 
-def plugin_data_dir(plugin_id: str, legacy_dir: PathLike) -> Path:
-    key = _plugin_key(plugin_id)
-    root = runtime_data_root()
-    return root / "plugins" / key if root is not None else Path(legacy_dir)
 
 
-def plugin_cache_dir(plugin_id: str, legacy_dir: PathLike) -> Path:
+def _legacy_plugin_dir(
+    legacy_dir: PathLike, legacy_relative_path: Optional[PathLike],
+) -> Path:
+    if legacy_relative_path is None:
+        return Path(legacy_dir)
+    relative = Path(legacy_relative_path)
+    if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+        raise DataPathError("legacy plugin path must be a safe relative path")
+    package = _legacy_namespace_root()
+    if package is None:
+        return Path(legacy_dir)
+    candidate = (package.parent / relative).resolve()
+    try:
+        candidate.relative_to(package.parent)
+    except ValueError:
+        raise DataPathError("legacy plugin path must remain inside its source host") from None
+    return candidate
+
+
+def plugin_data_dir(
+    plugin_id: str, legacy_dir: PathLike, *, legacy_relative_path: Optional[PathLike] = None,
+) -> Path:
     key = _plugin_key(plugin_id)
     root = runtime_data_root()
-    return root / "cache" / key if root is not None else Path(legacy_dir)
+    return root / "plugins" / key if root is not None else _legacy_plugin_dir(
+        legacy_dir, legacy_relative_path,
+    )
+
+
+def plugin_cache_dir(
+    plugin_id: str, legacy_dir: PathLike, *, legacy_relative_path: Optional[PathLike] = None,
+) -> Path:
+    key = _plugin_key(plugin_id)
+    root = runtime_data_root()
+    return root / "cache" / key if root is not None else _legacy_plugin_dir(
+        legacy_dir, legacy_relative_path,
+    )

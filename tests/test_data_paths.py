@@ -157,6 +157,46 @@ def test_installed_sdk_tree_is_not_mistaken_for_flat_checkout(
     assert not (isolated_namespace / "shared").exists()
 
 
+def test_external_plugin_uses_legacy_source_data_without_creating_it(
+    tmp_path, monkeypatch, isolated_namespace
+):
+    (isolated_namespace.parent / "pyproject.toml").write_text(
+        '[tool.nonebot]\nplugin_dirs = ["xducraft_bot/plugins"]\n', encoding="utf-8"
+    )
+    (isolated_namespace / "plugins").mkdir()
+    packaged_data = tmp_path / "site-packages" / "xducraft_happy_bot" / "data"
+    legacy_relative_path = Path(
+        "xducraft_bot/plugins/xducraft_happy_bot/data"
+    )
+    expected = isolated_namespace.parent / legacy_relative_path
+
+    assert data_paths.runtime_data_root() is None
+    assert data_paths.plugin_data_dir(
+        "happy_bot", packaged_data, legacy_relative_path=legacy_relative_path,
+    ) == expected
+    assert data_paths.plugin_cache_dir(
+        "happy_bot", packaged_data, legacy_relative_path=legacy_relative_path,
+    ) == expected
+    assert not expected.exists()
+    assert not packaged_data.exists()
+
+
+@pytest.mark.parametrize("legacy_relative_path", ["../outside", "/absolute/path"])
+def test_external_plugin_legacy_path_cannot_escape_source_host(
+    tmp_path, monkeypatch, isolated_namespace, legacy_relative_path,
+):
+    (isolated_namespace.parent / "pyproject.toml").write_text(
+        "[tool.nonebot]\n", encoding="utf-8"
+    )
+    (isolated_namespace / "plugins").mkdir()
+    with pytest.raises(data_paths.DataPathError):
+        data_paths.plugin_data_dir(
+            "example",
+            tmp_path / "site-packages" / "example" / "data",
+            legacy_relative_path=legacy_relative_path,
+        )
+
+
 @pytest.mark.parametrize("location", ["", "   ", "relative-runtime"])
 def test_invalid_explicit_root_is_not_silently_treated_as_unset(location, monkeypatch):
     monkeypatch.setenv("XDUCRAFT_DATA_DIR", location)
