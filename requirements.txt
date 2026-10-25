@@ -1,15 +1,15 @@
 # Plugin source revisions are fixed; third-party dependencies use compatible ranges.
-nonebot-plugin-xducraft-core[onebot] @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-core.git@a3e0b3f34f661affc3ed54be627e75d39ef2f66f
-nonebot-plugin-xducraft-happy-bot @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-happy-bot.git@c8733fb59e2df20a9278addd8e1807ea3e472a5b
-nonebot-plugin-xducraft-auto-friend @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-auto-friend.git@3097c850edb0de3f843362d1eff7bc01675a8395
-nonebot-plugin-xducraft-keyword @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-keyword.git@143a9831c9f7ab3652edded5d6658be378b98f8c
-nonebot-plugin-xducraft-pig-bot @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-pig-bot.git@301756acac4001a88f6fc903ae6b13c2057c3582
-nonebot-plugin-xducraft-mc-update @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-mc-update.git@5d23549b463c6a0cb0089e895d8ece726f581de7
-nonebot-plugin-xducraft-invite @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-invite.git@5d715975a0c86ebb83be7fd929390f96c68db758
-nonebot-plugin-xducraft-anti-recall @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-anti-recall.git@63859d291d0fa2c0eaab1d5b7bfd92698af66591
-nonebot-plugin-xducraft-wordcloud @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-wordcloud.git@ea40f295bef12794ad879fd9de55d5f43e5208bd
-nonebot-plugin-xducraft-mc-status @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-mc-status.git@294af9f0812a1a1b065028e751541c6166963e15
-nonebot-plugin-xducraft-features @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-features.git@0ce9cc4382460c10062a0af8f5d6b0f8c05a6438
-nonebot-plugin-xducraft-admin @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-admin.git@93cc9f9c57259232be6ab61ae07c33a9dcfc7b1c
+nonebot-plugin-xducraft-core[onebot] @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-core.git@06e8cd191be4d3a292f3efd5a0354935f243c2f6
+nonebot-plugin-xducraft-happy-bot @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-happy-bot.git@84d1d13c04c8b549fbba63f87aa86683944d4d71
+nonebot-plugin-xducraft-auto-friend @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-auto-friend.git@7570aec18db05702466c543b135d56fb7e15a79f
+nonebot-plugin-xducraft-keyword @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-keyword.git@80ddcead27329661a137236dda984eb0ff784a4b
+nonebot-plugin-xducraft-pig-bot @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-pig-bot.git@f067569350b343203725f9eb7d016d905f128082
+nonebot-plugin-xducraft-mc-update @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-mc-update.git@8be88f3f8e22a1ccf753ecc8f282b033372ecbf7
+nonebot-plugin-xducraft-invite @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-invite.git@6f8645224ac7b2f05866249910479992b387c82e
+nonebot-plugin-xducraft-anti-recall @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-anti-recall.git@cda8fce475afa91285bc5971685515a086da8649
+nonebot-plugin-xducraft-wordcloud @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-wordcloud.git@d5fbc169a414a9aca1e63ed711008cbc39a90bf8
+nonebot-plugin-xducraft-mc-status @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-mc-status.git@619fbce46b251674d78a0c7bd9cddb169be3ccb6
+nonebot-plugin-xducraft-features @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-features.git@c1521dc8120b0db24e55757c23d739b42c7d1b0e
+nonebot-plugin-xducraft-admin @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-admin.git@e85aec837911b60ba205e268e840b13ec8cdecc5
 nb-cli~=1.4.2
 nonebot2[fastapi]~=2.4.3
