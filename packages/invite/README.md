@@ -1,18 +1,22 @@
 # XDUCraft Invite (`nonebot-plugin-xducraft-invite`) 0.1.0
 
-XDUCraft Minecraft 白名单邀请码自助领取与私聊管理插件。
+基于 NoneBot 2 与 OneBot v11 的 Minecraft 白名单邀请码自助领取与私聊运维管理插件。
+
+仅服务于单个绑定的核心交流群。群成员在绑定群内申请时，核查成员资格后通过**私聊**下发邀请码，防止群内泄露；管理员与超管可通过私聊进行初始化、记录查询与补发。
+
+主部署宿主仓库参见：[FlyingPig278/XDUCraft-bot](https://github.com/FlyingPig278/XDUCraft-bot)。
 
 ---
 
-## 功能说明
+## 功能特性
 
-- **核心群资格核验**：仅服务于单个绑定的核心交流群。群成员在绑定群内申请时，核查成员资格后通过**私聊**发放邀请码，防止群内泄露。
+- **核心群资格核验**：严格绑定单一交流群。群成员申请时核验成员身份，并通过私聊下发邀请码。
 - **防止重复领取**：按用户限制领取频次与记录历史租约状态。
 - **管理端私聊运维**：超级用户可通过私聊执行初始化、查询发放记录与手动为特定成员补发。
 - **双重门禁与前置初始化要求**：
   1. 必须先由超级用户私聊执行 `/invite init` 初始化核心群成员快照（未初始化前禁止开启自助开关）；
   2. 在 WebUI 插件页或通过 Core SDK 开启全局总开关 `invite`；
-  3. 开启群自助领取功能（在绑定群内发送 `/功能 on 邀请码自助领取` 或 `/功能 on invite_self_service`，系统会自动同步本群插件总开关）。
+  3. 开启群自助领取功能（在绑定群内发送 `/功能 on 邀请码自助领取`，系统会自动同步本群插件总开关）。
 
 ---
 
@@ -28,16 +32,18 @@ XDUCraft Minecraft 白名单邀请码自助领取与私聊管理插件。
 
 ---
 
-## 初始化与指令说明
+## 指令列表与交互
 
-### 1. 核心前置：执行初始化
+### 1. 前置初始化
+
 首次使用前，**超级用户必须私聊机器人执行初始化**：
 ```text
 /invite init
 ```
-机器人拉取当前绑定群的成员列表并生成持久化资格快照。
+机器人拉取当前绑定群的成员列表并建立持久化资格快照。
 
 ### 2. 常用指令
+
 | 指令 | 范围与权限 | 说明 |
 | :--- | :--- | :--- |
 | `@机器人 邀请码` / `/邀请码` | 绑定群内（成员均可） | 申请白名单邀请码（核验资格后私聊下发） |
@@ -49,23 +55,25 @@ XDUCraft Minecraft 白名单邀请码自助领取与私聊管理插件。
 
 ## 安装与加载
 
-本插件处于内部演进阶段，尚未发布至公共 PyPI 仓库。
+> [!NOTE]  
+> 本软件包目前尚未发布至公共 PyPI 仓库。安装请使用预定推送的 GitHub Release Tag 源码链接。
 
-**源码安装**：
+### 1. 宿主环境安装
+
+在已初始化的 NoneBot 2 部署环境中，先安装 Core 核心包，再安装本插件：
+
 ```bash
-pip install -e ./packages/core[onebot] -e ./packages/invite
+# 1. 安装 Core 核心包（需包含 [onebot] 适配器扩展）
+pip install "nonebot-plugin-xducraft-core[onebot] @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-core.git@v0.3.0"
+
+# 2. 安装 Invite 插件
+pip install "nonebot-plugin-xducraft-invite @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-invite.git@v0.1.0"
 ```
 
-**Wheel 构建与联合安装**：
-```bash
-python -m pip install build
-python -m build --outdir dist packages/core
-python -m build --outdir dist packages/invite
-pip install dist/nonebot_plugin_xducraft_core-0.3.0-py3-none-any.whl[onebot] \
-            dist/nonebot_plugin_xducraft_invite-0.1.0-py3-none-any.whl
-```
+### 2. 宿主加载配置
 
-**宿主加载（`pyproject.toml`）**：
+在 NoneBot 宿主项目的 `pyproject.toml` 中显式同时加载 Core 与本插件：
+
 ```toml
 [tool.nonebot]
 plugins = [
@@ -76,6 +84,35 @@ plugins = [
 
 ---
 
-## 数据存储边界
+## 本地开发与测试（贡献者）
 
-群成员快照、发放记录与租约状态保存在独立业务数据文件中（外部数据根下路径为 `<ROOT>/plugins/invite/`；旧源码布局为 `xducraft_bot/plugins/xducraft_invite/data/`），不混入 Core 配置数据库。
+克隆本仓库到本地后，在仓库根目录执行：
+
+```bash
+# 安装 Core 依赖与本地开发依赖
+pip install "nonebot-plugin-xducraft-core[onebot] @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-core.git@v0.3.0"
+pip install -e ".[dev]"
+
+# 运行自动化测试
+pytest
+
+# 本地构建 wheel 发行包
+python -m build
+```
+
+本地构建产物将输出至 `dist/` 目录。
+
+---
+
+## 业务数据存储边界
+
+- **业务数据严格隔离**：群成员快照、发放记录与租约状态保存在独立业务数据文件中（位于 `<DATA_DIR>/plugins/invite/`），不混入 Core 配置数据库。
+- **数据目录环境变量**：若需要自定义外部数据目录，必须在启动前通过操作系统环境变量配置 `XDUCRAFT_DATA_DIR`（绝对路径），切勿仅写在 live `.env` 中。
+
+---
+
+## 许可证说明
+
+本项目自身源码采用 [MIT License](LICENSE) 授权开源。
+
+第三方 API 依赖与外部系统接口遵循各自独立的授权许可。
