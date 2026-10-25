@@ -5,6 +5,7 @@
 -e ./packages/pig-bot
 -e ./packages/mc-update
 -e ./packages/invite
+-e ./packages/anti-recall
 nb-cli~=1.4.2
 pillow~=11.3.0
 httpx~=0.28.1

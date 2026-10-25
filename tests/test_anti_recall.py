@@ -13,8 +13,8 @@ from nonebot.adapters.onebot.v11 import (
 )
 from nonebot.exception import FinishedException
 
-from xducraft_bot.plugins import xducraft_anti_recall as anti_recall
-from xducraft_bot.plugins.xducraft_anti_recall.data_manager import AntiRecallStore
+import xducraft_anti_recall as anti_recall
+from xducraft_anti_recall.data_manager import AntiRecallStore
 
 
 
@@ -278,7 +278,7 @@ def test_retained_records_obey_independent_caps_and_reject_incomplete_replacemen
 
 def test_anti_recall_declaration_global_policy_and_group_limit(tmp_path):
     from xducraft_bot.shared.configuration import ConfigContext, ConfigurationError
-    from xducraft_bot.plugins.xducraft_anti_recall.configuration import bind_configuration
+    from xducraft_anti_recall.configuration import bind_configuration
     store = _temp_store(tmp_path)
     declaration = bind_configuration(store)
     root = declaration.resources["global"]
