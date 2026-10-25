@@ -2,17 +2,31 @@
 
 基于 NoneBot 2 与 OneBot v11 的群关键词自动回复与入群欢迎消息插件。
 
+支持按群独立维护关键词规则、多种匹配模式（包含、完全匹配、开头匹配、正则表达式）、复合消息段回复（纯文本、本地图片、表情、`@`）以及新成员入群欢迎。
+
+主部署宿主仓库参见：[FlyingPig278/XDUCraft-bot](https://github.com/FlyingPig278/XDUCraft-bot)。
+
 ---
 
-## 功能说明
+## 功能特性
 
 - **多模式关键词匹配**：支持包含（`contains`）、完全匹配（`exact`）、开头匹配（`prefix`）及正则表达式（`regex`）。
-- **复合消息段回复**：单条规则支持顺序发送 1–8 条消息，涵盖纯文本、本地图片、QQ 表情与 `@` 成员组合。
+- **复合消息段回复**：单条规则支持顺序发送 1–8 条消息段，涵盖纯文本、本地图片、QQ 表情与 `@` 成员组合。
 - **入群欢迎消息**：新成员入群时自动触发欢迎消息链，首条回复自动 `@` 新成员。
-- **群级独立规则**：每群独立维护规则列表与冷却时间。升级时历史全局规则一次性固化到各已知群，群规则完全独立，不再动态拼接全局规则。
-- **双重门禁要求**：全局总开关（`keyword`）与群插件开关默认均为关闭。正常生效必须满足：
-  1. 在 WebUI 插件页或通过 Core SDK 开启全局总开关 `keyword`；
-  2. 开启本群插件开关及功能（可在群内发送 `/功能 on 关键词回复` 或 `/功能 on keyword_reply`，系统会自动同步本群插件总开关）。
+- **群级独立规则**：每群独立维护规则列表与回复冷却时间，群间规则完全隔离。
+- **双重门禁安全机制**：受管插件全局总开关（`keyword`）与群级功能开关（`keyword_reply`）默认均为关闭（`OFF`）。全局关闭具有最高优先级。
+
+---
+
+## 标识与命名空间说明
+
+| 维度 | 标识 | 说明 |
+| :--- | :--- | :--- |
+| **发行包名** | `nonebot-plugin-xducraft-keyword` | `pip` 安装与依赖声明标识（版本 `0.1.0`）。 |
+| **插件加载名** | `xducraft_keyword` | NoneBot 插件加载标识，用于 `pyproject.toml` 中的 `plugins` 配置。 |
+| **依赖 Core 插件** | `xducraft_config` | Core 核心配置与生命周期插件，入口处通过 `require("xducraft_config")` 预加载。 |
+| **配置项键** | `keyword` | Core 声明式配置体系中的配置命名空间。 |
+| **功能门禁键** | `keyword_reply` | 统一功能开关（`/功能`）中注册的特性键名（显示名：`关键词回复`）。 |
 
 ---
 
@@ -35,23 +49,25 @@
 
 ## 安装与加载
 
-本插件处于内部演进阶段，尚未发布至公共 PyPI 仓库。
+> [!NOTE]  
+> 本软件包目前尚未发布至公共 PyPI 仓库。安装请使用预定推送的 GitHub Release Tag 源码链接。
 
-**源码安装**：
+### 1. 宿主环境安装
+
+在已初始化的 NoneBot 2 部署环境中，先安装 Core 核心包，再安装本插件：
+
 ```bash
-pip install -e ./packages/core[onebot] -e ./packages/keyword
+# 1. 安装 Core 核心包（需包含 [onebot] 适配器扩展）
+pip install "nonebot-plugin-xducraft-core[onebot] @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-core.git@v0.3.0"
+
+# 2. 安装 Keyword 插件
+pip install "nonebot-plugin-xducraft-keyword @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-keyword.git@v0.1.0"
 ```
 
-**Wheel 构建与联合安装**：
-```bash
-python -m pip install build
-python -m build --outdir dist packages/core
-python -m build --outdir dist packages/keyword
-pip install dist/nonebot_plugin_xducraft_core-0.3.0-py3-none-any.whl[onebot] \
-            dist/nonebot_plugin_xducraft_keyword-0.1.0-py3-none-any.whl
-```
+### 2. 宿主加载配置
 
-**宿主加载（`pyproject.toml`）**：
+在 NoneBot 宿主项目的 `pyproject.toml` 中显式同时加载 Core 与本插件：
+
 ```toml
 [tool.nonebot]
 plugins = [
@@ -62,7 +78,37 @@ plugins = [
 
 ---
 
-## 数据存储边界
+## 本地开发与测试（贡献者）
 
-1. **配置数据迁移**：历史 `keyword_config.json` 仅作为启动期单次导入源。首次启动由 Core 一次性导入至 Core SQLite（`keyword` 命名空间），确立记录后旧文件不再写入；若历史配置损坏直接中断启动。
-2. **媒体文件独立存储**：上传的回复图片保存在 `media/` 目录下（外部数据根下路径为 `<ROOT>/plugins/keyword/media/`；旧源码布局为 `xducraft_bot/plugins/xducraft_keyword/data/media/`）。图片受 10 MiB 大小限制与格式校验保护，属于独立文件系统持久化，不混入 Core 配置数据库。
+克隆本仓库到本地后，在仓库根目录执行：
+
+```bash
+# 安装 Core 依赖与本地开发依赖
+pip install "nonebot-plugin-xducraft-core[onebot] @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-core.git@v0.3.0"
+pip install -e ".[dev]"
+
+# 运行自动化测试
+pytest
+
+# 本地构建 wheel 发行包
+python -m build
+```
+
+本地构建产物将输出至 `dist/` 目录。
+
+---
+
+## 数据存储与历史迁移
+
+1. **单一活跃配置源**：本插件采用 Core 的声明式配置文档系统。活跃配置统一持久化保存在 Core SQLite 数据库中的 `keyword` 命名空间。
+2. **启动期单次历史导入**：若存在历史配置文件 `keyword_config.json`，Core 将在启动阶段执行单次导入并确立活跃文档，导入后旧文件不再写入。若历史 JSON 损坏，系统将抛出异常中断启动，绝不静默覆盖。
+3. **媒体资源文件严格隔离**：上传与保存的回复图片存放于 `<DATA_DIR>/plugins/keyword/media/` 目录下。图片文件系统独立持久化，受 10 MiB 大小限制与格式校验保护，绝不混入 Core 配置数据库。
+4. **数据目录环境变量**：若需要自定义外部数据目录，必须在启动前通过操作系统环境变量配置 `XDUCRAFT_DATA_DIR`（绝对路径），切勿仅写在 live `.env` 中。
+
+---
+
+## 许可证说明
+
+本项目自身源码采用 [MIT License](LICENSE) 授权开源。
+
+第三方依赖项与协议端接口规范遵循各自独立的授权许可。
