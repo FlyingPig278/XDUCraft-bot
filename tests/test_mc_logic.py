@@ -1,9 +1,9 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
-from xducraft_bot.plugins import xducraft_mc_update as mc_update_module
-from xducraft_bot.plugins.xducraft_mc_update.data_manager import data_manager
-from xducraft_bot.plugins.xducraft_mc_update import (
+import xducraft_mc_update as mc_update_module
+from xducraft_mc_update.data_manager import data_manager
+from xducraft_mc_update import (
     check_update,
     format_release_time,
     handle_mc_command,
@@ -236,7 +236,7 @@ def setup_http_and_bot(mocker, payload):
 
     mock_bot = MagicMock()
     mock_bot.send_group_msg = AsyncMock()
-    mocker.patch("xducraft_bot.plugins.xducraft_mc_update.get_bots", return_value={"bot1": mock_bot})
+    mocker.patch("xducraft_mc_update.get_bots", return_value={"bot1": mock_bot})
     return mock_bot
 
 
@@ -253,7 +253,7 @@ def setup_http_sequence_and_bot(mocker, payloads):
 
     mock_bot = MagicMock()
     mock_bot.send_group_msg = AsyncMock()
-    mocker.patch("xducraft_bot.plugins.xducraft_mc_update.get_bots", return_value={"bot1": mock_bot})
+    mocker.patch("xducraft_mc_update.get_bots", return_value={"bot1": mock_bot})
     return mock_bot
 
 

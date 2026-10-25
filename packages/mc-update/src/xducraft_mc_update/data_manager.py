@@ -5,7 +5,11 @@ from typing import Any, Dict, List, Optional
 
 from xducraft_bot.shared.data_paths import plugin_data_dir
 
-DEFAULT_DATA_DIR = str(plugin_data_dir("mc_update", os.path.join(os.path.dirname(__file__), "data")))
+DEFAULT_DATA_DIR = str(plugin_data_dir(
+    "mc_update",
+    os.path.join(os.path.dirname(__file__), "data"),
+    legacy_relative_path="xducraft_bot/plugins/xducraft_mc_update/data",
+))
 DEFAULT_DATA_FILE = os.path.join(DEFAULT_DATA_DIR, "subscription.json")
 
 
