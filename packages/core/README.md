@@ -9,7 +9,7 @@ XDUCraft NoneBot 插件体系的独立配置存储、生命周期门禁与共享
 ## 定位与架构边界
 
 - **核心包职责**：提供基于 SQLite 的单活动声明式配置管理（原生 Pydantic 模型支持与文档存储）、NoneBot 消息与事件前置门禁控制（`@run_preprocessor`）、数据目录路径决策（`data_paths`）、启动期声明式历史迁移框架（`migrate_legacy`）及公共 SDK。
-- **与业务插件/前端的边界**：`packages/happy-bot`（`nonebot-plugin-xducraft-happy-bot` 0.2.0，依赖 Core `[onebot]>=0.3.0,<0.4.0`）现已作为首个独立业务插件包拆分试点，业务插件显式声明并加载 Core；其余业务插件（如 `xducraft_mc_status`、`xducraft_wordcloud` 等）与管理后台 WebUI 仍留在上层主项目仓库中，当前尚未全部作为独立包分发。Core 仅包含纯净的 SDK 核心与生命周期入口。现有 WebUI 仅作为本地管理面板，当前处于内部演进阶段，尚未发布至公共 PyPI 仓库，亦不存在生产镜像包注册发布工作流。
+- **与业务插件/前端的边界**：`packages/happy-bot`（`nonebot-plugin-xducraft-happy-bot` 0.2.0）与 `packages/auto-friend`（`nonebot-plugin-xducraft-auto-friend` 0.1.0，加载名 `xducraft_auto_friend`）现已作为独立业务插件包解耦拆分，业务插件显式声明并加载 Core（均依赖 Core `[onebot]>=0.3.0,<0.4.0`）；其余业务插件（如 `xducraft_mc_status`、`xducraft_wordcloud` 等）与管理后台 WebUI 仍留在上层主项目单体仓库中，当前尚未全部作为独立包分发。Core 仅包含纯净的 SDK 核心与生命周期入口。现有 WebUI 仅作为本地管理面板，当前处于内部演进阶段，尚未发布至公共 PyPI 仓库，亦不存在生产镜像包注册发布工作流。
 - **双重门禁与系统服务定位**：受管业务插件的全局总开关与群级开关**默认均为关闭（OFF）**，需显式开启全局与群级双重门禁方可响应运行。Core 配置生命周期插件自身声明为非受管基础设施（`managed=False`），不受业务门禁拦截，不可作为业务插件关闭。
 - **基础依赖精简**：基础安装仅依赖 `nonebot2`、`pydantic` 与 `platformdirs`，不包含 OneBot 适配器、FastAPI 或 WebUI 任何源码。针对权限判定（`permissions`）与私聊推送（`onebot`）等辅助工具，需启用可选依赖 `[onebot]`。
 - **POSIX 文件权限安全**：在 POSIX 系统上，Core 自动将 SQLite 配置数据库主文件及其 WAL、SHM 侧车文件权限严格约束为 `0600`（仅当前进程属主用户可读写），防止同宿主机非特权越权访问。
@@ -79,7 +79,7 @@ NoneBot 启动初始化时，生命周期绑定必须在 `nonebot.init()` 之后
 - **配置文件加载**（项目根目录 `pyproject.toml`）：
   ```toml
   [tool.nonebot]
-  plugins = ["xducraft_config", "xducraft_happy_bot"]
+  plugins = ["xducraft_config", "xducraft_happy_bot", "xducraft_auto_friend"]
   plugin_dirs = ["xducraft_bot/plugins"]
   ```
 - **代码中显式声明依赖**：在所有依赖 Core 门禁与配置存储的业务插件入口顶部，优先调用 `require("xducraft_config")`。

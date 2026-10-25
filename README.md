@@ -19,8 +19,9 @@
 
 ---
 
-> [!NOTE]  
-> 本项目核心能力已抽离为独立公共包 `packages/core`（发行名 `nonebot-plugin-xducraft-core` 0.3.0，生命周期入口 `xducraft_config`，SDK 命名空间 `xducraft_bot.shared.*`），首个业务插件亦已独立为 `packages/happy-bot`（发行名 `nonebot-plugin-xducraft-happy-bot` 0.2.0，加载名 `xducraft_happy_bot`，依赖 `nonebot-plugin-xducraft-core[onebot]>=0.3.0,<0.4.0`），配合 Naive UI 本地管理面板。主仓库仍包含其余业务插件（当前尚未全部独立分发）与前端；业务群参数采用独立快照，共享与启动参数单独管理；业务总开关与群开关默认关闭，历史数据通过确定性单次迁移完成固化。
+> [!NOTE]
+> 已可独立安装：配置核心（`packages/core`）、表情回应（`packages/happy-bot`）、自动好友申请（`packages/auto-friend`）。
+> 其余插件和 Naive UI 管理面板仍在主仓库。业务插件的全局与群开关默认关闭，升级时自动导入旧配置。
 ## 🚀 快速开始
 
 ### 1. 运行环境要求
@@ -41,10 +42,10 @@ venv\Scripts\activate
 # Linux / macOS:
 source venv/bin/activate
 
-# 安装机器人 Python 依赖（通过可编辑模式引入 packages/core[onebot] 与 packages/happy-bot）
+# 安装机器人 Python 依赖（通过可编辑模式引入 packages/core[onebot]、packages/happy-bot 与 packages/auto-friend）
 pip install -r requirements.txt
 ```
-> 若此前拉取过旧版本源码，请重新执行 `pip install -r requirements.txt`，以确保在虚拟环境中通过可编辑模式安装独立的 `packages/core` 核心包与首个独立业务包 `packages/happy-bot`。主仓库仍保留其余业务插件（尚未全部独立分发）与前端管理面板。
+> 若此前拉取过旧版本源码，请重新执行 `pip install -r requirements.txt`，以确保在虚拟环境中通过可编辑模式安装独立的 `packages/core` 核心包与独立业务包 `packages/happy-bot`、`packages/auto-friend`。主仓库仍保留其余业务插件（尚未全部独立分发）与前端管理面板。
 
 ### 3. 构建管理前端产物
 ```bash
@@ -412,12 +413,19 @@ async def set_welcome_text(group_id: int, text: str) -> None:
   - **每群完全独立配置**：表情 ID（`emoji_id`，默认 `123`）完全在每群独立设置与持久化。管理面板不提供全局表情修改入口，避免单群操作意外污染其他群。
   - **声明式单次迁移与中断策略**：通过 `PluginConfiguration` 声明 `migrate_legacy` 回调，NoneBot 启动时由 Core 按序驱动，将历史 `emoji_like_config.json` 一次性导入至 Core SQLite（`happy_bot` 命名空间）；历史 JSON 仅作为导入输入，旧文件不再写入亦不被删除；若历史文件损坏则直接中断启动，绝不静默使用默认配置覆盖。
 ### 7. 🤝 自动好友申请（xducraft_auto_friend）
+- **独立分发说明**：
+  - 本插件已作为第二个独立业务插件拆分解耦（源码位于 `packages/auto-friend`，发行名 `nonebot-plugin-xducraft-auto-friend` 0.1.0，加载名 `xducraft_auto_friend`，依赖 `nonebot-plugin-xducraft-core[onebot]>=0.3.0,<0.4.0`），在根 `pyproject.toml` 的 `plugins` 中显式加载。
 - **功能特性**：
-  - 针对加好友申请，自动核实申请人是否属于受信任群成员，确认后自动同意好友。
-- **配置与前置条件**：
-  - **运行前置条件**：该群须开启自动加好友功能（可在网页管理面板群卡片开启，或由管理员在 QQ 群内发送 `/功能 on 自动加好友`），插件全局总开关须处于开启状态，且该群号必须收录在部署白名单中。
-  - **启动期参数（重启生效）**：`auto_accept_friend_group_ids`（群号列表），修改后须重启机器人进程生效。
-
+  - 针对加好友申请，自动核查申请人是否属于白名单群成员；验证通过后自动同意好友。
+  - 由于 OneBot v11 好友请求事件自身不包含来源群号，插件会按白名单顺序实时调用 `get_group_member_info` 校验成员归属；若无法确认成员身份（如网络异常或不在群内）则保持拒绝（Fail-closed），并继续尝试下一个已配置且启用的群。
+  - 无独立业务数据库、媒体文件或本地 JSON 资产，不涉及自有 JSON 迁移。
+- **门禁机制与前置条件**：
+  - 需同时满足多重门禁方可自动通过申请：插件全局总开关（`auto_friend`）开启、群级插件总开关开启、群级被动功能开关（`auto_accept_friend`，功能名“自动加好友”）开启，且群号必须包含在当前生效的白名单中（门禁默认均为关闭）。
+- **白名单配置与启动期生效**：
+  - **启动期参数（重启生效）**：`auto_accept_friend_group_ids`（群号列表，通过插件声明式 Schema 自动向管理面板提供 `id-list` 渲染）。
+  - **旧 .env 兼容与动态覆盖**：既有 `.env` 中的 `AUTO_ACCEPT_FRIEND_GROUP_IDS` JSON 数组保持作为启动基线，无需全量搬迁；管理端提交的显式修改通过 Core SQLite 的 `deployment_overrides` 持久化，重启后生效；若移除覆盖项（unset），重启后自动恢复为 `.env` 基准值。
+- **命令与管理入口说明**：
+  - QQ 端 `/功能 on|off 自动加好友` 交互命令属于主仓库的 `xducraft_features` 插件，不包含在 `nonebot-plugin-xducraft-auto-friend` 独立 wheel 中。独立部署环境下可通过 Core SDK（如 `feature_gate` 与 `configuration`）或单独部署的 WebUI 进行启停配置。
 ### 8. 🎫 邀请码自助领取（xducraft_invite）
 - **功能特性**：
   - 仅服务于单个绑定的核心交流群。成员在绑定群内 @机器人发送“邀请码”（或群内发送 `/邀请码`），核验群成员资格后通过私聊发放 Minecraft 白名单邀请码；私聊直接发送仅返回使用引导。
