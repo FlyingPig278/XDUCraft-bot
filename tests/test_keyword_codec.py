@@ -9,8 +9,8 @@ import pytest
 from nonebot.adapters.onebot.v11 import Message, MessageSegment
 from PIL import Image
 
-from xducraft_bot.plugins.xducraft_keyword import data_manager as dm
-from xducraft_bot.plugins.xducraft_keyword import reply_codec as codec
+from xducraft_keyword import data_manager as dm
+from xducraft_keyword import reply_codec as codec
 
 
 def _png_bytes(color: tuple[int, int, int, int] = (20, 40, 60, 255)) -> bytes:

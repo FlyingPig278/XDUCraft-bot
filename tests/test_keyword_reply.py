@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from nonebot.adapters.onebot.v11 import Message, MessageSegment
 
-from xducraft_bot.plugins import xducraft_keyword as keyword
-from xducraft_bot.plugins.xducraft_keyword import data_manager as dm
+import xducraft_keyword as keyword
+from xducraft_keyword import data_manager as dm
 from xducraft_bot.shared.config_store import ConfigDocumentStore
 
 

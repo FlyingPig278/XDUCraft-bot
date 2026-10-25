@@ -18,7 +18,12 @@ from xducraft_bot.shared.config_store import ConfigDocumentStore
 from xducraft_bot.shared.data_paths import plugin_data_dir
 from xducraft_bot.shared.json_store import as_bool, as_int, as_str
 
-DATA_DIR = str(plugin_data_dir("keyword", os.path.join(os.path.dirname(__file__), "data")))
+LEGACY_DATA_PATH = "xducraft_bot/plugins/xducraft_keyword/data"
+DATA_DIR = str(plugin_data_dir(
+    "keyword",
+    os.path.join(os.path.dirname(__file__), "data"),
+    legacy_relative_path=LEGACY_DATA_PATH,
+))
 CONFIG_FILE = os.path.join(DATA_DIR, "keyword_config.json")
 MEDIA_DIR = os.path.join(DATA_DIR, "media")
 
