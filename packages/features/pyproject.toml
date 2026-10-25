@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68,<81", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nonebot-plugin-xducraft-features"
+version = "0.1.0"
+description = "QQ commands for managing declared XDUCraft plugin features."
+readme = "README.md"
+requires-python = ">=3.9,<4"
+dependencies = [
+    "nonebot2~=2.4.3",
+    "nonebot-adapter-onebot~=2.4.6",
+    "nonebot-plugin-xducraft-core[onebot]>=0.3.0,<0.4.0",
+    "pydantic>=2,<3",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["xducraft_features"]
+include-package-data = false

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from xducraft_bot.plugins import xducraft_features as features_module
+import xducraft_features as features_module
 from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared import permissions as permissions_module
 
