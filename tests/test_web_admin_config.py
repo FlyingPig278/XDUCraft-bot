@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, Field, SecretStr, StrictInt
 
-from xducraft_bot.admin.startup import StartupResources
+from xducraft_admin.startup import StartupResources
 from xducraft_bot.shared.configuration import ConfigModel, ConfigurationError, PluginConfiguration, StartupConfig
 from xducraft_bot.shared import deployment_config as deployment
 from xducraft_bot.shared.config_store import ConfigDocumentStore

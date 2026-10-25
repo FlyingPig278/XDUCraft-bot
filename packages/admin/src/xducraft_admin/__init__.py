@@ -11,7 +11,10 @@ from nonebot.plugin import PluginMetadata
 
 require("xducraft_config")
 
-from xducraft_bot.admin.settings import (
+from xducraft_bot.shared.configuration import PROTOCOL_KEY
+from .configuration import DECLARATION
+
+from .settings import (
     WebAdminSettings,
     WebAdminSettingsError,
     load_settings,
@@ -21,6 +24,7 @@ __plugin_meta__ = PluginMetadata(
     name="XDUCraft_admin",
     description="仅回环监听的 XDUCraft 网页管理面板",
     usage="通过 WEB_ADMIN_ENABLED 启用，并经本机或 SSH 隧道访问。",
+    extra={PROTOCOL_KEY: DECLARATION},
 )
 
 _DRIVER = get_driver()
@@ -37,7 +41,7 @@ _stop_server: Optional[Callable[[], Awaitable[None]]] = None
 
 
 def _static_root() -> Path:
-    return Path(__file__).resolve().parents[3] / "webui" / "dist"
+    return Path(__file__).resolve().parent / "static"
 
 
 @_DRIVER.on_startup
@@ -57,10 +61,10 @@ async def _start_admin_panel() -> None:
 
     try:
         # FastAPI, Uvicorn, and business adapters remain optional unless enabled.
-        from xducraft_bot.admin.adapters import build_service
-        from xducraft_bot.admin.app import create_app
-        from xducraft_bot.admin.auth import AdminAuth
-        from xducraft_bot.admin.server import start, stop
+        from .adapters import build_service
+        from .app import create_app
+        from .auth import AdminAuth
+        from .server import start, stop
 
         service = build_service()
         auth = AdminAuth(_SETTINGS.password)

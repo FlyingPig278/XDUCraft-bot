@@ -1,8 +1,6 @@
-"""Collect plugin tests in a disposable source/resource mirror, never live data."""
+"""Run independently installed plugin tests against disposable runtime data."""
 import gc
 import os
-import shutil
-import sys
 import tempfile
 from pathlib import Path
 
@@ -10,12 +8,6 @@ import pytest
 
 _mirror = tempfile.TemporaryDirectory(prefix="xducraft-tests-")
 _root = Path(_mirror.name)
-_source = Path(__file__).resolve().parents[1]
-shutil.copytree(
-    _source / "xducraft_bot", _root / "xducraft_bot",
-    ignore=shutil.ignore_patterns("data", "image_cache", "__pycache__"),
-)
-sys.path.insert(0, str(_root))
 os.environ["XDUCRAFT_DATA_DIR"] = str(_root / "runtime-data")
 os.environ["XDUCRAFT_CONFIG_DB"] = str(_root / "runtime-data" / "core" / "configuration.sqlite3")
 

@@ -10,10 +10,10 @@ import httpx
 import pytest
 from pydantic import Field, SecretStr, StrictInt, StrictStr, field_validator
 
-from xducraft_bot.admin.adapters import discover_catalog
-from xducraft_bot.admin.app import COOKIE, create_app
-from xducraft_bot.admin.auth import AdminAuth
-from xducraft_bot.admin.service import AdminService
+from xducraft_admin.adapters import discover_catalog
+from xducraft_admin.app import COOKIE, create_app
+from xducraft_admin.auth import AdminAuth
+from xducraft_admin.service import AdminService
 from xducraft_bot.shared import configuration
 from xducraft_bot.shared.configuration import (
     ConfigContext,
@@ -652,7 +652,7 @@ async def test_overview_keeps_bot_ids_and_isolates_login_info_timeout(
     )
     app = create_app(service, AdminAuth(PASSWORD), tmp_path / "missing-dist")
     transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 12345))
-    monkeypatch.setattr("xducraft_bot.admin.service._BOT_INFO_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("xducraft_admin.service._BOT_INFO_TIMEOUT_SECONDS", 0.01)
 
     async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
         await client.post("/api/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
@@ -677,8 +677,8 @@ async def test_real_bound_business_declaration_shares_store_with_qq_reader(
     tmp_path: Path,
     isolated_feature_gate,
 ):
-    from xducraft_bot.plugins.xducraft_pig_bot.configuration import bind_configuration
-    from xducraft_bot.plugins.xducraft_pig_bot.data_manager import DataManager
+    from xducraft_pig_bot.configuration import bind_configuration
+    from xducraft_pig_bot.data_manager import DataManager
 
     manager = DataManager(legacy_config_path=tmp_path / "pig.json")
     declaration = bind_configuration(manager)

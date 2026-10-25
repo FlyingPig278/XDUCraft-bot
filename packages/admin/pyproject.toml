@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68,<81", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nonebot-plugin-xducraft-admin"
+version = "0.1.0"
+description = "Declaration-driven loopback WebUI for XDUCraft NoneBot plugins."
+readme = "README.md"
+requires-python = ">=3.9,<4"
+dependencies = [
+    "nonebot2~=2.4.3",
+    "nonebot-plugin-xducraft-core[onebot]>=0.3.0,<0.4.0",
+    "pydantic>=2,<3",
+    "fastapi>=0.93,<1",
+    "uvicorn~=0.38.0",
+    "httpx~=0.28.1",
+    "pillow~=11.3.0",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["xducraft_admin"]
+include-package-data = false
+
+[tool.setuptools.package-data]
+xducraft_admin = ["static/*", "static/assets/*"]
+
+[tool.setuptools.cmdclass]
+build_py = "build_support.BuildPy"

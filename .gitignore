@@ -61,12 +61,13 @@ dist/
 node_modules/
 /output/
 /.playwright-cli/
+/packages/admin/src/xducraft_admin/static/
 
 # mcs-editor 使用自己的 Git 仓库管理
 /mcs-editor/
 
 **/App.vue
-!/webui/src/App.vue
+!/packages/admin/webui/src/App.vue
 
 bot.py
 
