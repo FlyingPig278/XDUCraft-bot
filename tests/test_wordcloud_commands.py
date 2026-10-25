@@ -32,9 +32,9 @@ nonebot.on_command.return_value.handle.side_effect = pass_through_decorator
 
 sys.path.append(str(Path.cwd()))
 
-import xducraft_bot.plugins.xducraft_wordcloud as wc_module
-from xducraft_bot.plugins.xducraft_wordcloud import handle_group_message_record, handle_wordcloud_command
-from xducraft_bot.plugins.xducraft_wordcloud.data_manager import ChatLogDataManager
+import xducraft_wordcloud as wc_module
+from xducraft_wordcloud import handle_group_message_record, handle_wordcloud_command
+from xducraft_wordcloud.data_manager import ChatLogDataManager
 
 chat_log_data_manager = wc_module.chat_log_data_manager
 
@@ -71,6 +71,7 @@ def build_message_mock(text):
     message = MagicMock()
     message.extract_plain_text.return_value = text
     return message
+
 
 
 @pytest.mark.asyncio
@@ -434,7 +435,7 @@ async def test_global_stop_blocks_qq_mutation_without_changing_saved_group_state
 
 @pytest.mark.asyncio
 async def test_qq_ban_updates_round_trip_with_group_configuration(mocker, enabled_wordcloud):
-    from xducraft_bot.plugins.xducraft_wordcloud.configuration import bind_configuration
+    from xducraft_wordcloud.configuration import bind_configuration
     from xducraft_bot.shared.configuration import ConfigContext
 
     resource = bind_configuration(chat_log_data_manager).resources["group"]

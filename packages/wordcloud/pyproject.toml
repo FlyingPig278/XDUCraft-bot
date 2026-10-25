@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68,<81", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nonebot-plugin-xducraft-wordcloud"
+version = "0.1.0"
+description = "Generate scheduled and on-demand group chat word clouds for NoneBot OneBot v11."
+readme = "README.md"
+requires-python = ">=3.9,<4"
+dependencies = [
+    "nonebot2~=2.4.3",
+    "nonebot-adapter-onebot~=2.4.6",
+    "nonebot-plugin-apscheduler~=0.5.0",
+    "nonebot-plugin-xducraft-core[onebot]>=0.3.0,<0.4.0",
+    "pydantic>=2,<3",
+    "httpx~=0.28.1",
+    "jieba~=0.42.1",
+    "Pillow~=11.3.0",
+    "stopwordsiso~=0.6.1",
+    "wordcloud~=1.9.4",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["xducraft_wordcloud"]
+include-package-data = false
+
+[tool.setuptools.package-data]
+xducraft_wordcloud = [
+    "data/*.json.example",
+    "resources/fonts/*.otf",
+]

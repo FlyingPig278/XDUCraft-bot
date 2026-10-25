@@ -30,7 +30,7 @@ nonebot.on_command.return_value.handle.side_effect = pass_through_decorator
 
 sys.path.append(str(Path.cwd()))
 
-from xducraft_bot.plugins.xducraft_wordcloud.data_manager import ChatLogDataManager
+from xducraft_wordcloud.data_manager import ChatLogDataManager
 
 
 @pytest.fixture(autouse=True)
@@ -384,7 +384,7 @@ def test_delete_messages_by_user_id(tmp_path):
 
 def test_wordcloud_declaration_round_trip_preserves_concrete_values_and_global_safety(tmp_path):
     from xducraft_bot.shared.configuration import ConfigContext, ConfigurationError
-    from xducraft_bot.plugins.xducraft_wordcloud.configuration import bind_configuration
+    from xducraft_wordcloud.configuration import bind_configuration
     manager = ChatLogDataManager(
         data_dir=str(tmp_path), db_file=str(tmp_path / "chat.db"),
         legacy_config_path=str(tmp_path / "absent.json"),

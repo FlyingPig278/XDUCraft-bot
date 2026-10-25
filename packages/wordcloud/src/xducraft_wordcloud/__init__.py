@@ -80,15 +80,13 @@ wordcloud_command = on_command("wc", aliases={"词云", "wordcloud"}, priority=1
 
 
 def _get_font_path() -> Optional[str]:
-    # Reuse existing Chinese font resource in this repository when available.
     candidate = (
-        Path(__file__).resolve().parents[1]
-        / "xducraft_mc_status"
+        Path(__file__).resolve().parent
         / "resources"
         / "fonts"
         / "SourceHanSansCN-Medium.otf"
     )
-    if candidate.exists():
+    if candidate.is_file():
         return str(candidate)
     return None
 

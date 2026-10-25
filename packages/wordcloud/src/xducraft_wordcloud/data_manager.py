@@ -10,7 +10,14 @@ from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.config_store import ConfigDocumentStore
 from xducraft_bot.shared.data_paths import plugin_data_dir
 
-DEFAULT_DATA_DIR = str(plugin_data_dir("wordcloud", os.path.join(os.path.dirname(__file__), "data")))
+LEGACY_DATA_PATH = os.path.join(
+    "xducraft_bot", "plugins", "xducraft_wordcloud", "data",
+)
+DEFAULT_DATA_DIR = str(plugin_data_dir(
+    "wordcloud",
+    os.path.join(os.path.dirname(__file__), "data"),
+    legacy_relative_path=LEGACY_DATA_PATH,
+))
 DEFAULT_DB_FILE = os.path.join(DEFAULT_DATA_DIR, "chat_logs.db")
 DEFAULT_CONFIG_FILE = os.path.join(DEFAULT_DATA_DIR, "wordcloud_config.json")
 
