@@ -1,0 +1,12 @@
+Third-party resource notices
+============================
+The repository MIT license covers original XDUCraft code. It does not
+relicense the bundled font or grant rights to third-party trademarks.
+
+resources/fonts/SourceHanSansCN-Medium.otf
+Copyright (c) 2014 Adobe Systems Incorporated. All rights reserved.
+The bundled historical binary identifies the Apache License, Version 2.0.
+Its license is reproduced in LICENSES/SourceHanSansCN-Apache-2.0.txt.
+Historical upstream: https://github.com/adobe-fonts/source-han-sans/tree/1.001
+Source license: https://raw.githubusercontent.com/adobe-fonts/source-han-sans/1.001/LICENSE.txt
+This old binary is not relabeled under the OFL license of newer releases.

@@ -1,4 +1,3 @@
-import sys
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,30 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
-# ================= Setup Mock =================
-def pass_through_decorator(*args, **kwargs):
-    def decorator(func):
-        return func
-
-    return decorator
-
-
-mock_scheduler_module = MagicMock()
-mock_scheduler = MagicMock()
-mock_scheduler.scheduled_job.side_effect = pass_through_decorator
-mock_scheduler_module.scheduler = mock_scheduler
-sys.modules["nonebot_plugin_apscheduler"] = mock_scheduler_module
-
-import nonebot
-
-nonebot.require = MagicMock()
-nonebot.get_driver = MagicMock()
-nonebot.on_message = MagicMock()
-nonebot.on_message.return_value.handle.side_effect = pass_through_decorator
-nonebot.on_command = MagicMock()
-nonebot.on_command.return_value.handle.side_effect = pass_through_decorator
-
-sys.path.append(str(Path.cwd()))
 
 import xducraft_wordcloud as wc_module
 from xducraft_wordcloud import handle_group_message_record, handle_wordcloud_command
