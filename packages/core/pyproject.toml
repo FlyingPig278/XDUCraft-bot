@@ -8,16 +8,33 @@ version = "0.3.0"
 description = "Shared configuration and lifecycle core for XDUCraft NoneBot plugins."
 readme = "README.md"
 requires-python = ">=3.9,<4"
+license = { file = "LICENSE" }
+classifiers = ["License :: OSI Approved :: MIT License"]
 dependencies = [
     "nonebot2~=2.4.3",
     "pydantic>=2,<3",
     "platformdirs>=4,<5",
 ]
 
+[project.urls]
+Repository = "https://github.com/FlyingPig278/nonebot-plugin-xducraft-core"
+
 [project.optional-dependencies]
 onebot = ["nonebot-adapter-onebot~=2.4.6"]
+dev = [
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.24,<1",
+    "pytest-mock>=3.14,<4",
+    "build>=1.2,<2",
+]
 
 [tool.setuptools]
 package-dir = { "" = "src" }
 packages = ["xducraft_bot.shared", "xducraft_config"]
 include-package-data = false
+license-files = ["LICENSE", "NOTICE*", "LICENSES/**/*", "THIRD_PARTY_LICENSES*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

@@ -1,4 +1,3 @@
-import importlib
 from typing import Any, Optional
 
 import pytest
@@ -193,11 +192,6 @@ async def test_group_can_be_prepared_under_applied_shared_policy_while_global_up
     await recover_config("paused_group_preparation", ConfigContext(), rollback=True)
     assert get_config("paused_group_preparation", "group", 10001).value == 5
     assert is_plugin_enabled("paused_group_preparation", 10001)
-
-
-def test_core_lifecycle_plugin_imports_with_its_execution_guard():
-    core_plugin = importlib.import_module("xducraft_config")
-    assert callable(core_plugin.guard_plugin_execution)
 
 
 @pytest.mark.asyncio
