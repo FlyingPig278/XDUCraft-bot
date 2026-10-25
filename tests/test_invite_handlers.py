@@ -4,10 +4,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from xducraft_bot.plugins import xducraft_invite as invite
-from xducraft_bot.plugins.xducraft_invite.api_client import GeneratedInvite
-from xducraft_bot.plugins.xducraft_invite.data_manager import InviteStore
-from xducraft_bot.plugins.xducraft_invite.settings import InviteSettings
+import xducraft_invite as invite
+from xducraft_invite.api_client import GeneratedInvite
+from xducraft_invite.data_manager import InviteStore
+from xducraft_invite.settings import InviteSettings
 
 
 GROUP_ID = 123456789

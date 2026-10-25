@@ -12,7 +12,11 @@ from typing import Iterable, Optional
 
 from xducraft_bot.shared.data_paths import plugin_data_dir
 
-DATA_DIR = str(plugin_data_dir("invite", os.path.join(os.path.dirname(__file__), "data")))
+DATA_DIR = str(plugin_data_dir(
+    "invite",
+    os.path.join(os.path.dirname(__file__), "data"),
+    legacy_relative_path="xducraft_bot/plugins/xducraft_invite/data",
+))
 DB_FILE = os.path.join(DATA_DIR, "invitations.db")
 LEASE_TTL_SECONDS = 180
 

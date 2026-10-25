@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68,<81", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nonebot-plugin-xducraft-invite"
+version = "0.1.0"
+description = "Invitation-code self service and administration for XDUCraft."
+readme = "README.md"
+requires-python = ">=3.9,<4"
+dependencies = [
+    "nonebot2~=2.4.3",
+    "nonebot-adapter-onebot~=2.4.6",
+    "nonebot-plugin-xducraft-core[onebot]>=0.3.0,<0.4.0",
+    "pydantic>=2,<3",
+    "httpx~=0.28.1",
+    "cryptography~=45.0.0",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["xducraft_invite"]
+include-package-data = false
