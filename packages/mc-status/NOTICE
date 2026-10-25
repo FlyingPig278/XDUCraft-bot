@@ -1,0 +1,49 @@
+Third-party resource notices
+============================
+The repository MIT license covers original XDUCraft code. It does not
+relicense the bundled font or grant rights to third-party trademarks.
+
+resources/fonts/SourceHanSansCN-Medium.otf
+Copyright (c) 2014 Adobe Systems Incorporated. All rights reserved.
+The bundled historical binary identifies the Apache License, Version 2.0.
+Its license is reproduced in LICENSES/SourceHanSansCN-Apache-2.0.txt.
+Historical upstream: https://github.com/adobe-fonts/source-han-sans/tree/1.001
+Source license: https://raw.githubusercontent.com/adobe-fonts/source-han-sans/1.001/LICENSE.txt
+This old binary is not relabeled under the OFL license of newer releases.
+
+Additional MC status assets
+---------------------------
+resources/fonts/Monocraft.otf
+Copyright (c) 2022 Idrees Hassan. SIL Open Font License 1.1.
+License: LICENSES/Monocraft-OFL-1.1.txt
+Upstream: https://github.com/IdreesInc/Monocraft
+
+resources/fonts/minecraft-five-bold.otf
+Copyright (c) 2023 AngelloENF2. SIL Open Font License 1.1.
+License: LICENSES/MinecraftFive-OFL-1.1.txt
+Author license: https://fontstruct.com/fontstructions/license/2314376/minecraft-five-bold-4
+
+resources/fonts/VONWAONBITMAP-12PX.TTF
+Copyright (c) 2021 Haoyu Qiu. The author designates this work CC0 1.0:
+https://timothyqiu.itch.io/vonwaon-bitmap
+https://creativecommons.org/publicdomain/zero/1.0/legalcode
+The author's CC0 designation does not clear third-party rights in earlier
+HZK/ASC-derived glyphs. Upstream provenance remains a known uncertainty:
+https://github.com/aguegu/BitmapFont/issues/2
+
+Preserved legacy resources with unverified redistribution permissions
+-------------------------------------------------------------------
+The following legacy assets are not covered by this repository's MIT
+license. Their redistribution permissions have not been verified here:
+- resources/fonts/minecraft-ten.ttf: embedded copyright (c) 2015-2017
+  Mojang AB; P22 / Canada Type; designer Patrick Griffin.
+- resources/fonts/Minecraft AE.ttf: embedded attribution AE; original
+  author and license have not been established.
+- resources/textures/*.png: Minecraft-derived textures (Mojang/Microsoft).
+- resources/images/default_server_icon.png and fire.png: apparently
+  Minecraft-derived images; exact provenance is not confirmed.
+- resources/images/offline_server_icon.png: original author/license unknown.
+These files are retained as legacy assets, not represented as freely
+licensed. No additional grant is made by including them in this package.
+Minecraft terms: https://www.minecraft.net/en-us/eula
+Usage guidelines: https://www.minecraft.net/en-us/usage-guidelines
