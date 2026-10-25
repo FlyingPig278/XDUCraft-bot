@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "PigHub image queries and scheduled group pushes for NoneBot OneBot v11."
 readme = "README.md"
 requires-python = ">=3.9,<4"
+license = { file = "LICENSE" }
+classifiers = ["License :: OSI Approved :: MIT License"]
 dependencies = [
     "nonebot2~=2.4.3",
     "nonebot-adapter-onebot~=2.4.6",
@@ -17,7 +19,24 @@ dependencies = [
     "pydantic>=2,<3",
 ]
 
+[project.urls]
+Repository = "https://github.com/FlyingPig278/nonebot-plugin-xducraft-pig-bot"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.24,<1",
+    "pytest-mock>=3.14,<4",
+    "build>=1.2,<2",
+]
+
 [tool.setuptools]
 package-dir = { "" = "src" }
 packages = ["xducraft_pig_bot"]
 include-package-data = false
+license-files = ["LICENSE", "NOTICE*", "LICENSES/**/*", "THIRD_PARTY_LICENSES*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

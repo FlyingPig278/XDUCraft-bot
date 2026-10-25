@@ -1,33 +1,7 @@
-import sys
 import json
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-
-# ================= Setup Mock =================
-def pass_through_decorator(*args, **kwargs):
-    def decorator(func):
-        return func
-
-    return decorator
-
-
-mock_scheduler_module = MagicMock()
-mock_scheduler = MagicMock()
-mock_scheduler.scheduled_job.side_effect = pass_through_decorator
-mock_scheduler_module.scheduler = mock_scheduler
-sys.modules["nonebot_plugin_apscheduler"] = mock_scheduler_module
-
-import nonebot
-
-nonebot.require = MagicMock()
-nonebot.get_driver = MagicMock()
-nonebot.on_command = MagicMock()
-nonebot.on_command.return_value.handle.side_effect = pass_through_decorator
-
-sys.path.append(str(Path.cwd()))
 
 import xducraft_pig_bot as pig_module
 from xducraft_pig_bot import (
@@ -435,33 +409,6 @@ def test_pig_declaration_validates_independent_group_revisions():
         with pytest.raises(ConfigurationError):
             resource.write(ctx, {"max_forward_results": invalid})
     assert resource.read(ctx).revision_values == current.revision_values
-
-
-def test_happy_declaration_only_changes_selected_group(tmp_path, monkeypatch):
-    from xducraft_bot.shared.config_store import ConfigDocumentStore
-    from xducraft_bot.shared.configuration import ConfigContext, ConfigurationError
-    from xducraft_happy_bot import data_manager as happy
-    from xducraft_happy_bot.configuration import bind_configuration
-    monkeypatch.setattr(happy, "_store", ConfigDocumentStore(
-        "happy_bot", happy._default_data, happy._normalize,
-        database_path=str(tmp_path / "happy.sqlite3"),
-    ))
-    happy.set_emoji_id("123", 10001)
-    happy.set_emoji_id("456", 10002)
-    declaration = bind_configuration(happy)
-    assert set(declaration.resources) == {"group"}
-    resource = declaration.resources["group"]
-    resource.write(ConfigContext(10001), {"emoji_id": "789"})
-    assert happy.get_emoji_id(10001) == "789"
-    assert happy.get_emoji_id(10002) == "456"
-    assert happy.get_emoji_id(10003) == happy.DEFAULT_EMOJI_ID
-    before = resource.read(ConfigContext(10002))
-    for invalid in (None, "", "not-a-number"):
-        with pytest.raises(ConfigurationError):
-            resource.write(ConfigContext(10001), {"emoji_id": invalid})
-    assert happy.get_emoji_id(10001) == "789"
-    assert resource.read(ConfigContext(10002)).revision_values == before.revision_values
-
 
 @pytest.mark.asyncio
 async def test_scheduled_pig_rechecks_stop_after_fetch(monkeypatch, enable_plugin):
