@@ -2,6 +2,7 @@
 -e ./packages/happy-bot
 -e ./packages/auto-friend
 -e ./packages/keyword
+-e ./packages/pig-bot
 nb-cli~=1.4.2
 pillow~=11.3.0
 httpx~=0.28.1

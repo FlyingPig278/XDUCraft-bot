@@ -6,7 +6,14 @@ from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.config_store import ConfigDocumentStore
 from xducraft_bot.shared.data_paths import plugin_data_dir
 
-DEFAULT_DATA_DIR = str(plugin_data_dir("pig_bot", os.path.join(os.path.dirname(__file__), "data")))
+LEGACY_DATA_PATH = os.path.join(
+    "xducraft_bot", "plugins", "xducraft_pig_bot", "data",
+)
+DEFAULT_DATA_DIR = str(plugin_data_dir(
+    "pig_bot",
+    os.path.join(os.path.dirname(__file__), "data"),
+    legacy_relative_path=LEGACY_DATA_PATH,
+))
 DEFAULT_DATA_FILE = os.path.join(DEFAULT_DATA_DIR, "pig_config.json")
 DEFAULT_MAX_FORWARD_RESULTS = 5
 
@@ -19,6 +26,10 @@ class DataManager:
             legacy_path=legacy_config_path, database_path=configuration_db_path,
         )
         self._store.load()
+
+    def migrate_legacy_config(self) -> Dict[str, Any]:
+        """Eagerly establish the one-way legacy JSON import."""
+        return self._store.load()
 
     @staticmethod
     def _default_group_config() -> Dict[str, Any]:

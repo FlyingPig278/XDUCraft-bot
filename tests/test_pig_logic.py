@@ -29,15 +29,15 @@ nonebot.on_command.return_value.handle.side_effect = pass_through_decorator
 
 sys.path.append(str(Path.cwd()))
 
-import xducraft_bot.plugins.xducraft_pig_bot as pig_module
-from xducraft_bot.plugins.xducraft_pig_bot import (
+import xducraft_pig_bot as pig_module
+from xducraft_pig_bot import (
     build_image_url,
     find_images_by_keyword,
     handle_pig_command,
     normalize_switch_action,
     pick_random_image,
 )
-from xducraft_bot.plugins.xducraft_pig_bot.data_manager import DataManager
+from xducraft_pig_bot.data_manager import DataManager
 
 
 @pytest.fixture(autouse=True)
@@ -418,7 +418,7 @@ async def test_handle_pig_command_query_cooldown_blocks_frequent_requests(mocker
 
 def test_pig_declaration_validates_independent_group_revisions():
     from xducraft_bot.shared.configuration import ConfigContext, ConfigurationError
-    from xducraft_bot.plugins.xducraft_pig_bot.configuration import bind_configuration
+    from xducraft_pig_bot.configuration import bind_configuration
     declaration = bind_configuration(pig_data_manager)
     assert set(declaration.resources) == {"group"}
     resource = declaration.resources["group"]

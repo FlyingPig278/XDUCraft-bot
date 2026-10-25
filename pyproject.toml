@@ -9,7 +9,7 @@ requires-python = ">=3.9, <4.0"
 adapters = [
     { name = "OneBot V11", module_name = "nonebot.adapters.onebot.v11" }
 ]
-plugins = ["xducraft_config", "xducraft_happy_bot", "xducraft_auto_friend", "xducraft_keyword"]
+plugins = ["xducraft_config", "xducraft_happy_bot", "xducraft_auto_friend", "xducraft_keyword", "xducraft_pig_bot"]
 plugin_dirs = ["xducraft_bot/plugins"]
 
 [tool.pytest.ini_options]

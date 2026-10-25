@@ -27,7 +27,7 @@ def bind_configuration(manager):
             "group": ConfigResource(PigGroup, read_group, write_group),
         }, feature_keys=("pig_query", "pig_auto_push"),
         list_groups=manager.list_configured_groups,
-        migrate_legacy=manager.list_configured_groups,
+        migrate_legacy=manager.migrate_legacy_config,
     )
 
 
