@@ -1,3 +1,4 @@
 include src/build_support.py
 recursive-include webui *.json *.ts *.vue *.html *.css
 prune webui/node_modules
+recursive-include tests *.py

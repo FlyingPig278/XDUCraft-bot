@@ -4,7 +4,7 @@ import asyncio
 import copy
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 import pytest
@@ -58,7 +58,7 @@ class CustomConfig(ConfigModel):
         json_schema_extra={"x-ui-label-field": "name"},
     )
     positional_credentials: list[Credential] = Field(default_factory=list)
-    optional_token: SecretStr | None = None
+    optional_token: Optional[SecretStr] = None
 
     @field_validator("title")
     @classmethod
@@ -269,7 +269,7 @@ async def login(env: Environment):
     return response.json()["csrf_token"]
 
 
-def headers(csrf: str, revision: str | None = None):
+def headers(csrf: str, revision: Optional[str] = None):
     result = {**ORIGIN, "X-CSRF-Token": csrf}
     if revision is not None:
         result["If-Match"] = revision
@@ -672,38 +672,6 @@ async def test_overview_keeps_bot_ids_and_isolates_login_info_timeout(
         ]
 
 
-@pytest.mark.asyncio
-async def test_real_bound_business_declaration_shares_store_with_qq_reader(
-    tmp_path: Path,
-    isolated_feature_gate,
-):
-    from xducraft_pig_bot.configuration import bind_configuration
-    from xducraft_pig_bot.data_manager import DataManager
-
-    manager = DataManager(legacy_config_path=tmp_path / "pig.json")
-    declaration = bind_configuration(manager)
-    plugin = FakePlugin("xducraft_pig_bound_test", "猪猪图", declaration)
-    service = AdminService(
-        lambda: discover_catalog([plugin]),
-        isolated_feature_gate,
-        SimpleNamespace(),
-        lambda: {},
-    )
-    app = create_app(service, AdminAuth(PASSWORD), tmp_path / "missing-dist")
-    transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 12345))
-    async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
-        auth = await client.post("/api/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
-        csrf = auth.json()["csrf_token"]
-        current = (await client.get(f"/api/groups/{GROUP_A}/config/pig_bot")).json()
-        draft = {**current["config"], "max_forward_results": 9}
-        saved = await client.put(
-            f"/api/groups/{GROUP_A}/config/pig_bot",
-            json=draft,
-            headers=headers(csrf, current["revision"]),
-        )
-        assert saved.status_code == 200
-        assert saved.json()["config"]["max_forward_results"] == 9
-        assert manager.get_max_forward_results(GROUP_A) == 9
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,5 @@
+Original XDUCraft source code is licensed under the MIT License.
+The bundled frontend contains third-party JavaScript/CSS and icon artwork.
+Package metadata, author notices, and original license texts are retained
+in LICENSES/frontend-dependencies.txt and accompany source/wheel builds.
+Third-party components are not relicensed under the XDUCraft MIT license.
