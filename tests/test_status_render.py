@@ -11,12 +11,12 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
-from xducraft_bot.plugins.xducraft_mc_status import fonts, raster, tokens as t
-from xducraft_bot.plugins.xducraft_mc_status import drawing_utils as du
-from xducraft_bot.plugins.xducraft_mc_status import image_renderer as ir
-from xducraft_bot.plugins.xducraft_mc_status import settings as cfg
-from xducraft_bot.plugins.xducraft_mc_status import status_fetcher as sf
-from xducraft_bot.plugins.xducraft_mc_status import split_query_options
+from xducraft_mc_status import fonts, raster, tokens as t
+from xducraft_mc_status import drawing_utils as du
+from xducraft_mc_status import image_renderer as ir
+from xducraft_mc_status import settings as cfg
+from xducraft_mc_status import status_fetcher as sf
+from xducraft_mc_status import split_query_options
 
 ROLES = [
     fonts.EYEBROW, fonts.TITLE, fonts.SUBTITLE, fonts.CHIP, fonts.MOTD,
@@ -175,7 +175,7 @@ def test_format_codes_survive_parsing():
 
 def test_state_colors_come_from_the_minecraft_palette():
     """状态色必须是原版聊天调色板里的颜色，不能另造。"""
-    from xducraft_bot.plugins.xducraft_mc_status.constants import MINECRAFT_COLOR_CODES
+    from xducraft_mc_status.constants import MINECRAFT_COLOR_CODES
 
     palette = set(MINECRAFT_COLOR_CODES.values())
     for color in raster.TIER_COLORS.values():
@@ -243,7 +243,7 @@ def test_auth_colors_and_state_colors_never_share_a_slot():
 
     两者撞色会让绿色既表示“延迟低”又表示“正版登录”，图片无法稳定解读。
     """
-    from xducraft_bot.plugins.xducraft_mc_status import auth_mode as auth
+    from xducraft_mc_status import auth_mode as auth
 
     state = {tuple(color) for color in raster.TIER_COLORS.values()}
     stripe = {
@@ -485,7 +485,7 @@ def test_per_group_texture_is_stable_across_runs():
 
 
 def test_glazed_terracotta_builds_a_rotated_two_by_two_pattern():
-    from xducraft_bot.plugins.xducraft_mc_status.constants import TEXTURES_PATH
+    from xducraft_mc_status.constants import TEXTURES_PATH
 
     name = "cyan_glazed_terracotta.png"
     loaded = raster.load_texture(name)
@@ -713,7 +713,7 @@ def test_auth_stripe_sits_outside_the_bordered_box_on_right():
 
 def test_online_server_uses_auth_colored_top_and_bottom_gradients():
     from types import SimpleNamespace
-    from xducraft_bot.plugins.xducraft_mc_status import auth_mode as auth
+    from xducraft_mc_status import auth_mode as auth
 
     card = ir.CardLayout(node={"children": []}, level=0, top=0)
     resolved = SimpleNamespace(
@@ -759,7 +759,7 @@ def test_offline_server_has_no_gradient_border():
 
 
 def test_auth_legend_uses_note_borderless_swatches_and_tinted_underlines():
-    from xducraft_bot.plugins.xducraft_mc_status import auth_mode as auth
+    from xducraft_mc_status import auth_mode as auth
 
     modes = [auth.MODE_OFFICIAL, auth.MODE_MUA]
     canvas = raster.Canvas(t.CANVAS_WIDTH, t.LEGEND_HEIGHT)
@@ -1074,7 +1074,7 @@ def test_signal_bars_extend_to_nine_pixels_but_stay_below_text_size():
 
 def test_auth_method_is_bold_after_version_not_address():
     from types import SimpleNamespace
-    from xducraft_bot.plugins.xducraft_mc_status import auth_mode as auth
+    from xducraft_mc_status import auth_mode as auth
 
     resolved = SimpleNamespace(mode=auth.MODE_XDU, style=auth.style_for(auth.MODE_XDU))
     card = ir.CardLayout(
@@ -1104,7 +1104,7 @@ def test_auth_method_is_bold_after_version_not_address():
 
 def test_config_only_auth_stripe_is_opaque_and_dashed():
     from types import SimpleNamespace
-    from xducraft_bot.plugins.xducraft_mc_status import auth_mode as auth
+    from xducraft_mc_status import auth_mode as auth
 
     card = ir.CardLayout(node={"children": []}, level=0, top=0)
     resolved = SimpleNamespace(
@@ -1128,7 +1128,7 @@ def test_config_only_auth_stripe_is_opaque_and_dashed():
 
 def test_confirmed_auth_stripe_is_one_solid_block():
     from types import SimpleNamespace
-    from xducraft_bot.plugins.xducraft_mc_status import auth_mode as auth
+    from xducraft_mc_status import auth_mode as auth
 
     card = ir.CardLayout(node={"children": []}, level=0, top=0)
     resolved = SimpleNamespace(

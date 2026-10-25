@@ -2,8 +2,8 @@
 """状态图预览：用假数据出图，不连机器人、不联网、不读群配置。
 
 调外观的时候不该靠“改一行代码、启动机器人、在群里发一条 /mcs、盯着聊天记录看”
-这套循环。这个脚本直接调 :func:`~xducraft_bot.plugins.xducraft_mc_status.
-image_renderer.render_servers`——和线上出图**同一个函数**，所以看到的就是真样子。
+这套循环。这个脚本直接调 :func:`~xducraft_mc_status.image_renderer.render_servers`
+——和线上出图**同一个函数**，所以看到的就是真样子。
 
 用法::
 
@@ -21,20 +21,18 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 from pathlib import Path
 from typing import Any, Callable, Dict
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import nonebot  # noqa: E402
 
 nonebot.init()
 
-from xducraft_bot.plugins.xducraft_mc_status import image_renderer as ir  # noqa: E402
-from xducraft_bot.plugins.xducraft_mc_status import settings as cfg  # noqa: E402
-from xducraft_bot.plugins.xducraft_mc_status import tokens as t  # noqa: E402
-from xducraft_bot.plugins.xducraft_mc_status.status_fetcher import (  # noqa: E402
+from xducraft_mc_status import image_renderer as ir  # noqa: E402
+from xducraft_mc_status import settings as cfg  # noqa: E402
+from xducraft_mc_status import tokens as t  # noqa: E402
+from xducraft_mc_status.status_fetcher import (  # noqa: E402
     prepare_data_for_display, preprocess_server_data,
 )
 

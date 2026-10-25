@@ -14,17 +14,15 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import nonebot  # noqa: E402
 
 nonebot.init()
 
-from xducraft_bot.plugins.xducraft_mc_status import image_renderer as ir  # noqa: E402
-from xducraft_bot.plugins.xducraft_mc_status import raster  # noqa: E402
+from xducraft_mc_status import image_renderer as ir  # noqa: E402
+from xducraft_mc_status import raster  # noqa: E402
 
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[1] / "preview" / "textures"
 

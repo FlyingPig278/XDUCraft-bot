@@ -70,10 +70,6 @@ TITLE_DISPLAY_SIZE = px(TYPE_TITLE * 13 / 9)
 TITLE_BODY_FALLBACK_SIZE = px(32)
 TITLE_DISPLAY_BASELINE_OFFSET = px(2.5)
 
-# 思源黑体（``SourceHanSansCN-Medium.otf``）还留在 resources/fonts 里，但状态图
-# 已经不用它了——一款平滑的无衬线体挨着像素字体，正是旧版最不像 Minecraft 的
-# 地方。**不要删这个文件**：``xducraft_wordcloud`` 会跨插件目录直接引用它来渲染
-# 中文词云（见该插件的 ``_get_font_path``），删掉词云会静默退化成豆腐块。
 
 #: 物理字号必须落在各自的像素网格上，否则 FreeType 会插值出灰边。
 _GRID: Dict[str, int] = {

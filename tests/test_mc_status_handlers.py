@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from xducraft_bot.plugins.xducraft_mc_status import handlers
+from xducraft_mc_status import handlers
 
 
 @pytest.mark.asyncio

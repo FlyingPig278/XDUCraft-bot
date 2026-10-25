@@ -19,6 +19,7 @@ from nonebot.log import logger
 
 from xducraft_bot.shared import feature_gate
 from xducraft_bot.shared.onebot import make_node, notify_privately, send_private_forward, send_text_sections
+from xducraft_bot.shared.permissions import is_admin
 
 from . import auth_mode as auth
 from .config_coder import compress_config, decompress_config
@@ -36,7 +37,7 @@ from .decode_image import get_cache_stats
 from .image_renderer import render_status_image
 from .status_fetcher import get_all_servers_status, get_single_server_status
 from .utils import (
-    get_server_display_address, is_admin, is_valid_api_url, is_valid_hex_color,
+    get_server_display_address, is_valid_api_url, is_valid_hex_color,
     is_valid_server_address,
 )
 

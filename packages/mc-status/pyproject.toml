@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68,<81", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nonebot-plugin-xducraft-mc-status"
+version = "0.1.0"
+description = "Render and query Minecraft server status for XDUCraft NoneBot deployments."
+readme = "README.md"
+requires-python = ">=3.9,<4"
+dependencies = [
+    "nonebot2~=2.4.3",
+    "nonebot-adapter-onebot~=2.4.6",
+    "nonebot-plugin-xducraft-core[onebot]>=0.3.0,<0.4.0",
+    "pydantic>=2,<3",
+    "Pillow~=11.3.0",
+    "httpx~=0.28.1",
+    "mcstatus~=12.0.6",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["xducraft_mc_status"]
+include-package-data = false
+
+[tool.setuptools.package-data]
+xducraft_mc_status = [
+    "data/*.example",
+    "resources/fonts/*",
+    "resources/images/*",
+    "resources/textures/*",
+]

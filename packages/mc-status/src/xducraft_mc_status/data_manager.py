@@ -11,9 +11,13 @@ from xducraft_bot.shared.data_paths import plugin_data_dir
 from xducraft_bot.shared.json_store import as_bool, as_str
 
 from .auth_mode import CONFIGURABLE_MODES
-from .constants import DEFAULT_SERVER_PRIORITY
+from .constants import DEFAULT_SERVER_PRIORITY, LEGACY_DATA_PATH
 
-DATA_DIR = str(plugin_data_dir("mc_status", os.path.join(os.path.dirname(__file__), "data")))
+DATA_DIR = str(plugin_data_dir(
+    "mc_status",
+    os.path.join(os.path.dirname(__file__), "data"),
+    legacy_relative_path=LEGACY_DATA_PATH,
+))
 DATA_FILE = os.path.join(DATA_DIR, "server_data.json")
 SCHEMA_VERSION_KEY = "__schema_version__"
 

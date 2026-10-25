@@ -15,13 +15,23 @@ from xducraft_bot.shared.data_paths import plugin_data_dir
 # ==============================================================================
 
 _current_dir = os.path.dirname(__file__)
+LEGACY_DATA_PATH = os.path.join(
+    "xducraft_bot", "plugins", "xducraft_mc_status", "data",
+)
 
 FONTS_PATH = os.path.join(_current_dir, "resources", "fonts")
 TEXTURES_PATH = os.path.join(_current_dir, "resources", "textures")
 DEFAULT_SERVER_ICON_PATH = os.path.join(_current_dir, "resources", "images", "default_server_icon.png")
 OFFLINE_SERVER_ICON_PATH = os.path.join(_current_dir, "resources", "images", "offline_server_icon.png")
 FIRE_ICON_PATH = os.path.join(_current_dir, "resources", "images", "fire.png")
-SAVE_IMG_DIR = os.path.join(plugin_data_dir("mc_status", os.path.join(_current_dir, "data")), "images")
+SAVE_IMG_DIR = os.path.join(
+    plugin_data_dir(
+        "mc_status",
+        os.path.join(_current_dir, "data"),
+        legacy_relative_path=LEGACY_DATA_PATH,
+    ),
+    "images",
+)
 
 # ==============================================================================
 # 2. Minecraft 颜色码

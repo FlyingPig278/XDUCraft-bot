@@ -1,9 +1,4 @@
-"""统一的权限判定。
-
-原先 ``is_admin`` 住在 ``xducraft_mc_status.utils`` 里，另外三个插件都从那里
-import —— 词云插件依赖 MC 状态插件只是为了一个权限函数，这是明显的分层错误。
-现在统一放在 shared 层，老位置保留一层再导出以兼容既有调用。
-"""
+"""Shared permission checks for OneBot plugins."""
 
 from __future__ import annotations
 

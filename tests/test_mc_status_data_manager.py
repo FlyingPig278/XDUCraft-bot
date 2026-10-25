@@ -5,7 +5,7 @@ import pytest
 
 
 def _prepare_isolated_storage(monkeypatch, tmp_path: Path):
-    from xducraft_bot.plugins.xducraft_mc_status import data_manager as dm
+    from xducraft_mc_status import data_manager as dm
 
     monkeypatch.setattr(
         dm, "_store",
@@ -44,7 +44,7 @@ def test_unknown_source_cannot_replace_saved_group_choice(monkeypatch, tmp_path)
 def test_legacy_query_settings_freeze_once_and_new_groups_do_not_inherit(
     monkeypatch, tmp_path, stored_in_sqlite,
 ):
-    from xducraft_bot.plugins.xducraft_mc_status import data_manager as dm
+    from xducraft_mc_status import data_manager as dm
     from xducraft_bot.shared.config_store import database
 
     path = str(tmp_path / "configuration.sqlite3")

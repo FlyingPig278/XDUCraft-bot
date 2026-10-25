@@ -1,9 +1,4 @@
-"""地址校验等小工具。
-
-``is_admin`` 现在住在 :mod:`xducraft_bot.shared.permissions`——词云、猪猪图、
-happy_bot 三个插件曾经为了一个权限函数 import 整个 MC 状态插件，那是明显的
-分层错误。这里保留一个再导出，老的 import 路径继续可用。
-"""
+"""Address validation and display formatting for MC Status."""
 
 from __future__ import annotations
 
@@ -12,7 +7,6 @@ import re
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
-from xducraft_bot.shared.permissions import can_manage, is_admin, is_superuser  # noqa: F401
 
 #: 明确不允许查询的域名后缀。
 BLACKLISTED_PATTERNS = [
@@ -136,7 +130,6 @@ def is_valid_api_url(url: str) -> bool:
 
 
 __all__ = [
-    "is_admin", "is_superuser", "can_manage",
     "is_valid_server_address", "is_valid_hex_color", "is_valid_api_url",
     "format_address_for_pixel_font", "get_server_display_address",
     "BLACKLISTED_PATTERNS",
