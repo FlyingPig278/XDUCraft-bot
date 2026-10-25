@@ -1,9 +1,0 @@
-{
-  "max_forward_results": 5,
-  "groups": {
-    "123456": {
-      "auto_push_enabled": false,
-      "query_enabled": true
-    }
-  }
-}

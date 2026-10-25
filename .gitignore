@@ -61,41 +61,18 @@ dist/
 node_modules/
 /output/
 /.playwright-cli/
-/packages/admin/src/xducraft_admin/static/
 
 # mcs-editor 使用自己的 Git 仓库管理
 /mcs-editor/
 
-**/App.vue
-!/packages/admin/webui/src/App.vue
 
 bot.py
 
-# 注意写成 tests/* 而不是 tests/：Git 不会进入被排除的**目录**，写成后者的话
-# 下面的 ! 例外永远不会生效。
+# 仅部署验收留在此仓库；旧的本地未跟踪测试保持原状。
 tests/*
-# 但状态图的不变量测试要跟着代码一起走：像素网格字号、中日韩字体回退这些东西
-# 一旦坏掉不会报任何错，只会悄悄糊掉或者变成豆腐块，必须有测试守着。
 !tests/conftest.py
-!tests/test_status_render.py
-!tests/test_web_admin_api.py
-!tests/test_web_admin_config.py
-!tests/test_keyword_codec.py
-!tests/test_wordcloud_commands.py
-!tests/test_invite_handlers.py
-!tests/test_wordcloud_data_manager.py
-!tests/test_pig_logic.py
-!tests/test_anti_recall.py
-!tests/test_native_configuration.py
-!tests/test_keyword_reply.py
-!tests/test_mc_status_data_manager.py
-!tests/test_auto_friend.py
-!tests/test_feature_commands.py
-!tests/test_mc_logic.py
-!tests/test_mc_status_fetcher.py
-!tests/test_mc_status_handlers.py
-!tests/test_data_paths.py
 !tests/test_data_migration.py
+!tests/test_host_integration.py
 
 # 预览脚本的出图产物
 /preview/

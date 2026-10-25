@@ -1,0 +1,16 @@
+# Local contributor layout: clone all twelve repositories next to XDUCraft-bot.
+nb-cli~=1.4.2
+nonebot2[fastapi]~=2.4.3
+-r requirements-test.txt
+-e ../nonebot-plugin-xducraft-core[onebot,dev]
+-e ../nonebot-plugin-xducraft-happy-bot[dev]
+-e ../nonebot-plugin-xducraft-auto-friend[dev]
+-e ../nonebot-plugin-xducraft-keyword[dev]
+-e ../nonebot-plugin-xducraft-pig-bot[dev]
+-e ../nonebot-plugin-xducraft-mc-update[dev]
+-e ../nonebot-plugin-xducraft-invite[dev]
+-e ../nonebot-plugin-xducraft-anti-recall[dev]
+-e ../nonebot-plugin-xducraft-wordcloud[dev]
+-e ../nonebot-plugin-xducraft-mc-status[dev]
+-e ../nonebot-plugin-xducraft-features[dev]
+-e ../nonebot-plugin-xducraft-admin[dev]
