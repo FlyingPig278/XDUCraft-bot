@@ -1,231 +1,194 @@
 # XDUCraft Bot
 
-基于 NoneBot 2（OneBot v11 适配器）的 XDUCraft 社区群管理与 Minecraft 服务器运维机器人部署宿主。
+本仓库提供安装清单与启动配置，用于运行包含网页管理面板的 QQ 机器人。机器人支持 Minecraft 服务器状态查询、群聊词云、消息反撤回与关键词回复等功能。如只需在现有的 NoneBot 2.4.x 项目中查询 Minecraft 服务器状态，请直接使用独立插件 [nonebot-plugin-xducraft-mc-status](https://github.com/FlyingPig278/nonebot-plugin-xducraft-mc-status)。
 
----
+## 准备工作
 
-## 宿主定位与技术选型
+运行前需要准备好以下环境：
+- Python 3.13
+- Git
+- NapCat（QQ 协议端，推荐与机器人运行在同一台机器上）
 
-本项目为 XDUCraft Bot 的生产部署宿主工程。经过模块化解耦，机器人的核心配置体系与各项业务功能已完全拆分至 12 个独立的 NoneBot 插件仓库中。
+## 安装与配置
 
-本仓库不包含任何内置插件源码，亦非对 NoneBot 框架的修改或 Fork，专注于提供标准化装配与运维支持：
-- 装配与启动配置（`pyproject.toml`、`.env.prod.example`）；
-- 离线数据迁移与备份保障（`scripts/migrate_runtime_data.py`）；
-- 宿主集成验证套件（`tests/`）。
+### 1. 克隆仓库与安装依赖
 
-### 两种使用路径对比
+Windows PowerShell：
+```powershell
+git clone https://github.com/FlyingPig278/XDUCraft-bot.git
+cd XDUCraft-bot
+py -3.13 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
 
-| 场景 | 推荐方案 | 说明 |
-| :--- | :--- | :--- |
-| **自建通用机器人 / 按需挑选插件** | **官方 NoneBot 脚手架** | 使用 `nb create` 初始化标准 NoneBot 2 项目。先通过 Git 安装 `nonebot-plugin-xducraft-core[onebot]`，即可自由引入任何独立的 `nonebot-plugin-xducraft-*` 业务插件。WebUI 管理端（Admin）为可选组件，所有业务插件均可在无 WebUI 状态下独立运行。 |
-| **开箱即用部署 / XDUCraft 完整节点** | **使用本部署宿主仓库** | 直接克隆本工程，通过锁定 Git Commit SHA 的 `requirements.txt` 一键安装全套受管插件，并利用预置的启动配置与迁移脚本进行生产运维。 |
-
-> 本地或历史遗留的被忽略路径（如 `xducraft_bot/**/data`、`mcs-editor/`、`bot.py` 等）不随 Git 分发，亦不是插件源码安装源；各插件均作为独立外部包安装使用。
-
----
-
-## 拆分子包与独立插件清单
-所有功能插件均已解耦为独立 GitHub 仓库，使用 Git 标签安装，未在公共 PyPI 发布。各插件角色、加载模块及对应版本如下：
-
-| 独立仓库 (`Repository`) | 定位与门禁 | 加载模块名 (`Plugin Name`) | 版本 | 核心功能简介 |
-| :--- | :--- | :--- | :--- | :--- |
-| [nonebot-plugin-xducraft-core](https://github.com/FlyingPig278/nonebot-plugin-xducraft-core) | 基础设施 (`managed=False`) | `xducraft_config` | 0.3.0 | SQLite 集中配置存储、双重门禁切面、SDK 命名空间 `xducraft_bot.shared` |
-| [nonebot-plugin-xducraft-features](https://github.com/FlyingPig278/nonebot-plugin-xducraft-features) | 基础设施 (`managed=False`) | `xducraft_features` | 0.1.0 | QQ 端 `/功能` 交互式开关命令与受管功能动态枚举 |
-| [nonebot-plugin-xducraft-admin](https://github.com/FlyingPig278/nonebot-plugin-xducraft-admin) | 基础设施·可选 (`managed=False`) | `xducraft_admin` | 0.1.0 | 本地回环 WebUI 管理面板（包含内置前端静态产物，业务运行非必需） |
-| [nonebot-plugin-xducraft-happy-bot](https://github.com/FlyingPig278/nonebot-plugin-xducraft-happy-bot) | 受管业务插件 | `xducraft_happy_bot` | 0.2.0 | 群聊被 `@` 或被回复时自动贴附表情回应（功能名：`表情回应`） |
-| [nonebot-plugin-xducraft-auto-friend](https://github.com/FlyingPig278/nonebot-plugin-xducraft-auto-friend) | 受管业务插件 | `xducraft_auto_friend` | 0.1.0 | 自动校验指定群成员资格并同意好友请求（功能名：`自动加好友`） |
-| [nonebot-plugin-xducraft-keyword](https://github.com/FlyingPig278/nonebot-plugin-xducraft-keyword) | 受管业务插件 | `xducraft_keyword` | 0.1.0 | 群级关键词自动回复与入群欢迎语设定（功能名：`关键词回复`） |
-| [nonebot-plugin-xducraft-pig-bot](https://github.com/FlyingPig278/nonebot-plugin-xducraft-pig-bot) | 受管业务插件 | `xducraft_pig_bot` | 0.1.0 | PigHub 猪猪图库查询与定时群推送（功能名：`猪猪图查询`、`猪猪图推送`） |
-| [nonebot-plugin-xducraft-mc-update](https://github.com/FlyingPig278/nonebot-plugin-xducraft-mc-update) | 受管业务插件 | `xducraft_mc_update` | 0.1.0 | 追踪 Minecraft 正式版与快照更新并推送（功能名：`MC 更新推送`） |
-| [nonebot-plugin-xducraft-invite](https://github.com/FlyingPig278/nonebot-plugin-xducraft-invite) | 受管业务插件 | `xducraft_invite` | 0.1.0 | 白名单邀请码生成、验证与私聊分发（功能名：`邀请码自助领取`） |
-| [nonebot-plugin-xducraft-anti-recall](https://github.com/FlyingPig278/nonebot-plugin-xducraft-anti-recall) | 受管业务插件 | `xducraft_anti_recall` | 0.1.0 | 群撤回消息监听、图片/语音离线暂存与私聊回查（功能名：`反撤回`） |
-| [nonebot-plugin-xducraft-wordcloud](https://github.com/FlyingPig278/nonebot-plugin-xducraft-wordcloud) | 受管业务插件 | `xducraft_wordcloud` | 0.1.0 | 群聊分词统计，每日零点自动渲染发送词云（功能名：`群聊词云`） |
-| [nonebot-plugin-xducraft-mc-status](https://github.com/FlyingPig278/nonebot-plugin-xducraft-mc-status) | 受管业务插件 | `xducraft_mc_status` | 0.1.0 | Minecraft 服务器状态多节点探测与点阵材质卡片渲染（功能名：`MC 服务器状态`） |
-
-> **Git 安装规范**：以上仓库尚未发布至公共 PyPI。在第三方 NoneBot 实例中安装任一独立业务插件时，必须使用 PEP 508 命名直链显式先安装 Core，再安装目标插件（以 Git Tag 或 Commit SHA 引用）：
-> ```bash
-> # 必须先安装 Core SDK：
-> pip install "nonebot-plugin-xducraft-core[onebot] @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-core.git@v0.3.0"
-> # 随后安装具体业务插件（例如 mc-status）：
-> pip install "nonebot-plugin-xducraft-mc-status @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-mc-status.git@v0.1.0"
-> ```
-
----
-
-## 生产部署指南
-
-### 1. 运行环境要求
-- Python：`>= 3.9, < 4.0`
-- OneBot 协议端：支持 OneBot v11 反向 WebSocket 的实现端（推荐 NapCatQQ 或 LLOneBot）
-- 注：生产环境通过 Wheel 或 Git 安装时已自带打包好的 WebUI 静态文件，无需 Node.js/npm 编译环境。
-
-### 2. 克隆宿主并安装锁定依赖
-在生产机器上，通过固定插件 Git SHA 的 `requirements.txt` 安装插件与框架。该清单固定了 12 个插件的源码版本，第三方 Python 依赖仍按各包声明的兼容版本范围由 pip 动态解析：
+Linux：
 ```bash
 git clone https://github.com/FlyingPig278/XDUCraft-bot.git
 cd XDUCraft-bot
-
-# 创建并激活虚拟环境
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# 从固定插件 Git SHA 的清单安装 NoneBot2 及全部 12 个插件
+python3.13 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
-### 3. 环境配置与凭据安全
-NoneBot 默认在未显式指定 `ENVIRONMENT` 时仅读取根目录下的 `.env` 与 `.env.dev`。生产部署时建议直接将模板复制为 `.env`：
-```bash
-cp .env.prod.example .env
-```
-若保留 `.env.prod` 文件名，则必须在 `.env` 中声明 `ENVIRONMENT=prod` 方可生效。
 
-`.env` 中的典型基础配置（真实字段示例）：
+### 2. 基础配置文件
+
+在项目根目录下创建 `.env` 文件，填入基础运行配置：
+
 ```dotenv
 DRIVER=~fastapi
+HOST=127.0.0.1
+PORT=8080
 COMMAND_START=["/"]
-
-# Web 管理面板基础项（密码严禁写入配置文件！）
+SUPERUSERS=["123456789"]
 WEB_ADMIN_ENABLED=true
-WEB_ADMIN_PORT=8765
-
-# 业务插件配置项（按需填写）
-INVITE_GROUP_ID=0
-INVITE_API_URL=https://www.xducraft.cn/api/invitation-codes/generate
-AUTO_ACCEPT_FRIEND_GROUP_IDS=[]
 ```
 
-#### 关键安全规范：管理密码与访问隔离
-- **口令由系统环境变量注入**：`WEB_ADMIN_PASSWORD` 拥有机器人管理最高权限，严禁写在 `.env` 或提交至代码库。必须在启动进程时通过操作系统环境变量直接注入，且长度不得少于 12 位。
-- **本地回环与 SSH 隧道**：管理面板默认仅绑定本地回环地址 `127.0.0.1:8765`，严禁直接映射至公网。远程管理请通过 SSH 端口转发访问：
-  ```bash
-  ssh -N -L 8765:127.0.0.1:8765 user@your-server-ip
-  ```
-  随后在本地浏览器打开 `http://127.0.0.1:8765/` 登录。
+请把 `123456789` 替换为你自己的管理员 QQ 号。
 
-### 4. 启动与协议端接入
-```bash
-# Linux / macOS 启动示例：
-export WEB_ADMIN_PASSWORD="set_your_strong_password_here_12chars"
-export XDUCRAFT_DATA_DIR="/var/lib/xducraft/data"  # 外部数据根目录
-nb run
-```
+### 3. 设置管理面板密码并启动
+
+网页管理面板登录密码必须通过系统环境变量 `WEB_ADMIN_PASSWORD` 设置，长度至少 12 个字符。请将示例中的密码替换为你自己的密码。在新的终端窗口启动机器人时需要重新设置该变量。
+
+Windows PowerShell：
 ```powershell
-# Windows PowerShell 启动示例：
-$env:WEB_ADMIN_PASSWORD = "set_your_strong_password_here_12chars"
-$env:XDUCRAFT_DATA_DIR = "C:\bot\xducraft_data"    # 外部数据根目录
+$env:WEB_ADMIN_PASSWORD = "替换为至少12个字符的密码"
 nb run
 ```
 
-- **协议端配置**：在 NapCat 等 OneBot v11 协议端中添加反向 WebSocket 地址：
-  ```
-  ws://127.0.0.1:8080/onebot/v11/ws
-  ```
-
----
-
-## 门禁机制与存储结构
-
-### 1. 双重门禁与开关联动
-- **默认全关**：所有受管业务插件（`managed=True`）的全局总开关与群级开关在初次加载后默认均为关闭（OFF）。
-- **全局支配性**：全局总开关处于关闭状态时，会直接拦截该插件的一切 Matcher 事件、私聊交互与后台定时任务。即使群开关已开，也处于“待全局开启”挂起状态。
-- **开关控制范围与权限分工**：
-  - **全局总开关**：只能在 WebUI 面板（插件详情页）或通过 Core SDK 开启，QQ 群指令无法更改全局总开关。
-  - **群级功能开关**：群管理员或超管可通过群内命令 `/功能 on <功能名>` 开启本群功能（私聊可用 `/功能 <群号> on <功能名>` 远程设置）。
-  - **单功能与多功能联动**：对于单功能插件（如词云、表情回应、反撤回），群内执行 `/功能 on <名称>` 会同步开启该群的插件总开关；对于多功能插件（如猪猪图），开启单项功能不会联动开启群插件总开关，须在 WebUI 或 SDK 显式打开该群的插件总开关。无论群级状态如何，必须在全局总开关开启后功能才真正生效。
-- **基础设施免检**：`core`、`features` 与 `admin` 声明为 `managed=False`，不受门禁过滤。
-
-### 2. 配置与业务数据严格分离
-- **动态配置存储**：由 Core 专属 SQLite 数据库（`core/configuration.sqlite3`，POSIX 权限 `0600`）接管。支持重启保留设置与下一次生效参数。
-- **业务存储隔离**：各插件的活动业务数据存放在外部数据根（`$XDUCRAFT_DATA_DIR/plugins/<key>/`）下，互不混淆：
-  - 词云聊天历史：`plugins/wordcloud/chat_logs.db`；
-  - 反撤回媒体与库：`plugins/anti_recall/anti_recall.db` 与 `plugins/anti_recall/media/`；
-  - MC 更新订阅状态：`plugins/mc_update/subscription.json`（保留群订阅与版本游标，不迁入配置库）；
-  - 关键词自定义媒体：`plugins/keyword/media/`。
-
----
-
-## 生产升级与离线数据迁移 (针对 dc47f8e 首次迁移)
-
-生产环境基准版本为 `dc47f8e763fbf0cb34701992a345a405d787b79a`。由于早期版本采用扁平目录且不存在 Core SQLite 数据库，升级时必须严格遵循离线备份与迁移流程。
-
-> **升级操作要求**：
-> 1. **必须完全停机**：迁移前必须彻底停止 NoneBot 进程及所有写操作。
-> 2. **切勿伪造空配置库**：`dc47f8e` 无 Core SQLite，首次迁移绝对不要传入 `--config-db` 或新建空数据库，由首次启动时从旧 JSON 文件幂等导入。
-> 3. **冷备份与工作副本分离**：导出的首份快照为只读冷备份，严禁直接用作活动运行根。必须再从冷备份导出独立工作副本使用。
-> 4. **必须通过操作系统环境变量注入 `XDUCRAFT_DATA_DIR`**：在启动 Python 进程前注入，切勿仅写在 `.env` 中。
-
-### 操作步骤示范
-
-#### 第一步：制作源环境离线冷备份
+Linux：
 ```bash
-# 确认机器人已停止后执行（首次升级无 Core SQLite，不指定 --config-db）
+export WEB_ADMIN_PASSWORD="替换为至少12个字符的密码"
+nb run
+```
+
+数据默认保存在操作系统的用户数据目录下。如果需要指定数据存储路径，可以在启动前设置环境变量 `XDUCRAFT_DATA_DIR`。
+
+## NapCat 接入与首次使用
+
+### 1. 配置 NapCat 反向 WebSocket
+
+在同一台机器上运行 NapCat 并登录机器人的 QQ 账号。在 NapCat 的网络配置中添加 OneBot v11 反向 WebSocket 地址：
+
+```
+ws://127.0.0.1:8080/onebot/v11/ws
+```
+
+如果 NapCat 配置了访问密钥（Token），需要在 `.env` 中添加 `ONEBOT_ACCESS_TOKEN=你的Token` 保持两端一致。NapCat 自身的 WebUI 端口与机器人的管理面板端口（默认 8765）互相独立。机器人连接成功后会自动同步群列表，不需要在配置文件中填写机器人自身的 QQ 号。
+
+### 2. 在网页管理面板中启用功能
+
+管理面板默认绑定在本地回环地址 `127.0.0.1:8765`。如果部署在远程服务器上，可通过 SSH 隧道映射到本地（例如 `ssh -N -L 8765:127.0.0.1:8765 user@server`）后再通过本地浏览器打开。
+
+首次配置步骤如下：
+1. 打开浏览器访问 `http://127.0.0.1:8765`，输入设置的 `WEB_ADMIN_PASSWORD` 登录。
+2. 点击进入“插件”页面。所有业务插件初次加载时默认处于关闭状态。找到“MC 服务器状态”，开启其全局总开关。全局总开关开启后，群级开关才能生效。
+3. 点击进入“群聊”页面，在列表中选择目标群聊。若群列表显示“尚未获取群聊，请连接 QQ 后刷新”，请检查 NapCat 的登录状态和反向 WebSocket 连接。
+4. 在群聊详情页中开启“MC 服务器状态”群开关，并在该插件的群配置中填入 Minecraft 服务器地址，点击保存。
+5. 在对应的 QQ 群内发送 `/mcs`，机器人将探测服务器并发送状态信息卡片。
+
+## 插件列表与仓库结构
+
+日常安装和启动使用以下文件：
+- `requirements.txt`：安装 NoneBot 框架，并固定各插件的 Git 提交版本。
+- `pyproject.toml`：配置 NoneBot 在启动时自动加载这些插件。
+
+插件代码均在各自仓库中修改。如果修改了插件代码并希望本仓库使用新版本，需要在 `requirements.txt` 中更新对应插件的 Git 提交号。各插件仓库如下：
+
+| 功能 | 说明 |
+| :--- | :--- |
+| [核心配置](https://github.com/FlyingPig278/nonebot-plugin-xducraft-core) | 保存插件设置与全局、群级开关 |
+| [群内命令控制](https://github.com/FlyingPig278/nonebot-plugin-xducraft-features) | 支持群内通过 `/功能` 命令管理本群开关 |
+| [网页管理面板](https://github.com/FlyingPig278/nonebot-plugin-xducraft-admin) | 浏览器管理界面，内置前端文件，运行无需 Node.js |
+| [MC 服务器状态](https://github.com/FlyingPig278/nonebot-plugin-xducraft-mc-status) | 服务器状态探测与卡片渲染，群命令 `/mcs` |
+| [MC 更新推送](https://github.com/FlyingPig278/nonebot-plugin-xducraft-mc-update) | Minecraft 版本更新检测与推送 |
+| [猪猪图库与推送](https://github.com/FlyingPig278/nonebot-plugin-xducraft-pig-bot) | PigHub 图库查询与定时推送 |
+| [表情回应](https://github.com/FlyingPig278/nonebot-plugin-xducraft-happy-bot) | 被艾特或回复时贴附表情回应 |
+| [群聊词云](https://github.com/FlyingPig278/nonebot-plugin-xducraft-wordcloud) | 群聊消息分词与每日词云图片生成 |
+| [消息反撤回](https://github.com/FlyingPig278/nonebot-plugin-xducraft-anti-recall) | 群消息撤回监听与私聊回查 |
+| [关键词回复与欢迎](https://github.com/FlyingPig278/nonebot-plugin-xducraft-keyword) | 群关键词自动回复与新人入群欢迎语 |
+| [邀请码自助领取](https://github.com/FlyingPig278/nonebot-plugin-xducraft-invite) | 服务器白名单邀请码生成与私聊分发 |
+| [自动同意好友](https://github.com/FlyingPig278/nonebot-plugin-xducraft-auto-friend) | 校验群成员身份并自动同意好友申请 |
+
+如果选择不运行网页管理面板（设置 `WEB_ADMIN_ENABLED=false`），可以通过 Core 提供的 Python 接口配置开关，调用方式请参考 [nonebot-plugin-xducraft-core 不使用网页时启用插件](https://github.com/FlyingPig278/nonebot-plugin-xducraft-core#不使用网页时启用插件)。
+
+## 可选流程与开发者指南
+
+<details>
+<summary>从历史版本 dc47f8e 迁移数据</summary>
+
+本段说明适用于从早期基准版本 `dc47f8e` 升级数据的场景。新部署用户不需要执行此流程。
+
+迁移前请先完全停止机器人进程。
+
+早期 `dc47f8e` 版本不包含 Core SQLite 数据库。运行迁移脚本前，必须确认系统环境变量中没有设置 `XDUCRAFT_CONFIG_DB`。如果设置了该变量，脚本会强制要求指定 `--config-db` 参数。迁移时不要传入 `--config-db`，也不要创建空的数据库文件。
+
+第一步，从旧项目目录创建停机备份并妥善保存（在 Windows PowerShell 中请去掉行尾反斜杠并合并为一行执行）：
+```bash
 python scripts/migrate_runtime_data.py migrate \
   --source-layout legacy \
-  --source "/opt/legacy-xducraft-bot" \
-  --destination "/opt/snapshots/dc47f8e-backup-v1"
+  --source "/path/to/legacy-xducraft-bot" \
+  --destination "/path/to/backup-v1"
 ```
 
-#### 第二步：从验证快照生成活动工作副本
+第二步，从备份导出独立的工作副本供升级后的机器人运行使用（目标路径必须不存在；在 Windows PowerShell 中同样需合并为单行执行），避免运行过程中直接读写初始备份：
 ```bash
-# 目标路径必须不存在
 python scripts/migrate_runtime_data.py migrate \
   --source-layout runtime \
-  --source "/opt/snapshots/dc47f8e-backup-v1" \
-  --destination "/opt/xducraft_runtime_data"
+  --source "/path/to/backup-v1" \
+  --destination "/path/to/working_data"
 ```
 
-#### 第三步：注入环境变量并首次启动验证
+第三步，设置环境变量并启动新版本机器人：
 ```bash
-# 必须先注入系统环境变量
-export XDUCRAFT_DATA_DIR="/opt/xducraft_runtime_data"
-export WEB_ADMIN_PASSWORD="your-strong-password-min12chars"
-
-# 启动机器人
+export XDUCRAFT_DATA_DIR="/path/to/working_data"
+export WEB_ADMIN_PASSWORD="替换为至少12个字符的密码"
 nb run
 ```
+在 Windows PowerShell 环境中，使用 `$env:XDUCRAFT_DATA_DIR = "..."` 和 `$env:WEB_ADMIN_PASSWORD = "..."` 设置上述环境变量。
 
-#### 首次启动核验检查单
-1. **JSON 导入幂等性**：Core 启动时会自动扫描工作副本中的旧 JSON 配置文件并严格校验后写入新生成的 `core/configuration.sqlite3`。后续启动仍可能对其进行一致性校验，但不会重新回写或覆盖已在 SQLite 中生效的最新配置，运行时以 SQLite 为唯一权威存储。
-2. **开关状态确认**：导入后，所有业务插件的全局总开关与群开关依门禁规范保持默认关闭（OFF）。
-3. **逐项启用**：管理员通过 WebUI 后台先开启全局总开关，再按需开启群内功能开关。
-4. **业务数据完好**：检查词云历史 `chat_logs.db` 及反撤回媒体等是否在新目录下正常接续工作。
+迁移脚本不会复制旧环境的 `.env` 配置文件，需要按前文说明单独配置新环境的 `.env`。
 
----
+首次启动时，Core 会扫描工作副本中的旧 JSON 配置文件并导入到 `core/configuration.sqlite3` 中。旧 JSON 文件不会被修改，后续在数据库中保存的新设置也不会被旧 JSON 覆盖。新版本的全局总开关默认关闭。请登录管理面板检查各群设置，再按需开启插件。
 
-## 贡献与同级目录开发指南 (Contributor Path)
+</details>
 
-针对希望协同改进插件或宿主集成的开发者，推荐采用同级并列仓库布局（Sibling Repo Layout）：
+<details>
+<summary>开发者指南：同级仓库开发与测试</summary>
+
+修改单个插件不需要克隆全部仓库。如果只需要修改某个插件，直接克隆该插件对应的独立仓库，并参考该仓库的说明进行开发即可。
+
+`requirements-dev.txt` 声明了全部 12 个同级插件仓库。如需使用该清单进行多仓库联合开发或集成测试，必须将全部 12 个插件仓库与本仓库克隆到同一父目录下：
 
 ```
 workspace/
-├── XDUCraft-bot/                          # 本部署宿主仓库
-├── nonebot-plugin-xducraft-core/          # 核心插件源码
-├── nonebot-plugin-xducraft-admin/         # 管理面板源码
-├── nonebot-plugin-xducraft-features/      # 功能控制源码
-└── nonebot-plugin-xducraft-.../           # 其余各业务插件仓库
+├── XDUCraft-bot/
+├── nonebot-plugin-xducraft-core/
+├── nonebot-plugin-xducraft-admin/
+├── nonebot-plugin-xducraft-features/
+└── nonebot-plugin-xducraft-.../
 ```
 
-### 1. 搭建开发环境
+在虚拟环境中以可编辑模式安装所有同级插件：
 ```bash
-cd XDUCraft-bot
-python -m venv venv
-source venv/bin/activate
-
-# 以可编辑模式（-e）链接各同级插件仓库：
 pip install -r requirements-dev.txt
 ```
 
-### 2. 运行集成验证
-在宿主环境下，使用 `requirements-test.txt` 安装测试套件，执行对已装载插件的端到端集成测试与数据迁移校验：
+安装测试依赖并执行集成测试与迁移测试：
 ```bash
 pip install -r requirements-test.txt
-pytest tests/test_host_integration.py tests/test_data_migration.py
+pytest
 ```
+测试文件位于 `tests/test_data_migration.py` 与 `tests/test_host_integration.py`。
 
----
+管理面板插件仓库中已包含预构建的前端静态产物。修改 Python 代码或运行测试无需安装 Node.js。只有在修改管理面板前端界面代码时，才需要进入 nonebot-plugin-xducraft-admin 仓库的 webui/ 目录下执行 `npm ci` 与 `npm run build` 重新构建静态文件。
+
+</details>
 
 ## 开源许可证与资源声明
 
-- 本项目（`XDUCraft-bot` 宿主）及所涉原创插件代码均基于 [MIT License](LICENSE) 授权开源。
-- 仓库内及衍生服务中使用的 Minecraft 原版贴图、材质、像素字体及思源黑体等第三方资源，其版权归各自作者或 Mojang Studios 部分所有。历史保留资源依照原状留存，本项目不声明对其拥有排他授权或将其转为 MIT 授权。
-- 本仓库各插件使用 Git 标签及 Commit SHA 引用安装，未在公共 PyPI 注册，亦未作出生产级可用性认证承诺。
+本仓库代码基于 [MIT License](LICENSE) 开源。
+
+各插件使用的第三方资源归原作者所有，具体授权条款与署名见对应插件仓库的说明文件：
+- MC 状态相关素材：[MC 状态插件 NOTICE](https://github.com/FlyingPig278/nonebot-plugin-xducraft-mc-status/blob/main/NOTICE)
+- 词云字体文件：[词云插件 NOTICE](https://github.com/FlyingPig278/nonebot-plugin-xducraft-wordcloud/blob/main/NOTICE)
