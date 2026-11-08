@@ -8,7 +8,7 @@ nonebot-plugin-xducraft-mc-update @ git+https://github.com/FlyingPig278/nonebot-
 nonebot-plugin-xducraft-invite @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-invite.git@6f8645224ac7b2f05866249910479992b387c82e
 nonebot-plugin-xducraft-anti-recall @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-anti-recall.git@cda8fce475afa91285bc5971685515a086da8649
 nonebot-plugin-xducraft-wordcloud @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-wordcloud.git@d5fbc169a414a9aca1e63ed711008cbc39a90bf8
-nonebot-plugin-xducraft-mc-status @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-mc-status.git@619fbce46b251674d78a0c7bd9cddb169be3ccb6
+nonebot-plugin-xducraft-mc-status @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-mc-status.git@f8654908344e647750c36a648ac2a13b4ff83af0
 nonebot-plugin-xducraft-features @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-features.git@c1521dc8120b0db24e55757c23d739b42c7d1b0e
 nonebot-plugin-xducraft-admin @ git+https://github.com/FlyingPig278/nonebot-plugin-xducraft-admin.git@e85aec837911b60ba205e268e840b13ec8cdecc5
 nb-cli~=1.4.2
